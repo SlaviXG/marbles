@@ -9,6 +9,7 @@ import {
   MotionTracker,
   PinchLatch,
   REFRACTORY,
+  REST_RATIO,
   palmSpan,
 } from "../handArbiter";
 
@@ -436,21 +437,88 @@ describe("MotionTracker with HandArbiter", () => {
     const a = new HandArbiter();
     let switches = 0;
     let last: Side | null = null;
+    firstSwitchAt = NaN;
     for (let i = 0; i < frames; i++) {
       const t = i * dt;
       const motion: Partial<Record<Side, number>> = {};
       const reversal: Partial<Record<Side, boolean>> = {};
+      const onset: Partial<Record<Side, number>> = {};
       for (const side of ["L", "R"] as const) {
         const p = pos(side, i);
         motion[side] = tr[side].update(p.x, p.y, PALM, t);
         reversal[side] = tr[side].reversal;
+        onset[side] = tr[side].onset;
       }
-      const d = a.update(motion, reversal, false, "R", t);
-      if (last !== null && d !== last) switches++;
+      const d = a.update(motion, reversal, false, "R", t, onset);
+      if (last !== null && d !== last) {
+        switches++;
+        if (Number.isNaN(firstSwitchAt)) firstSwitchAt = t;
+      }
       last = d;
     }
     return switches;
   };
+  // Time of the first handover in the last run(), or NaN.
+  let firstSwitchAt = NaN;
+
+  // The driving hand (R) keeps drifting sideways at a steady pace the whole
+  // time; at START the other hand (L) begins to move.
+  const START = 3;
+  const drifting = (driverSpeed: number, otherSpeed: (t: number) => number) =>
+    (side: Side, i: number) => {
+      const t = i * FRAME;
+      if (side === "R") return { x: 1.0 + driverSpeed * t, y: 0.5 };
+      let x = 0.4;
+      for (let k = 0; k < i; k++) x += otherSpeed(k * FRAME) * FRAME;
+      return { x, y: 0.5 };
+    };
+
+  it("hands over when the other hand speeds up, even while the driver keeps moving", () => {
+    // Driver at 1 palm/s, steady. The other hand starts from rest at 1.5
+    // palm/s: only 1.5x the driver, under the 1/REST_RATIO (1.67x) that plain
+    // motion needs, so before this it never took over.
+    const otherSpeed = 1.5 * PALM;
+    expect(otherSpeed / PALM).toBeLessThan(1 / REST_RATIO);
+    const switches = run(Math.round((START + 2) / FRAME), FRAME, drifting(PALM, (t) => (t < START ? 0 : otherSpeed)));
+    expect(switches).toBe(1);
+    expect(firstSwitchAt - START).toBeLessThan(0.4);
+  });
+
+  it("does not hand over when both hands speed up together", () => {
+    const speed = (t: number) => (t < START ? 0.3 * PALM : 1.5 * PALM);
+    const pos = (side: Side, i: number) => {
+      const t = i * FRAME;
+      let x = side === "R" ? 1.0 : 0.4;
+      for (let k = 0; k < i; k++) x += speed(k * FRAME) * FRAME;
+      return { x, y: 0.5 + (side === "R" ? 0 : 0.2) + 0 * t };
+    };
+    expect(run(Math.round((START + 3) / FRAME), FRAME, pos)).toBe(0);
+  });
+
+  it("does not hand over to a hand that has been moving steadily all along", () => {
+    // The other hand is not speeding up: it just moves at the same pace as the
+    // driver. That is two hands moving alike, not a takeover.
+    const switches = run(Math.round(6 / FRAME), FRAME, drifting(PALM, () => PALM));
+    expect(switches).toBe(0);
+  });
+
+  it("hands over to a hand waving to take the cursor, not mistaking the wave for a glitch (regression guard)", () => {
+    // The other hand waves from START; the driver rests. At these rates the
+    // camera samples the wave only two or three times per swing, so its steps
+    // alternate direction, which is what a glitch looks like.
+    for (const hz of [3, 4, 5, 6]) {
+      for (const amp of [0.4, 0.8]) {
+        const switches = run(Math.round((START + 2) / FRAME), FRAME, (side, i) => {
+          const t = i * FRAME;
+          if (side === "R") return { x: 1.0, y: 0.5 };
+          const w = t < START ? 0 : amp * PALM * Math.sin(2 * Math.PI * hz * (t - START));
+          return { x: 0.4 + w, y: 0.5 };
+        });
+        expect(switches, `${hz} Hz, ${amp} palm`).toBe(1);
+        expect(firstSwitchAt - START, `${hz} Hz, ${amp} palm`).toBeLessThan(0.6);
+      }
+    }
+  });
 
   it("never switches between two still hands over 60 s of tracker jitter", () => {
     const SIGMA = 0.004; // frame heights, per axis
@@ -587,4 +655,5 @@ describe("HandoffOffset", () => {
     o.clear();
     expect(o.apply(250, 350, 0.5)).toEqual({ x: 250, y: 350 });
   });
+
 });
