@@ -3,3 +3,4 @@ dist
 *.local
 public/models/
 public/wake-runtime/
+scenario-results/*.jsonl

@@ -6,7 +6,7 @@ export const agentCatalog = [
   { id: "grok", name: "Grok", detectCmd: "grok", desktopApps: ["Grok.app"] },
   { id: "hermes", name: "Hermes", detectCmd: "hermes" },
   { id: "gemini", name: "Gemini CLI", detectCmd: "gemini" },
-  { id: "cursor", name: "Cursor", detectCmd: "cursor-agent", desktopApps: ["Cursor.app"], codingAgent: true },
+  { id: "cursor", name: "Cursor", detectCmd: "cursor-agent", detectCmdAliases: ["agent"], desktopApps: ["Cursor.app"], codingAgent: true },
   { id: "aider", name: "Aider", detectCmd: "aider" },
   { id: "opencode", name: "OpenCode", detectCmd: "opencode" },
   { id: "opencode2", name: "OpenCode 2", detectCmd: "opencode2" },

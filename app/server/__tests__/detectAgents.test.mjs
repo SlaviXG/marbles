@@ -27,6 +27,23 @@ async function command(bin, name, content = "#!/bin/sh\necho version-1\n") {
 }
 
 describe("agent detection", () => {
+  it('finds home-installed CLIs outside PATH without changing the environment', async () => {
+    const { bin, home } = await fixture();
+    const localBin = path.join(home, '.local', 'bin');
+    const cursorBin = path.join(home, '.cursor', 'bin');
+    await Promise.all([mkdir(localBin, { recursive: true }), mkdir(cursorBin, { recursive: true })]);
+    await Promise.all([command(localBin, 'claude'), command(localBin, 'agent'), command(cursorBin, 'cursor-agent')]);
+    const env = { PATH: bin };
+    const detect = createAgentDetector({ catalog: agentCatalog.filter(({ id }) => ['claude', 'cursor'].includes(id)), env, homeDir: home, platform: 'linux', readVersions: false });
+    expect((await detect()).map(({ id, path: cliPath }) => [id, cliPath])).toEqual([
+      ['claude', path.join(localBin, 'claude')],
+      ['cursor', path.join(cursorBin, 'cursor-agent')],
+    ]);
+    expect(env.PATH).toBe(bin);
+    await rm(path.join(cursorBin, 'cursor-agent'));
+    const alias = createAgentDetector({ catalog: agentCatalog.filter(({ id }) => id === 'cursor'), env, homeDir: home, platform: 'linux', readVersions: false });
+    expect((await alias())[0]).toMatchObject({ command: 'agent', path: path.join(localBin, 'agent') });
+  });
   it("resolves catalog aliases and required commands from a fake PATH", async () => {
     const { bin, home } = await fixture();
     await Promise.all([command(bin, "kimi-code"), command(bin, "orca")]);
@@ -63,6 +80,20 @@ describe("agent detection", () => {
 
   it("marks only the three canvas coding agents in the catalog", () => {
     expect(agentCatalog.filter(({ codingAgent }) => codingAgent).map(({ id }) => id)).toEqual(["claude", "codex", "cursor"]);
+  });
+
+  it('accepts the generic agent alias only when it identifies Cursor', async () => {
+    const { bin, home } = await fixture();
+    const catalog = agentCatalog.filter(({ id }) => id === 'cursor');
+    await command(bin, 'agent', '#!/bin/sh\necho unrelated-1.0\n');
+    const options = { catalog, pathEnv: bin, homeDir: home, platform: 'linux' };
+    expect(await createAgentDetector(options)()).toEqual([]);
+    await command(bin, 'agent', '#!/bin/sh\necho Cursor Agent 1.0\n');
+    expect((await createAgentDetector(options)())[0]).toMatchObject({ id: 'cursor', kind: 'cli', command: 'agent' });
+    const localBin = path.join(home, '.local', 'bin');
+    await mkdir(localBin, { recursive: true });
+    await command(localBin, 'agent', '#!/bin/sh\necho version-1.0\n');
+    expect((await createAgentDetector({ ...options, pathEnv: localBin })())[0]).toMatchObject({ id: 'cursor', kind: 'cli', command: 'agent' });
   });
 
   it("uses only --version, times out, and caches the result", async () => {

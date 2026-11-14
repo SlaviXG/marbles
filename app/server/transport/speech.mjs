@@ -1,4 +1,5 @@
 import { localVoiceOrigin } from './voice.mjs';
+import { DEFAULT_SPEECH_VOICE, isSpeechVoice } from '../../shared/speechVoices.mjs';
 
 export function speechHandler({ apiKey = process.env.OPENAI_API_KEY, fetchApi = fetch } = {}) {
   let active = 0;
@@ -7,6 +8,8 @@ export function speechHandler({ apiKey = process.env.OPENAI_API_KEY, fetchApi = 
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Speech playback requires a local app origin.' });
     const text = req.body?.text;
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return res.status(400).json({ error: 'Supply reply text under 2,000 characters.' });
+    const voice = req.body?.voice === undefined ? DEFAULT_SPEECH_VOICE : req.body.voice;
+    if (!isSpeechVoice(voice)) return res.status(400).json({ error: 'Choose a supported speech voice.' });
     if (!apiKey) return res.status(503).json({ error: 'Set OPENAI_API_KEY and restart the server.' });
     if (active >= 2) return res.status(429).json({ error: 'Speech is busy. Please try again.' });
     active++;
@@ -18,7 +21,7 @@ export function speechHandler({ apiKey = process.env.OPENAI_API_KEY, fetchApi = 
       const response = await fetchApi('https://api.openai.com/v1/audio/speech', {
         method: 'POST', signal: abort.signal,
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-4o-mini-tts', voice: 'coral', input: text.trim(),
+        body: JSON.stringify({ model: 'gpt-4o-mini-tts', voice, input: text.trim(),
           instructions: 'Speak clearly, warmly, and concisely, like a helpful colleague. Read the supplied text exactly.',
           response_format: 'mp3' }),
       });

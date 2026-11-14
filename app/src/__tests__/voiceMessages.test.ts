@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { upsertMessage, visibleMessages, MESSAGE_LIFETIME, type VoiceMessage } from '../voice/messages';
+import { upsertMessage, visibleMessages, statusMessage, MESSAGE_LIFETIME, type VoiceMessage } from '../voice/messages';
 
 it('keeps only the three newest messages and updates live bubbles in place', () => {
   let messages: VoiceMessage[] = [];
@@ -14,4 +14,13 @@ it('expires old replies while keeping live transcription and pending handoffs', 
   let messages = upsertMessage([], { id: 'old', role: 'assistant', text: 'done' }, 0);
   messages = upsertMessage(messages, { id: 'live', role: 'user', text: 'speaking', pending: true }, 0);
   expect(visibleMessages(messages, MESSAGE_LIFETIME + 1).map(m => m.id)).toEqual(['live']);
+});
+
+it('turns status and log responses into assistant bubbles without task links', () => {
+  for (const state of ['status', 'log']) {
+    const item = statusMessage('reply', { state, reply: 'Codex is idle.' });
+    expect(item).toEqual({ id: 'reply', role: 'assistant', text: 'Codex is idle.' });
+    expect(upsertMessage([], item!, 0)[0].taskId).toBeUndefined();
+  }
+  expect(statusMessage('reply', { state: 'assigned', reply: 'Started' })).toBeNull();
 });

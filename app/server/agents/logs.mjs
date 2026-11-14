@@ -2,10 +2,11 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const safe = (value) => String(value ?? '')
+export const redact = (value) => String(value ?? '')
   .replace(/\b(?:sk-[\w-]{12,}|Bearer\s+[^\s,}]+)\b/gi, '[redacted]')
   .replace(/\b(?:api[_-]?key|token|password|secret|[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*[:=]\s*[^\s,}]+/gi, '[redacted]')
   .slice(0, 500);
+const safe = redact;
 const contentText = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter(b => ['text', 'input_text', 'output_text'].includes(b?.type)).map(b => b.text).join(' ') : '';
 export function parseLog(lines, kind) {
   const result = { prompt: null, messages: [], tools: [] };
@@ -33,6 +34,30 @@ export function parseLog(lines, kind) {
   result.tools = result.tools.slice(-12);
   return result;
 }
+export function parseCursorStream(lines) {
+  const result = { prompt: null, messages: [], tools: [] };
+  for (const line of lines) {
+    let row; try { row = JSON.parse(line); } catch { continue; }
+    const at = row.timestamp || null;
+    if (row.type === 'user') {
+      const text = safe(contentText(row.message?.content ?? row.content));
+      if (text) result.prompt = { text, at };
+    } else if (row.type === 'assistant') {
+      const text = safe(contentText(row.message?.content ?? row.content));
+      if (text) result.messages.push({ text, at });
+    } else if (row.type === 'tool_call') {
+      const call = row.tool_call ?? {};
+      const name = call.name ?? row.name ?? Object.keys(call)[0] ?? 'tool';
+      result.tools.push({ name: safe(name).slice(0, 80), args: '', at });
+    } else if (row.type === 'result' && typeof row.result === 'string') {
+      const text = safe(row.result);
+      if (text) result.messages.push({ text, at });
+    }
+  }
+  result.messages = result.messages.slice(-8);
+  result.tools = result.tools.slice(-12);
+  return result;
+}
 async function newest(root, match, depth) {
   let best = null;
   async function visit(dir, level) {
@@ -47,7 +72,10 @@ async function newest(root, match, depth) {
   await visit(root, 0);
   return best?.path;
 }
-export async function agentLog(provider, home = os.homedir()) {
+export async function agentLog(provider, home = os.homedir(), cursorStdout = '') {
+  if (provider === 'cursor') return cursorStdout?.trim()
+    ? { available: true, ...parseCursorStream(cursorStdout.split(/\r?\n/)) }
+    : { available: false, reason: 'No Cursor task output found' };
   if (!['claude', 'codex'].includes(provider)) return { available: false, reason: 'No known session log for this agent' };
   const file = provider === 'claude' ? await newest(path.join(home, '.claude/projects'), n => n.endsWith('.jsonl'), 2) : await newest(path.join(home, '.codex/sessions'), n => n.startsWith('rollout-') && n.endsWith('.jsonl'), 5);
   if (!file) return { available: false, reason: 'No session log found' };

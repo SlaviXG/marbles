@@ -101,9 +101,26 @@ describe('agent canvas mapping', () => {
     expect(cursor.status).toBe('unavailable');
     expect(missing.status).toBe('unavailable');
   });
+
+  it('animates supported Cursor CLI tasks as working', () => {
+    const cursor = { ...agent('cursor', true), command: 'cursor-agent' };
+    const running = { ...task, agentId: 'cursor', status: 'running' as const };
+    expect(composeGraph({}, [cursor], [running]).nodes[0]).toMatchObject({
+      status: 'running', activity: 'working', label: 'cursor',
+    });
+  });
 });
 
 describe('swarm graph', () => {
+  it('shows routed solo and swarm badges', () => {
+    const agent = {id:'codex',name:'codex',kind:'cli' as const,command:'codex',path:'/bin/codex',version:null,available:true,codingAgent:true};
+    const routing = {mode:'solo' as const,reason:'A focused deliverable fits one agent.',signals:{privateInputs:false,files:0,searchBreadth:false,sections:0,subparts:0,estimatedSize:10}};
+    const task = {id:'t',agentId:'codex',prompt:'Summarize',status:'running' as const,createdAt:'',updatedAt:'',stdout:'',stderr:'',artifacts:[],routing};
+    const swarm = {id:'s',goal:'Search logs',mode:'swarm' as const,agents:['codex'],status:'running' as const,createdAt:'',endedAt:null,runs:[],blackboard:[],artifacts:[],reward:null,success:null,tokenProxy:0,contributions:{},rationale:'',lesson:'',routing:{...routing,mode:'swarm' as const}};
+    const graph=composeGraph({},[agent],[task],false,[swarm]);
+    expect(graph.nodes.find(n=>n.id==='task:t')?.badge).toBe('solo');
+    expect(graph.nodes.find(n=>n.id==='swarm:s')?.badge).toBe('swarm');
+  });
   it('links participants, recent posts and shared artifacts to one swarm node', () => {
     const agents = ['codex', 'claude'].map(id => ({ id, name: id, kind: 'cli' as const, command: id, path: `/bin/${id}`, version: null, available: true, codingAgent: true }));
     const swarm = { id: 's1', goal: 'Make a report', mode: 'swarm' as const, agents: ['codex', 'claude'], status: 'running' as const,

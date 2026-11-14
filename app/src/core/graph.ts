@@ -13,6 +13,7 @@ export interface GNode {
   activityKey?: string;
   artifactCount?: number;
   artifactReady?: boolean;
+  badge?: 'solo' | 'swarm';
   x?: number;
   y?: number;
   fx?: number;
@@ -48,8 +49,9 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   const agentNodes = new Map<string, GNode>();
   visibleAgents.forEach((agent, index) => {
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
-    const status = !agent.available || agent.kind !== 'cli' || !['codex', 'claude'].includes(agent.id)
-      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle';
+    const supported = ['codex', 'claude'].includes(agent.id) || agent.id === 'cursor' && ['cursor-agent', 'agent'].includes(agent.command ?? '');
+    const status = agent.status ?? (!agent.available || agent.kind !== 'cli' || !supported
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
     const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     node.status = status;
@@ -63,7 +65,15 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     agentNodes.set(agent.id, node);
   });
   for (const [agentId, parent] of agentNodes) {
-    const files = tasks.slice(0, 30).filter(task => task.agentId === agentId)
+    const agentTasks = tasks.slice(0, 30).filter(task => task.agentId === agentId);
+    const routed = agentTasks.find(task => task.routing);
+    if (routed) {
+      const side = parent.x! < 0 ? -1 : 1;
+      const node = pinned(`task:${routed.id}`, (routed.title || routed.prompt).slice(0, 30), 'task', parent.x! + side * 70, parent.y! + 75);
+      node.badge = routed.routing!.mode;
+      nodes.push(node); links.push({ source: parent.id, target: node.id });
+    }
+    const files = agentTasks
       .flatMap(task => task.artifacts.filter(isCanvasArtifact).map(artifact => ({ task, artifact })));
     if (!files.length) continue;
     const side = parent.x! < 0 ? -1 : 1;
@@ -95,6 +105,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     parent.status = ['running', 'evaluating'].includes(swarm.status) ? 'running' : 'idle';
     parent.activity = parent.status === 'running' ? 'working' : swarm.status === 'completed' ? 'done' : swarm.status === 'failed' ? 'failed' : 'waiting';
     parent.activityKey = `${swarm.id}:${swarm.status}`;
+    parent.badge = swarm.routing?.mode;
     nodes.push(parent);
     for (const agentId of swarm.agents) if (agentNodes.has(agentId)) links.push({ source: parent.id, target: `agent:${agentId}` });
     for (const [index, post] of (swarm.blackboard ?? []).slice(-3).entries()) {

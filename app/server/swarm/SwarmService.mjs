@@ -7,6 +7,7 @@ import { SwarmBlackboard } from './SwarmBlackboard.mjs';
 import { buildSwarmPrompt } from './swarmPrompt.mjs';
 import { teamReward } from './teamReward.mjs';
 import { AgentStats } from './AgentStats.mjs';
+import { writeFixtures } from '../scenarios/scenarios.mjs';
 
 const now = () => new Date().toISOString();
 const error = (message, code = 'INVALID') => Object.assign(new Error(message), { code });
@@ -15,7 +16,7 @@ async function filesIn(dir) {
   try { return (await scanArtifacts(dir, dir)).filter(file => !file.path.startsWith('eval/')); } catch { return []; }
 }
 export async function heuristicEvaluator({ swarmDir, soloDir, blackboard = [] }) {
-  const dir = soloDir ?? path.join(swarmDir, 'shared');
+  const dir = path.join(soloDir ?? swarmDir, 'shared');
   const files = await filesIn(dir);
   let hasFiles = false;
   for (const file of files) { try { if ((await fs.stat(path.join(dir, file.path))).size > 0) { hasFiles = true; break; } } catch {} }
@@ -33,11 +34,11 @@ export class SwarmService {
     const swarm = this.get(id); if (!swarm) return null;
     const board = this.boards.get(id); if (board) await board.poll();
     let artifacts = swarm.artifacts;
-    if (swarm.mode === 'swarm') { try { artifacts = await scanArtifacts(path.join(this.root, 'swarms', id, 'shared'), this.root); } catch {} }
+    if (swarm.mode === 'swarm') { try { artifacts = await scanArtifacts(path.join(swarm.dir, 'shared'), path.dirname(path.dirname(swarm.dir))); } catch {} }
     return { ...swarm, blackboard: board?.read(200) ?? swarm.blackboard, artifacts };
   }
   isBusy(agentId) { return this.reservations.has(agentId) || this.swarms.some(s => ['running', 'evaluating'].includes(s.status) && s.agents.includes(agentId)); }
-  async start({ goal, agents, mode = 'swarm', maxTurns, concurrency, size = 2 } = {}) {
+  async start({ goal, agents, mode = 'swarm', maxTurns, concurrency, size = 2, fixtures = [], privateFixtures = {}, routing, workspaceRoot: runRoot } = {}) {
     if (typeof goal !== 'string' || !goal.trim() || goal.length > 6000) throw error('Enter a goal under 6,000 characters');
     if (!['swarm', 'best-of-n'].includes(mode)) throw error('Invalid swarm mode');
     if (agents !== undefined && (!Array.isArray(agents) || agents.length < 1 || agents.length > 4 || new Set(agents).size !== agents.length || agents.some(id => typeof id !== 'string'))) throw error('Choose 1 to 4 distinct agents');
@@ -57,16 +58,25 @@ export class SwarmService {
       if (this.isBusy(id) || this.taskService?.isBusy(id)) throw error(`Agent ${id} is busy`, 'AGENT_BUSY');
     }
     ids.forEach(id => this.reservations.add(id));
-    const id = randomUUID(), dir = path.join(this.root, 'swarms', id);
+    const id = randomUUID(), activeRoot = runRoot ?? this.root, dir = path.join(activeRoot, 'swarms', id);
     try { await fs.mkdir(dir, { recursive: true }); } catch (e) { ids.forEach(id => this.reservations.delete(id)); throw e; }
     let board;
     try {
       board = mode === 'swarm' ? await new SwarmBlackboard({ dir, agents: ids }).init() : null;
       if (board) await Promise.all(ids.map(agentId => fs.writeFile(path.join(dir, 'posts', `${agentId}.jsonl`), '', { flag: 'a' })));
       await fs.writeFile(path.join(dir, 'lessons.jsonl'), this.stats.lessons.slice(-5).map(lesson => JSON.stringify(lesson)).join('\n') + (this.stats.lessons.length ? '\n' : ''));
+      if (mode === 'swarm') {
+        await writeFixtures(dir, fixtures);
+        for (const [index, agentId] of ids.entries()) {
+          const privateDir = path.join(dir, 'private', agentId);
+          await writeFixtures(privateDir, privateFixtures[index] ?? []);
+        }
+      }
     } catch (e) { ids.forEach(id => this.reservations.delete(id)); throw e; }
     const swarm = { id, goal: goal.trim(), mode, agents: ids, status: 'running', createdAt: now(), endedAt: null,
-      maxTurns: maxTurns ?? Math.min(8, 2 * ids.length), concurrency: concurrency ?? Math.min(ids.length, 3), runs: [], blackboard: [], artifacts: [], reward: null, success: null, tokenProxy: 0, contributions: {}, rationale: '', lesson: '' };
+      maxTurns: maxTurns ?? Math.min(8, 2 * ids.length), concurrency: concurrency ?? Math.min(ids.length, 3), runs: [], blackboard: [], artifacts: [], reward: null, success: null, tokenProxy: 0, contributions: {}, rationale: '', lesson: '', routing };
+    swarm.dir = dir;
+    swarm.fixtures = fixtures; swarm.privateFixtures = privateFixtures;
     this.swarms.push(swarm); if (this.swarms.length > 50) this.swarms.shift();
     this.children.set(id, new Set()); if (board) this.boards.set(id, board);
     const timer = setTimeout(() => { swarm.timedOut = true; for (const child of this.children.get(id) ?? []) child.kill?.(); }, this.timeoutMs);
@@ -88,18 +98,20 @@ export class SwarmService {
       await Promise.all(Array.from({ length: Math.min(swarm.concurrency, swarm.agents.length) }, async () => {
         while (next < swarm.agents.length && swarm.status !== 'cancelled' && !swarm.timedOut) {
           const id = swarm.agents[next++];
-          const soloDir = path.join(dir, 'solo', id); await fs.mkdir(soloDir, { recursive: true });
-          await this.run(swarm, detected.find(a => a.id === id), swarm.goal, soloDir, 1);
-          const files = await filesIn(soloDir);
+          const soloDir = path.join(dir, 'solo', id), sharedDir = path.join(soloDir, 'shared'); await fs.mkdir(sharedDir, { recursive: true });
+          await writeFixtures(soloDir, swarm.fixtures);
+          await writeFixtures(soloDir, swarm.privateFixtures[swarm.agents.indexOf(id)] ?? []);
+          await this.run(swarm, detected.find(a => a.id === id), `${swarm.goal}\nRead input/ and write the requested deliverable in shared/.`, soloDir, 1);
+          const files = await filesIn(sharedDir);
           const evaluation = await this.evaluate({ goal: swarm.goal, swarmDir: dir, soloDir, blackboard: [], files, participantIds: [id] }, detected, dir);
-          results.push({ agentId: id, evaluation, soloDir, files });
+          results.push({ agentId: id, evaluation, soloDir, sharedDir, files });
         }
       }));
       if (swarm.status === 'cancelled') return;
       if (!results.length) { swarm.status = 'failed'; return; }
       swarm.status = 'evaluating';
       const best = results.sort((a, b) => b.evaluation.score - a.evaluation.score)[0];
-      swarm.winnerId = best.agentId; swarm.artifacts = await scanArtifacts(best.soloDir, this.root);
+      swarm.winnerId = best.agentId; swarm.artifacts = await scanArtifacts(best.sharedDir, path.dirname(path.dirname(dir)));
       await this.finish(swarm, best.evaluation);
       return;
     }
@@ -112,7 +124,7 @@ export class SwarmService {
         for (const id of swarm.agents) {
           if (busy.size >= swarm.concurrency || launched >= swarm.maxTurns || done.has(id) || busy.has(id)) continue;
           busy.add(id); launched++; const turn = (turns.get(id) ?? 0) + 1; turns.set(id, turn); board.setTurn(id, turn);
-          const prompt = buildSwarmPrompt({ goal: swarm.goal, swarmDir: dir, lessons: this.stats.lessons.slice(-5), budget: swarm.maxTurns, agentId: id, participantIds: swarm.agents });
+          const prompt = buildSwarmPrompt({ goal: swarm.goal, swarmDir: dir, lessons: this.stats.lessons.slice(-5), budget: swarm.maxTurns, agentId: id, participantIds: swarm.agents }) + (swarm.privateFixtures[swarm.agents.indexOf(id)]?.length ? `\nYour private inputs: private/${id}/. Read only this private directory and share relevant findings through your post file.` : '');
           this.run(swarm, detected.find(a => a.id === id), prompt, dir, turn, { MARBLES_SWARM_AGENT: id, MARBLES_SWARM_DIR: dir }).then(async () => {
             await board.poll(); for (const post of board.read()) if (post.kind === 'done') done.add(post.agentId);
           }).catch(e => { swarm.error = e.message; }).finally(() => { busy.delete(id); schedule(); });
@@ -123,7 +135,7 @@ export class SwarmService {
     });
     await board.poll(); swarm.blackboard = board.read(200);
     if (swarm.status === 'cancelled') return;
-    swarm.artifacts = await scanArtifacts(path.join(dir, 'shared'), this.root);
+    swarm.artifacts = await scanArtifacts(path.join(dir, 'shared'), path.dirname(path.dirname(dir)));
     swarm.status = 'evaluating';
     const evaluation = await this.evaluate({ goal: swarm.goal, swarmDir: dir, blackboard: swarm.blackboard, files: swarm.artifacts, participantIds: swarm.agents }, detected, dir);
     await this.finish(swarm, evaluation);
@@ -149,7 +161,7 @@ export class SwarmService {
     const agent = detected.find(a => a.id === 'codex' && !taskCapability(a)) ?? detected.find(a => !taskCapability(a));
     if (!agent) return heuristicEvaluator(context);
     const evalDir = path.join(dir, 'eval'); await fs.mkdir(evalDir, { recursive: true });
-    const prompt = `Evaluate the completed team goal. Inspect deliverables at ${context.soloDir ?? path.join(dir, 'shared')} and the blackboard excerpt below. Write ONLY a JSON file at ${path.join(evalDir, 'evaluation.json')} with keys score (0..1), contributions (object of participant ID to share, keyed only by these participant IDs: ${JSON.stringify(context.participantIds)}), lesson (short string), rationale (string). Goal: ${context.goal}\nFiles: ${JSON.stringify(context.files).slice(0, 6000)}\nBlackboard: ${JSON.stringify(context.blackboard).slice(-8000)}`;
+    const prompt = `Evaluate the completed team goal. Inspect deliverables at ${path.join(context.soloDir ?? dir, 'shared')} and the blackboard excerpt below. Write ONLY a JSON file at ${path.join(evalDir, 'evaluation.json')} with keys score (0..1), contributions (object of participant ID to share, keyed only by these participant IDs: ${JSON.stringify(context.participantIds)}), lesson (short string), rationale (string). Goal: ${context.goal}\nFiles: ${JSON.stringify(context.files).slice(0, 6000)}\nBlackboard: ${JSON.stringify(context.blackboard).slice(-8000)}`;
     let child; const children = this.children.get(path.basename(dir));
     try {
       const launch = launcher(agent, prompt, evalDir);
@@ -163,11 +175,11 @@ export class SwarmService {
   normalize(value, participantIds = []) {
     if (!value || typeof value.score !== 'number' || !Number.isFinite(value.score) || typeof value.lesson !== 'string' || typeof value.rationale !== 'string' || !value.contributions || typeof value.contributions !== 'object' || Array.isArray(value.contributions)) throw error('Invalid evaluation');
     const participants = new Set(participantIds);
-    return { score: clamp(value.score), contributions: Object.fromEntries(Object.entries(value.contributions).filter(([id, n]) => participants.has(id) && typeof n === 'number' && Number.isFinite(n)).map(([id, n]) => [id, clamp(n)])), lesson: value.lesson.slice(0, 500), rationale: value.rationale.slice(0, 2000) };
+    return { score: clamp(value.score), contributions: Object.fromEntries(Object.entries(value.contributions).filter(([id, n]) => participants.has(id) && typeof n === 'number' && Number.isFinite(n)).map(([id, n]) => [id, clamp(n)])), lesson: value.lesson.slice(0, 500), rationale: value.rationale.slice(0, 2000), checks: Array.isArray(value.checks) ? value.checks : [] };
   }
   async finish(swarm, evaluation) {
     if (swarm.status === 'cancelled') return; swarm.success = evaluation.score; swarm.reward = teamReward(evaluation.score, swarm.tokenProxy, swarm.agents.length * this.perAgentCharBudget);
-    swarm.contributions = evaluation.contributions; swarm.lesson = evaluation.lesson; swarm.rationale = evaluation.rationale;
+    swarm.contributions = evaluation.contributions; swarm.lesson = evaluation.lesson; swarm.rationale = evaluation.rationale; swarm.checks = evaluation.checks;
     await this.stats.record(swarm.agents, swarm.reward, evaluation.contributions, evaluation.lesson);
     swarm.status = swarm.timedOut ? 'failed' : 'completed';
   }

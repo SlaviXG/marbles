@@ -330,6 +330,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         prev.status = n.status;
         prev.progress = n.progress;
         prev.activity = n.activity;
+        prev.badge = n.badge;
         prev.activityKey = n.activityKey;
         prev.artifactCount = n.artifactCount;
         prev.artifactReady = n.artifactReady;
@@ -758,6 +759,13 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           }
           if (node.type === 'artifact') {
             drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false);
+          }
+          if (node.badge) {
+            ctx.fillStyle = '#0d1117';
+            ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
+            ctx.fillStyle = '#ffffff'; ctx.font = '3px ui-sans-serif, system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(node.badge, node.x, node.y);
           }
           // Spring-animated ring: scales + fades in/out with carried velocity.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;

@@ -111,13 +111,20 @@ are accepted. It prefers the clearest match, then the earliest occurrence,
 so later request words do not displace an exact wake word. This is text
 similarity, not a calibrated acoustic confidence score. Saying the wake
 phrase alone gets a spoken acknowledgement without launching a task.
-Word timestamps preserve
-the command after the wake phrase while dropping preceding room/playback audio.
+Segment timestamps preserve the utterance containing the wake word while dropping
+earlier room/playback audio. Missing timestamps fall back to the audible onset
+instead of rejecting an otherwise recognized wake word. OpenAI removes the wake
+prefix from the final command transcript.
 This is local ASR-based wake recognition rather than a trained keyword-only
 model; latency and accuracy depend on the device, accent, and room noise.
 An isolated inference failure retries with a fresh window after a short backoff.
-Repeated failures show the actual runtime error. Word alignment runs only after
-a possible wake phrase is detected, reducing background inference work.
+Repeated failures show the actual runtime error. Each window is decoded once with
+segment timestamps, avoiding a second word-alignment decode. The detector accepts
+quieter input (RMS 0.0015), applies bounded gain only to the local recognition copy,
+and performs a final check with 300 ms of trailing silence. If speech ends while
+inference is busy, the next window stays pinned to that speech instead of skipping
+it because the room has gone quiet. Quiet input alone still cannot open the cloud
+gate; the transcript must contain the wake word at the configured similarity.
 
 After wake-up, an adaptive sound trigger commits phrases after 700 ms of quiet
 and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
@@ -125,9 +132,10 @@ and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
 is sent to OpenAI. Initial command audio is buffered and paced, with a bounded
 backlog and visible errors if the connection cannot keep up.
 
-Final replies are read with OpenAI `gpt-4o-mini-tts`, Coral voice, through
-`POST /api/voice/speech`. The wake word interrupts playback; **Read aloud**
-replays a message. Text stays visible
+Final replies are read with OpenAI `gpt-4o-mini-tts`, Marin voice, through
+`POST /api/voice/speech`. Marin is used for automatic replies and **Read aloud**;
+previously saved browser voice choices are ignored. There is no voice picker.
+The wake word interrupts playback; **Read aloud** replays a message. Text stays visible
 if audio fails or the browser blocks playback. Code blocks and URLs are simplified
 for speech and long replies are shortened. Up to three replies queue, with three
 clips cached in memory. The voice is AI-generated. Text-to-speech uses the same
@@ -150,7 +158,7 @@ the next spoken answer includes the original request as clarification context.
 A clear task becomes a prompt containing both the original wording and the
 structured interpretation.
 
-The existing TaskService chooses an installed, supported, idle Codex or Claude
+The existing TaskService chooses an installed, supported, idle Codex, Claude, or Cursor
 CLI. Desktop-only agents and unsupported launchers are excluded. Reservations
 prevent concurrent voice/manual requests from assigning the same agent. Busy
 agents leave the request available for **Retry task**; retry IDs prevent repeated
@@ -161,6 +169,19 @@ Tasks run in the existing fresh per-task folders under `MARBLES_WORKSPACE_DIR`
 existing project's path if that is the intended target. In-memory task history,
 idle tracking, and retry IDs reset when the server restarts; idle means no active
 Marbles-managed task, not every unrelated CLI session on the machine.
+
+To enable Cursor tasks, install its headless CLI with
+`curl https://cursor.com/install -fsS | bash` and run `cursor-agent login`.
+Marbles detects `cursor-agent` or Cursor's newer `agent` command. Cursor.app
+without the CLI remains visible but cannot launch tasks. Cursor logs in Marbles
+come from captured task or swarm stream output; no previous Cursor session log
+is available before a Marbles run.
+
+Spoken status questions such as “what's happening with Codex?” and log requests
+such as “give me the log” report recent activity without starting a run. The
+reply appears in the conversation and uses the existing speech playback.
+`POST /api/assistant/ask` accepts `{ "question": "what is Codex doing?" }` from
+the same local app origins as voice commands and uses the same intent path.
 
 The relay accepts one voice session from local app origins on ports 5173/5174.
 The server binds to loopback and limits payloads, backlogs, and session duration. Closing sockets do not reserve the voice
@@ -190,6 +211,29 @@ the agent before the agent glides to its home slot. Files remain on the canvas
 and can be reopened. Simultaneous completions queue and never replace an active
 presentation or an unrelated detail surface being read. Gesture pan and zoom
 apply to the open reader; motion preferences disable animated transitions.
+
+## Scenarios
+
+The office scenario harness compares independent solo attempts with a shared
+swarm at the same number of agent runs. Eight deterministic fixtures cover
+summaries, expenses, sales, policy changes, offsite planning, split roster
+information, log search, and email triage. Each mode is scored by a local rubric;
+the reward also discounts captured output length. Run the fake agent pipeline
+without CLI usage:
+
+```sh
+cd app
+npm run scenarios -- --dry-run
+npm run scenarios -- --dry-run --scenarios=meeting-summary,split-info-roster --agents=codex,claude --keep
+```
+
+Results are written to `scenario-results/<timestamp>.jsonl`, a matching Markdown
+report, and `scenario-results/latest.md`. Workspaces under
+`MARBLES_WORKSPACE_DIR/scenarios/<runId>/` are removed after scoring unless
+`--keep` is set. Omit `--dry-run` to run installed CLI agents. `POST /api/route`
+returns the cheap solo or swarm decision; `POST /api/tasks/auto` applies it.
+`POST /api/scenarios/run` starts a background run and returns an id; poll
+`GET /api/scenarios/runs/:id` for progress.
 
 ## Swarm mode
 

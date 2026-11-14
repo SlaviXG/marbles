@@ -62,3 +62,40 @@ it('drops invalid frames instead of passing NaNs to the runtime', async () => {
   expect(worker.postMessage).toHaveBeenCalledTimes(1);
   detector.dispose();
 });
+
+it('rechecks a completed word after the speaker goes quiet while inference is busy', async () => {
+  const { detector, worker, wake, load } = setup();
+  worker.onmessage({ data: { type: 'ready' } }); await load;
+  detector.push(new Float32Array(24000).fill(0.02));
+  const first = worker.postMessage.mock.calls.at(-1)[0];
+  // The end of "Marbles" arrives while the first, partial-word job is busy.
+  detector.push(new Float32Array(7200).fill(0.02));
+  detector.push(new Float32Array(72000));
+  expect(worker.postMessage).toHaveBeenCalledTimes(2);
+  worker.onmessage({ data: { type: 'result', epoch: first.epoch, end: first.end, length: first.length } });
+  expect(worker.postMessage).toHaveBeenCalledTimes(3);
+  const final = worker.postMessage.mock.calls.at(-1)[0];
+  expect(final.end).toBe(38400); // Speech plus 300 ms, not the later silence.
+  expect(final.audio.some((value: number) => value > 0)).toBe(true);
+  worker.onmessage({ data: { type: 'result', start: 0.5, epoch: final.epoch, end: final.end, length: final.length } });
+  expect(wake).toHaveBeenCalledOnce();
+  detector.dispose();
+});
+
+it('recognizes quiet input and stops decoding after the final padded window', async () => {
+  const { detector, worker, load } = setup();
+  worker.onmessage({ data: { type: 'ready' } }); await load;
+  detector.push(new Float32Array(24000).fill(0.0001));
+  expect(worker.postMessage).toHaveBeenCalledTimes(1);
+  detector.push(new Float32Array(24000).fill(0.002));
+  expect(worker.postMessage).toHaveBeenCalledTimes(2);
+  detector.push(new Float32Array(24000));
+  let job = worker.postMessage.mock.calls.at(-1)[0];
+  worker.onmessage({ data: { type: 'result', epoch: job.epoch, end: job.end, length: job.length } });
+  expect(worker.postMessage).toHaveBeenCalledTimes(3);
+  job = worker.postMessage.mock.calls.at(-1)[0];
+  worker.onmessage({ data: { type: 'result', epoch: job.epoch, end: job.end, length: job.length } });
+  detector.push(new Float32Array(24000 * 4));
+  expect(worker.postMessage).toHaveBeenCalledTimes(3);
+  detector.dispose();
+});

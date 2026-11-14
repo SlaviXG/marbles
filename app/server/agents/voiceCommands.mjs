@@ -1,11 +1,23 @@
+import { gatherStatus, summariseStatus } from './statusReporter.mjs';
+
 const fields = {
   decision: { type: 'string', enum: ['task', 'clarify', 'ignore'] },
   collaboration: { type: 'string', enum: ['solo', 'swarm'] },
+  intent: { type: 'string', enum: ['task', 'swarm', 'status', 'log'] },
+  targetAgents: { type: 'array', items: { type: 'string' } },
   problem: { type: 'string' }, objective: { type: 'string' },
   constraints: { type: 'array', items: { type: 'string' } },
   successCriteria: { type: 'array', items: { type: 'string' } },
   clarification: { type: 'string' },
 };
+
+export function classifyQuery(transcript) {
+  const text = String(transcript ?? '');
+  const targets = [...new Set([...text.matchAll(/\b(codex|claude(?: code)?|cursor)\b/gi)].map(match => match[1].toLowerCase().startsWith('claude') ? 'claude' : match[1].toLowerCase()))];
+  if (/what(?:'s| is) (?:happening|going on)|what (?:is|are) .* doing|\bstatus\b|\bprogress\b|how(?:'s| is) .* doing|are .* (?:done|finished|working|doing)|what .* working on/i.test(text)) return { intent: 'status', targetAgents: targets };
+  if (/\blogs?\b|recent activity|what did .* do|show me .* (?:output|history)/i.test(text)) return { intent: 'log', targetAgents: targets };
+  return { intent: /\b(swarm|as a team|together|all (the )?agents|everyone)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
+}
 
 export async function interpretSpeech(transcript, { apiKey = process.env.OPENAI_API_KEY, fetchApi = fetch } = {}) {
   if (!apiKey) throw new Error('Set OPENAI_API_KEY in .env and restart the server.');
@@ -19,6 +31,8 @@ export async function interpretSpeech(transcript, { apiKey = process.env.OPENAI_
         'Use decision task only for a clear request or question addressed to an assistant. ' +
         'Use ignore for background speech, greetings, filler, or no request. ' +
         'Use clarify when the desired outcome or an essential reference is unclear. Ask one concise question. ' +
+        'Set intent status for questions about what agents, tasks, or swarms are doing or their progress. Set intent log for logs, recent activity, or what an agent did. ' +
+        'Set intent task for new work by one agent and swarm for new work by agents together. Extract targetAgents from codex, claude or claude code, and cursor; empty means all. ' +
         'Use collaboration swarm when the user asks agents to work together, as a team, as a swarm, or all agents. Otherwise solo. ' +
         'Preserve the actual problem, desired outcome, constraints, and success criteria. ' +
         'Do not invent files, repository paths, requirements, or permissions. Do not execute the task. ' +
@@ -36,10 +50,12 @@ export async function interpretSpeech(transcript, { apiKey = process.env.OPENAI_
   let intent;
   try { intent = JSON.parse(text); } catch { throw new Error('Could not understand the task. Please rephrase.'); }
   if (!['task', 'clarify', 'ignore'].includes(intent.decision) ||
-      (intent.collaboration !== undefined && !['solo', 'swarm'].includes(intent.collaboration)) ||
+      !['solo', 'swarm'].includes(intent.collaboration) ||
+      !['task', 'swarm', 'status', 'log'].includes(intent.intent) ||
+      !Array.isArray(intent.targetAgents) || intent.targetAgents.length > 20 || intent.targetAgents.some(id => !['codex', 'claude', 'cursor'].includes(id)) ||
       !['problem', 'objective', 'clarification'].every(key => typeof intent[key] === 'string' && intent[key].length <= 2000) ||
       !['constraints', 'successCriteria'].every(key => Array.isArray(intent[key]) && intent[key].length <= 20 && intent[key].every(s => typeof s === 'string' && s.length <= 500)) ||
-      (intent.decision === 'task' && !intent.objective.trim()) ||
+      (intent.decision === 'task' && !['status', 'log'].includes(intent.intent) && !intent.objective.trim()) ||
       (intent.decision === 'clarify' && !intent.clarification.trim())) {
     throw new Error('Invalid task interpretation. Please rephrase.');
   }
@@ -60,10 +76,13 @@ export function buildVoicePrompt(transcript, intent) {
 }
 
 export class VoiceCommands {
-  constructor({ taskService, swarmService, interpret = interpretSpeech }) {
+  constructor({ taskService, swarmService, agentRegistry, readLog, summarize = summariseStatus, interpret = interpretSpeech }) {
     this.swarmService = swarmService;
     this.taskService = taskService;
     this.interpret = interpret;
+    this.agentRegistry = agentRegistry;
+    this.readLog = readLog;
+    this.summarize = summarize;
     this.requests = new Map();
     this.inflight = 0;
   }
@@ -81,10 +100,18 @@ export class VoiceCommands {
     this.inflight++;
     const entry = { transcript, settled: false };
     entry.promise = (async () => {
-      const intent = await this.interpret(transcript.trim());
+      const classified = classifyQuery(transcript.trim());
+      const intent = ['status', 'log'].includes(classified.intent)
+        ? { decision: 'task', collaboration: 'solo', intent: classified.intent, targetAgents: classified.targetAgents, problem: '', objective: '', constraints: [], successCriteria: [], clarification: '' }
+        : await this.interpret(transcript.trim());
       if (intent.decision !== 'task') return { state: intent.decision, intent };
+      if (['status', 'log'].includes(intent.intent)) {
+        const context = await gatherStatus({ targets: intent.targetAgents, agentRegistry: this.agentRegistry, taskService: this.taskService, swarmService: this.swarmService, readLog: this.readLog, includeLogs: intent.intent === 'log' });
+        const reply = await this.summarize(context, { question: transcript.trim() });
+        return { state: intent.intent, reply, context: { agents: context.agents, tasks: context.tasks, swarms: context.swarms }, intent };
+      }
       const prompt = buildVoicePrompt(transcript.trim(), intent);
-      if (intent.collaboration === 'swarm' || /\b(swarm|as a team|together|all (the )?agents|everyone)\b/i.test(transcript)) {
+      if (intent.intent === 'swarm' || intent.collaboration === 'swarm' || classified.intent === 'swarm') {
         if (!this.swarmService) throw new Error('Swarm service unavailable');
         const swarm = await this.swarmService.start({ goal: prompt, mode: 'swarm' });
         return { state: 'swarm', swarm, intent };

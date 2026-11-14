@@ -1,5 +1,5 @@
 import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from '@huggingface/transformers';
-import { hasWakePhrase, wakeStart } from './wakePhrase';
+import { normalizeWakeAudio, recognizedWakeStart } from './wakeAudio';
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
@@ -21,17 +21,12 @@ self.onmessage = async ({ data }: MessageEvent) => {
         self.postMessage({ type: 'result', end: data.end, length: data.length, epoch: data.epoch });
         return;
       }
-      // Ordinary room sound needs only a phrase check. Run the more costly
-      // cross-attention/timestamp alignment only for a possible wake phrase.
-      const textResult = await model(data.audio, { max_new_tokens: 72 });
-      const textOutput = Array.isArray(textResult) ? textResult[0] : textResult;
-      if (!hasWakePhrase(textOutput.text)) {
-        self.postMessage({ type: 'result', end: data.end, length: data.length, epoch: data.epoch });
-        return;
-      }
-      const result = await model(data.audio, { return_timestamps: 'word', max_new_tokens: 72 });
+      // Decode once with segment timestamps. A second word-alignment decode
+      // used to delay activation and could disagree with an initial match.
+      const audio = normalizeWakeAudio(data.audio);
+      const result = await model(audio, { return_timestamps: true, max_new_tokens: 72 });
       const output = Array.isArray(result) ? result[0] : result;
-      self.postMessage({ type: 'result', start: wakeStart(output.chunks ?? []), end: data.end, length: data.length, epoch: data.epoch });
+      self.postMessage({ type: 'result', start: recognizedWakeStart(output, data.audio), end: data.end, length: data.length, epoch: data.epoch });
     }
   } catch (error) {
     self.postMessage({ type: 'error', phase: data.type === 'load' ? 'load' : 'inference',

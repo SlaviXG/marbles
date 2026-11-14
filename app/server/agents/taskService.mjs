@@ -5,10 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 
 export const workspaceRoot = () => path.resolve(process.env.MARBLES_WORKSPACE_DIR || path.join(os.homedir(), 'marbles-workspace'));
-export const taskCapability = (agent) => agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : null;
+export const taskCapability = (agent) => agent.available === false ? agent.reason || 'Agent unavailable' : agent.kind !== 'cli' ? agent.id === 'cursor' ? 'Cursor CLI not installed. Install with: curl https://cursor.com/install -fsS | bash, then run `cursor-agent login`.' : 'Desktop app has no non-interactive CLI' : !['codex', 'claude', 'cursor'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : null;
 export function launcher(agent, prompt, dir) {
   if (taskCapability(agent)) throw new Error(taskCapability(agent));
   if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  if (agent.id === 'cursor') return { command: agent.path, args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
   return { command: agent.path, args: ['-p', prompt, '--permission-mode', 'acceptEdits'], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
 }
 const tail = (s, chunk) => (s + chunk).slice(-12000);
@@ -87,7 +88,7 @@ export class TaskService {
       const id = randomUUID();
       const dir = path.join(this.root, agent.id, id);
       await fs.mkdir(dir, { recursive: true });
-      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title };
+      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
       this.tasks.push(task);
       const launch = launcher(agent, task.prompt, dir);
       let child;
