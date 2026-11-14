@@ -1,7 +1,7 @@
 import { gatherStatus } from './statusReporter.mjs';
 import { agentLog } from './logs.mjs';
-import { ClaudeCoordinator, conciseReply } from './ClaudeCoordinator.mjs';
-export { buildVoicePrompt } from './ClaudeCoordinator.mjs';
+import { HermesCoordinator, conciseReply } from './HermesCoordinator.mjs';
+export { buildVoicePrompt } from './HermesCoordinator.mjs';
 
 export function classifyQuery(transcript) {
   const text = String(transcript ?? '');
@@ -17,7 +17,7 @@ const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,100}$/.t
 
 // The harness owns bounded conversation memory and idempotent request receipts.
 export class VoiceCommands {
-  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, coordinator = new ClaudeCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog }) }) {
+  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog }) }) {
     Object.assign(this, { taskService, swarmService, coordinator, agentRegistry, readLog, summarizeStatus: summarize });
     this.requests = new Map(); this.conversations = new Map(); this.summaries = new Map(); this.inflight = 0;
   }

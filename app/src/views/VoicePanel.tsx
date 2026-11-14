@@ -76,10 +76,10 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       : `Couldn’t finish: ${(record.title ?? 'your task').slice(0, 100)}. Open the task for details.`;
     try {
       const response = await fetch('/api/voice/result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: record.id, kind, conversationId: conversationId.current }), signal: AbortSignal.timeout(18_000) });
+        body: JSON.stringify({ id: record.id, kind, conversationId: conversationId.current }), signal: AbortSignal.timeout(55_000) });
       if (response.ok) { const data = await response.json(); if (typeof data.reply === 'string' && data.reply.trim()) text = data.reply; }
     } catch { /* A short local notice keeps results usable if synthesis fails. */ }
-    if (mounted.current) message({ id: `result:${kind}:${record.id}`, role: 'assistant', label: 'Marbles · Claude', text,
+    if (mounted.current) message({ id: `result:${kind}:${record.id}`, role: 'assistant', label: 'Marbles · Hermes', text,
       ...(kind === 'task' ? { taskId: record.id } : { swarmId: record.id }) });
   }
 
@@ -142,12 +142,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     requestQueue.current = requestQueue.current.then(async () => {
       if (!mounted.current) return;
       const id = `reply:${request.requestId}`;
-      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Claude', text, ...extra });
+      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Hermes', text, ...extra });
       reply('Planning…', { pending: true });
       try {
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request), signal: AbortSignal.timeout(45_000),
+          body: JSON.stringify(request), signal: AbortSignal.timeout(55_000),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not delegate the task.');

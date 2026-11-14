@@ -1,131 +1,96 @@
 import { expect, it, vi } from 'vitest';
-import { ClaudeCoordinator, buildVoicePrompt } from '../agents/ClaudeCoordinator.mjs';
-
+import { HermesCoordinator, buildVoicePrompt } from '../agents/HermesCoordinator.mjs';
 const plan = { problem: 'No demo plan', objective: 'Write demo.md', summary: 'I’ll draft a one-page plan, then verify it.', plan: ['Draft a one-page plan', 'Check timing and next steps'], assumptions: ['Five-minute demo'], constraints: ['Use Markdown'], successCriteria: ['Includes a timed demo script'], collaboration: 'solo', agentId: 'auto' };
-const tool = (name, input, id = 'tool-123') => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name, input }] });
-const answer = text => ({ stop_reason: 'end_turn', content: [{ type: 'text', text }] });
-function setup(...responses) {
-  const fetchApi = vi.fn();
-  responses.forEach(response => fetchApi.mockResolvedValueOnce({ ok: true, json: async () => response }));
+const runtime = { runtime: 'Hermes', module: 'run_agent', model: 'claude-sonnet-5-5' };
+function setup(behavior) {
   const task = { id: 'task-1234', agentId: 'codex', status: 'running', artifacts: [] };
   const taskService = { root: '/tmp/marbles-test', agentDetector: async () => [{ id: 'codex', kind: 'cli', available: true }], isBusy: () => false, snapshot: () => [], startIdle: vi.fn(async () => task), start: vi.fn(async () => task) };
-  const coordinator = new ClaudeCoordinator({ taskService, apiKey: 'secret-key', fetchApi });
-  return { coordinator, taskService, fetchApi, task };
+  const runner = vi.fn(behavior ?? (async (_payload, call) => { await call('delegate_work', plan); return { completed: false, interrupted: true, runtime }; }));
+  const coordinator = new HermesCoordinator({ taskService, apiKey: 'secret-key', runner });
+  return { coordinator, taskService, runner, task };
 }
-
-it('uses Claude tools, delegates a concrete plan, and keeps spoken acknowledgements brief', async () => {
-  const { coordinator, taskService, fetchApi } = setup(tool('delegate_work', plan), answer('I’ll draft and verify the plan. Codex is on it.'));
+it('hands reasoning and the tool loop to Hermes, then acknowledges a validated actual assignment', async () => {
+  const { coordinator, taskService, runner } = setup();
   const result = await coordinator.run({ transcript: 'Make a demo plan' });
-  expect(result.state).toBe('assigned'); expect(result.intent.assumptions).toEqual(['Five-minute demo']);
+  expect(result.state).toBe('assigned'); expect(result.runtime).toEqual(runtime);
+  expect(result.intent.assumptions).toEqual(['Five-minute demo']);
   const [prompt, metadata] = taskService.startIdle.mock.calls[0];
-  expect(prompt).toContain('Make a demo plan'); expect(prompt).toContain('Five-minute demo'); expect(prompt).toContain('Draft a one-page plan');
-  expect(metadata).toMatchObject({ source: 'voice', title: 'Write demo.md' });
-  const request = JSON.parse(fetchApi.mock.calls[0][1].body);
-  expect(fetchApi.mock.calls[0][0]).toBe('https://api.anthropic.com/v1/messages');
-  expect(fetchApi.mock.calls[0][1].headers['x-api-key']).toBe('secret-key');
-  expect(request.tool_choice).toEqual({ type: 'auto' });
-  expect(request.tools.map(tool => tool.name)).toContain('inspect_agent');
-  expect(fetchApi).toHaveBeenCalledOnce();
-  expect(result.reply.split(' ').length).toBeLessThanOrEqual(35);
+  expect(prompt).toContain('Make a demo plan'); expect(prompt).toContain('Five-minute demo');
+  expect(metadata).toMatchObject({ source: 'voice', title: 'Write demo.md', routing: { reason: expect.stringContaining('Hermes plan') } });
+  expect(runner.mock.calls[0][0].tools.map(tool => tool.name)).toContain('inspect_agent');
+  expect(runner.mock.calls[0][0].model).toBe('claude-sonnet-5-5');
+  expect(result.reply.split(' ').length).toBeLessThanOrEqual(25);
 });
-
-it('inspects real context before giving an answer without launching a worker', async () => {
-  const { coordinator, taskService, fetchApi } = setup(tool('inspect_context', {}), tool('respond', { decision: 'reply', reply: 'Codex is idle.' }));
-  const result = await coordinator.run({ transcript: 'What is Codex doing?' });
-  expect(result).toEqual({ state: 'reply', reply: 'Codex is idle.' });
-  expect(taskService.startIdle).not.toHaveBeenCalled();
-  const second = JSON.parse(fetchApi.mock.calls[1][1].body);
-  expect(second.messages.at(-1).content[0].content).toContain('codex');
-});
-
-it('asks one blocking question without delegating', async () => {
-  const { coordinator, taskService } = setup(tool('respond', { decision: 'clarify', reply: 'Which repository should I change?' }));
-  expect((await coordinator.run({ transcript: 'Fix that app', history: [] })).state).toBe('clarify');
+it('lets Hermes inspect context and answer without starting a worker', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => {
+    expect((await call('inspect_context', {})).result).toContain('codex');
+    await call('respond', { decision: 'reply', reply: 'Codex is idle.' });
+    return { interrupted: true, runtime };
+  });
+  expect((await coordinator.run({ transcript: 'What is Codex doing?' })).reply).toBe('Codex is idle.');
   expect(taskService.startIdle).not.toHaveBeenCalled();
 });
-
-it('requires inspection results before acting on a plan proposed in the same batch', async () => {
-  const batch = tool('inspect_context', {});
-  batch.content.push({ type: 'tool_use', id: 'premature-plan', name: 'delegate_work', input: plan });
-  const { coordinator, taskService, fetchApi } = setup(batch, tool('delegate_work', plan));
-  expect((await coordinator.run({ transcript: 'Make a demo plan' })).state).toBe('assigned');
-  expect(taskService.startIdle).toHaveBeenCalledOnce();
-  const second = JSON.parse(fetchApi.mock.calls[1][1].body);
-  expect(second.messages.at(-1).content.find(item => item.tool_use_id === 'premature-plan').is_error).toBe(true);
+it('supports one blocking question without delegating', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => {
+    await call('respond', { decision: 'clarify', reply: 'Which repository should I change?' }); return { runtime };
+  });
+  expect((await coordinator.run({ transcript: 'Fix that app' })).state).toBe('clarify');
+  expect(taskService.startIdle).not.toHaveBeenCalled();
 });
-
-it('ends on the actual receipt without a second provider request after work is accepted', async () => {
-  const { coordinator, taskService, fetchApi } = setup(tool('delegate_work', plan));
-  fetchApi.mockResolvedValueOnce({ ok: false, status: 503 });
-  const result = await coordinator.run({ transcript: 'Make a demo plan' });
-  expect(result.state).toBe('assigned'); expect(result.task.id).toBe('task-1234');
-  expect(result.reply).toContain('codex is on it'); expect(taskService.startIdle).toHaveBeenCalledOnce(); expect(fetchApi).toHaveBeenCalledOnce();
-});
-
-it('uses another idle agent if the preferred one became busy', async () => {
-  const { coordinator, taskService } = setup(tool('delegate_work', { ...plan, agentId: 'codex' }), answer('Another idle worker is on it.'));
-  taskService.start.mockRejectedValueOnce(Object.assign(new Error('Agent is busy'), { code: 'AGENT_BUSY' }));
-  await coordinator.run({ transcript: 'Make a demo plan' });
+it('preserves accepted work if the Hermes process fails afterwards', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => { await call('delegate_work', plan); throw new Error('runtime stopped'); });
+  expect((await coordinator.run({ transcript: 'Make a demo plan' })).task.id).toBe('task-1234');
   expect(taskService.startIdle).toHaveBeenCalledOnce();
 });
-
-it('uses the existing swarm runner for collaborative plans and keeps voice provenance', async () => {
-  const { coordinator, taskService } = setup(tool('delegate_work', { ...plan, collaboration: 'swarm' }), answer('Codex and Claude are preparing the demo together.'));
+it('prevents parallel Hermes callbacks from launching duplicate work', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => {
+    await Promise.all([call('delegate_work', plan), call('delegate_work', plan)]); return { runtime };
+  });
+  await coordinator.run({ transcript: 'Make a demo plan' }); expect(taskService.startIdle).toHaveBeenCalledOnce();
+});
+it('waits for an in-flight app acceptance when the Hermes process times out', async () => {
+  const { coordinator, taskService, task } = setup(async (_payload, call) => { void call('delegate_work', plan); throw new Error('runtime timeout'); });
+  let accept;
+  taskService.startIdle.mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
+  const pending = coordinator.run({ transcript: 'Make a plan' });
+  await vi.waitFor(() => expect(taskService.startIdle).toHaveBeenCalledOnce());
+  accept(task);
+  expect((await pending).task.id).toBe(task.id);
+  expect(taskService.startIdle).toHaveBeenCalledOnce();
+});
+it('falls back to an idle worker if the preferred agent becomes busy', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => { await call('delegate_work', { ...plan, agentId: 'codex' }); return { runtime }; });
+  taskService.start.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'AGENT_BUSY' }));
+  await coordinator.run({ transcript: 'Make a plan' }); expect(taskService.startIdle).toHaveBeenCalledOnce();
+});
+it('uses the existing swarm service and preserves voice provenance', async () => {
+  const { coordinator, taskService } = setup();
   const swarm = { id: 'swarm-123', agents: ['codex', 'claude'], status: 'running' };
   coordinator.swarmService = { start: vi.fn(async () => swarm) };
-  const result = await coordinator.run({ transcript: 'Have the agents work together on a demo plan' });
-  expect(result.state).toBe('swarm'); expect(swarm.source).toBe('voice');
-  expect(coordinator.swarmService.start.mock.calls[0][0].goal.length).toBeLessThanOrEqual(6000);
-  expect(taskService.startIdle).not.toHaveBeenCalled();
+  expect((await coordinator.run({ transcript: 'Have all agents work together on the demo' })).state).toBe('swarm');
+  expect(swarm.source).toBe('voice'); expect(taskService.startIdle).not.toHaveBeenCalled();
 });
-
-it.each(['max_tokens', 'refusal'])('does not act on an unfinished %s response', async stop_reason => {
-  const { coordinator, taskService } = setup({ ...tool('delegate_work', plan), stop_reason });
-  await expect(coordinator.run({ transcript: 'Make a plan' })).rejects.toThrow('did not finish');
-  expect(taskService.startIdle).not.toHaveBeenCalled();
-});
-
-it('validates an entire batch before launching any work', async () => {
-  const response = tool('delegate_work', plan);
-  response.content.push({ type: 'tool_use', id: 'second-tool', name: 'delegate_work', input: plan });
-  const { coordinator, taskService } = setup(response);
-  await expect(coordinator.run({ transcript: 'Make a plan' })).rejects.toThrow('single executable action');
-  expect(taskService.startIdle).not.toHaveBeenCalled();
-});
-
-it('keeps inspection failures in the loop so Claude can recover', async () => {
-  const { coordinator, fetchApi } = setup(tool('read_asset', { path: '../secret' }), tool('respond', { decision: 'reply', reply: 'That file is outside the task workspace.' }));
-  const result = await coordinator.run({ transcript: 'Read a file' });
-  expect(result.state).toBe('reply');
-  expect(JSON.parse(fetchApi.mock.calls[1][1].body).messages.at(-1).content[0].is_error).toBe(true);
-});
-
-it('bounds memory excerpts in worker prompts while preserving the exact current request', () => {
-  const request = 'Create a demo plan';
-  const prompt = buildVoicePrompt(request, plan, { selected: 'x'.repeat(20000) }, [{ role: 'user', content: 'y'.repeat(20000) }]);
-  expect(prompt).toContain(request); expect(prompt.length).toBeLessThanOrEqual(10000);
-});
-
-it('summarizes outcomes without reading raw logs aloud and falls back on provider failure', async () => {
-  const { coordinator, fetchApi } = setup(answer('The demo plan is ready in demo.md.'));
-  const record = { status: 'completed', title: 'Demo plan', artifacts: [{ name: 'demo.md' }], stdout: 'verbose log '.repeat(1000) };
-  expect(await coordinator.summarize(record)).toBe('The demo plan is ready in demo.md.');
-  expect(JSON.parse(fetchApi.mock.calls[0][1].body).messages[0].content.length).toBeLessThan(4500);
-  fetchApi.mockResolvedValueOnce({ ok: false, status: 500 });
-  const fallback = await coordinator.summarize({ ...record, status: 'failed' });
-  expect(fallback).toContain('Couldn’t finish'); expect(fallback).not.toContain('verbose log');
-});
-
-it('reports missing configuration without making a provider request', async () => {
-  const { coordinator, fetchApi } = setup(); coordinator.apiKey = '';
-  await expect(coordinator.run({ transcript: 'Make a plan' })).rejects.toMatchObject({ code: 'COORDINATOR_CONFIG' });
-  expect(fetchApi).not.toHaveBeenCalled();
-});
-
-it('removes execution tools for a status/log request and refuses an unexpected mutation', async () => {
-  const { coordinator, fetchApi, taskService } = setup(tool('delegate_work', plan));
+it('excludes execution tools for read-only questions and rejects an unexpected mutation', async () => {
+  const { coordinator, runner, taskService } = setup();
   await expect(coordinator.run({ transcript: 'What is Codex doing?', readOnly: true })).rejects.toThrow('Unsupported coordinator tool');
-  const tools = JSON.parse(fetchApi.mock.calls[0][1].body).tools.map(tool => tool.name);
-  expect(tools).not.toContain('delegate_work'); expect(tools).not.toContain('cancel_work');
+  expect(runner.mock.calls[0][0].tools.map(tool => tool.name)).not.toContain('delegate_work');
   expect(taskService.startIdle).not.toHaveBeenCalled();
+});
+it('accepts a native Hermes final answer and rejects an incomplete turn', async () => {
+  const { coordinator, runner } = setup(async () => ({ completed: true, reply: 'Ready.', runtime }));
+  expect((await coordinator.run({ transcript: 'Hello' })).reply).toBe('Ready.');
+  runner.mockResolvedValueOnce({ completed: false, reply: 'partial', runtime });
+  await expect(coordinator.run({ transcript: 'Hello' })).rejects.toThrow('did not finish');
+});
+it('bounds context excerpts while preserving the exact current request', () => {
+  const prompt = buildVoicePrompt('Make a plan', plan, { selected: 'x'.repeat(20000) }, [{ role: 'user', content: 'y'.repeat(20000) }]);
+  expect(prompt).toContain('Make a plan'); expect(prompt.length).toBeLessThanOrEqual(10000);
+});
+it('uses Hermes for concise result summaries with no execution tools, and has a local fallback', async () => {
+  const { coordinator, runner } = setup(async () => ({ completed: true, reply: 'The demo plan is ready in demo.md.', runtime }));
+  const record = { status: 'completed', title: 'Demo plan', artifacts: [{ name: 'demo.md' }], stdout: 'logs '.repeat(1000) };
+  expect(await coordinator.summarize(record)).toBe('The demo plan is ready in demo.md.');
+  expect(runner.mock.calls[0][0].tools).toEqual([]);
+  runner.mockRejectedValueOnce(new Error('offline'));
+  expect(await coordinator.summarize({ ...record, status: 'failed' })).toContain('Couldn’t finish');
 });
