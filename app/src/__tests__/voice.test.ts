@@ -13,9 +13,9 @@ describe("voice audio", () => {
   it("ignores silence, includes pre-roll, and commits a pause once", () => {
     const turns = new AudioTurns();
     const silence = new Float32Array(SAMPLE_RATE);
-    expect(turns.push(silence)).toEqual({ commit: false });
+    expect(turns.push(silence).audio).toBeUndefined();
     const speech = turns.push(new Float32Array(SAMPLE_RATE).fill(0.1));
-    expect(speech.audio!.length).toBe(SAMPLE_RATE * 1.25);
+    expect(speech.audio!.length).toBe(SAMPLE_RATE * 1.75);
     expect(speech.commit).toBe(false);
     expect(turns.push(silence).commit).toBe(true);
     expect(turns.flush()).toBe(false);
@@ -24,6 +24,7 @@ describe("voice audio", () => {
   it("bounds continuous speech and flushes the final unfinished turn", () => {
     const turns = new AudioTurns();
     const speech = new Float32Array(SAMPLE_RATE).fill(0.1);
+    turns.push(new Float32Array(SAMPLE_RATE));
     for (let i = 0; i < 14; i++) expect(turns.push(speech).commit).toBe(false);
     expect(turns.push(speech).commit).toBe(true);
     turns.push(speech);

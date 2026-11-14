@@ -10,33 +10,55 @@ export function pcm16(audio: Float32Array): ArrayBuffer {
   return buffer;
 }
 
-// Client VAD commits phrases on pauses. Keep pre-roll for quiet consonants and
-// cap turns at 15 seconds; OpenAI sends transcript deltas before each commit.
+export type AudioTurn = { audio?: Float32Array; commit: boolean; speaking: boolean; level: number };
+
+// Learn the room level for 400 ms, then require a sustained rise above it.
+// Hysteresis avoids chattering between words; 750 ms pre-roll preserves onset.
 export class AudioTurns {
   private preRoll = new Float32Array(0);
   private length = 0;
   private silence = 0;
+  private attack = 0;
+  private calibrated = 0;
+  private noise = 0.003;
 
-  push(audio: Float32Array): { audio?: Float32Array; commit: boolean } {
-    const voiced = Math.sqrt(audio.reduce((sum, v) => sum + v * v, 0) / audio.length) >= 0.01;
+  push(audio: Float32Array): AudioTurn {
+    const rms = Math.sqrt(audio.reduce((sum, v) => sum + v * v, 0) / audio.length);
+    const duration = audio.length / SAMPLE_RATE;
+    const level = Math.min(1, Math.max(0, (rms - this.noise) * 12));
     if (!this.length) {
       const joined = new Float32Array(this.preRoll.length + audio.length);
       joined.set(this.preRoll);
       joined.set(audio, this.preRoll.length);
-      if (!voiced) { this.preRoll = joined.slice(-SAMPLE_RATE / 4); return { commit: false }; }
+      this.preRoll = joined.slice(-SAMPLE_RATE * 0.75);
+      if (this.calibrated < 0.4) {
+        // Cap speech during calibration so talking immediately cannot establish
+        // an impossibly high noise floor. Pre-roll retains this opening audio.
+        this.noise += (Math.min(rms, 0.025) - this.noise) * 0.25;
+        this.calibrated += duration;
+        return { commit: false, speaking: false, level };
+      }
+      const threshold = Math.max(0.012, this.noise * 2.8);
+      const above = rms > threshold;
+      this.attack = above ? this.attack + duration : 0;
+      if (!above) this.noise += (rms - this.noise) * Math.min(1, duration * 0.8);
+      if (this.attack < 0.14) return { commit: false, speaking: false, level };
       audio = joined;
       this.preRoll = new Float32Array(0);
+      this.attack = 0;
     }
     this.length += audio.length;
+    // Lower release threshold keeps soft syllables inside a spoken phrase.
+    const voiced = rms > Math.max(0.007, this.noise * 1.6);
     this.silence = voiced ? 0 : this.silence + audio.length;
     const commit = this.silence >= SAMPLE_RATE * 0.7 || this.length >= SAMPLE_RATE * 15;
     if (commit) this.flush();
-    return { audio, commit };
+    return { audio, commit, speaking: !commit, level };
   }
 
   flush(): boolean {
     const hasAudio = this.length >= SAMPLE_RATE * 0.1;
-    this.length = this.silence = 0;
+    this.length = this.silence = this.attack = 0;
     return hasAudio;
   }
 }

@@ -15,69 +15,115 @@
   --immersive-inset: 7%;
 }
 
-/* A quiet dictation surface, clear of the folder and hand controls. */
-.voice-panel {
+/* The voice marble floats above the graph; luminosity follows mic energy. */
+.voice-dock {
+  --voice-level: 0;
   position: fixed;
-  left: 16px;
-  bottom: 16px;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
   z-index: 41;
-  width: min(440px, calc(100vw - 32px));
-  padding: 16px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   color: var(--text);
+  pointer-events: none;
 }
-.voice-toolbar, .voice-footer { display: flex; align-items: center; gap: 10px; }
-.voice-toolbar h2 { margin: 0; font-size: 1rem; font-weight: 600; }
-.voice-state { font-size: 0.75rem; color: var(--muted); text-transform: capitalize; }
-.voice-state.listening { color: var(--teal); }
-.voice-state.error { color: oklch(75% 0.15 25); }
-.voice-panel button {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.75rem;
-  min-height: 32px;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.voice-panel button:hover:not(:disabled) { border-color: var(--teal); }
-.voice-panel button:focus-visible, .voice-panel textarea:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 3px;
-}
-.voice-panel button:disabled { opacity: 0.5; cursor: default; }
-.voice-panel .voice-record { margin-left: auto; }
-.voice-panel .voice-record.active { color: var(--teal); border-color: var(--teal); }
-.voice-help { color: var(--muted); font-size: 0.75rem; line-height: 1.5; margin: 12px 0; overflow-wrap: anywhere; }
-.voice-help[role="alert"] { color: oklch(75% 0.15 25); }
-.voice-label { display: block; font-size: 0.75rem; margin-bottom: 6px; }
-.voice-panel textarea {
-  display: block;
-  width: 100%;
+.voice-dock button, .voice-panel { pointer-events: auto; }
+.voice-marble-float { margin-top: 12px; animation: marble-float 5s ease-in-out infinite; }
+.voice-marble {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100px;
   height: 100px;
-  resize: vertical;
-  max-height: 25vh;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.9rem;
-  line-height: 1.5;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  isolation: isolate;
 }
+.voice-halo {
+  position: absolute;
+  inset: -32px;
+  border-radius: 50%;
+  background: radial-gradient(circle, oklch(79% 0.13 178 / 0.3), oklch(63% 0.13 190 / 0.1) 42%, transparent 70%);
+  opacity: calc(0.4 + var(--voice-level) * 0.6);
+  transform: scale(calc(1 + var(--voice-level) * 0.45));
+  transition: transform 120ms ease-out, opacity 120ms ease-out;
+  z-index: -1;
+}
+.voice-sphere {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border-radius: 50%;
+  color: oklch(93% 0.025 175 / 0.8);
+  background:
+    radial-gradient(ellipse at 28% 21%, oklch(98% 0.015 165 / 0.95), transparent 22%),
+    radial-gradient(ellipse at 72% 80%, oklch(63% 0.13 180 / 0.7), transparent 48%),
+    conic-gradient(from 35deg at 42% 60%, oklch(31% 0.06 195), oklch(73% 0.08 170), oklch(37% 0.06 210), oklch(84% 0.045 175), oklch(31% 0.06 195));
+  box-shadow: inset -10px -14px 18px oklch(14% 0.035 215 / 0.85),
+    inset 2px 3px 5px oklch(95% 0.025 170 / 0.65),
+    0 0 24px oklch(72% 0.13 177 / 0.24), 0 12px 26px oklch(10% 0.015 200 / 0.6);
+  transform: scale(calc(1 + var(--voice-level) * 0.12));
+  transition: transform 120ms ease-out;
+}
+.voice-sphere::before {
+  content: "";
+  position: absolute;
+  inset: 12px -20px;
+  border: 1px solid oklch(90% 0.05 175 / 0.5);
+  border-radius: 48%;
+  transform: rotate(-38deg);
+  box-shadow: 0 3px 5px oklch(89% 0.05 175 / 0.24), inset 0 3px 8px oklch(95% 0.02 175 / 0.25);
+}
+.voice-sphere svg { position: relative; filter: drop-shadow(0 1px 3px oklch(15% 0.03 190)); }
+.voice-dock.armed .voice-halo { opacity: 0.8; }
+.voice-dock.listening .voice-sphere { color: oklch(98% 0.015 170); }
+.voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
+.voice-dock.error .voice-halo { background: radial-gradient(circle, oklch(70% 0.15 30 / 0.3), transparent 68%); opacity: 1; }
+.voice-caption { font-size: 0.85rem; font-weight: 500; margin-top: 2px; text-shadow: 0 1px 5px var(--bg); }
+.voice-help {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--muted);
+  max-width: 38ch;
+  margin: 6px 0 0;
+  text-wrap: pretty;
+  text-shadow: 0 1px 4px var(--bg);
+}
+.voice-help[role="alert"] { color: oklch(78% 0.13 30); }
+.voice-off { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.7rem; padding: 8px 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.voice-panel { width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.voice-toolbar, .voice-footer { display: flex; align-items: center; gap: 8px; }
+.voice-toolbar { margin-bottom: 10px; }
+.voice-label { font-size: 0.78rem; font-weight: 500; margin-right: auto; }
+.voice-toolbar > span, .voice-footer > span { font-size: 0.65rem; color: var(--muted); }
+.voice-panel textarea { display: block; width: 100%; height: 86px; max-height: 20vh; resize: vertical; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 0.92rem; line-height: 1.6; }
 .voice-panel textarea::placeholder { color: var(--muted); }
-.voice-footer { margin-top: 10px; gap: 6px; }
-.voice-footer span { margin-right: auto; color: var(--muted); font-size: 0.65rem; }
+.voice-footer { margin-top: 10px; }
+.voice-footer > span { margin-right: auto; }
+.voice-panel button { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 0.7rem; padding: 5px 9px; cursor: pointer; }
+.voice-dock button:focus-visible, .voice-panel textarea:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+.voice-panel button:hover:not(:disabled), .voice-off:hover { color: var(--teal); }
+.voice-dock button:disabled { opacity: 0.5; cursor: default; }
+@keyframes marble-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes marble-connect { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 @media (max-width: 650px) {
-  .voice-panel { bottom: 100px; padding: 12px; }
-  .voice-panel textarea { height: 80px; }
-  .voice-toolbar { flex-wrap: wrap; }
-  .voice-footer { flex-wrap: wrap; }
+  .voice-dock { bottom: 98px; width: min(380px, calc(100vw - 32px)); }
+  .voice-help { font-size: 0.68rem; }
+  .voice-panel textarea { height: 68px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-marble-float, .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: none; }
+  .voice-sphere, .voice-halo { transition: none; transform: none; }
 }
 
 * {
