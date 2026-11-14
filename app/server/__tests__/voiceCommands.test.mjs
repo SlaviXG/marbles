@@ -59,8 +59,8 @@ describe('idle agent reservation', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-idle-'));
     const agents = ['codex', 'claude'].map(id => ({ id, kind: 'cli', path: `/bin/${id}`, available: true }));
     const children = [];
-    const service = new TaskService({ root, agentDetector: async () => agents, spawnProcess: () => {
-      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); children.push(child); return child;
+    const service = new TaskService({ root, agentDetector: async () => agents, spawnProcess: command => {
+      const child = new EventEmitter(); child.agentId = path.basename(command); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); children.push(child); return child;
     } });
     try {
       const [one, two] = await Promise.all([service.start('codex', 'direct'), service.startIdle('voice')]);
@@ -69,7 +69,7 @@ describe('idle agent reservation', () => {
       expect(children).toHaveLength(2);
       children[0].emit('close', 0);
       const next = await service.startIdle('next');
-      expect(next.agentId).toBe('codex');
+      expect(next.agentId).toBe(children[0].agentId);
     } finally { children.forEach(c => c.emit('close', 0)); await rm(root, { recursive: true, force: true }); }
   });
   it('excludes desktop and unsupported launchers', async () => {
