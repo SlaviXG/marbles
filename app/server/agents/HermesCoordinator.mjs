@@ -1,5 +1,6 @@
 import { taskCapability } from './taskService.mjs';
 import { CoordinatorTools, INSPECTION_TOOLS } from './CoordinatorTools.mjs';
+import { DisplayTools, DISPLAY_TOOL_NAMES } from './DisplayTools.mjs';
 import { redactSecrets } from './logs.mjs';
 import { routeTask } from '../scenarios/router.mjs';
 import { runHermes } from '../hermes/HermesRunner.mjs';
@@ -9,9 +10,10 @@ export { conciseReply, buildVoicePrompt } from './coordinatorPolicy.mjs';
 // The host supplies app context and executes validated tools. Upstream Hermes
 // AIAgent, in the Python process, owns every model call and the agent loop.
 export class HermesCoordinator {
-  constructor({ taskService, swarmService, contextProvider = () => ({}), noteProvider, readAgentLog, apiKey, model, runner = runHermes } = {}) {
+  constructor({ taskService, swarmService, contextProvider = () => ({}), noteProvider, readAgentLog, apiKey, model, runner = runHermes, display } = {}) {
     Object.assign(this, { taskService, swarmService, contextProvider, apiKey, model, runner });
     this.inspection = new CoordinatorTools({ taskService, swarmService, noteProvider, readAgentLog });
+    this.display = display ?? new DisplayTools({ taskService, swarmService, noteProvider });
   }
   async context(selectedId) {
     const agents = await this.taskService.agentDetector();
@@ -34,6 +36,12 @@ export class HermesCoordinator {
       if (name === 'respond') {
         if (!['reply', 'clarify', 'ignore'].includes(input?.decision) || typeof input.reply !== 'string' || input.reply.length > 240 || (input.decision !== 'ignore' && !input.reply.trim())) throw new Error('Invalid coordinator reply.');
         receipt = { state: input.decision, reply: conciseReply(input.reply) };
+      } else if (DISPLAY_TOOL_NAMES.includes(name)) {
+        // Shown in the app straight away. Email and calls are only prepared here;
+        // the user confirms them on the card before anything leaves the machine.
+        const display = await this.display.call(name, input);
+        const spoken = typeof input.reply === 'string' && input.reply.trim() ? input.reply : display.kind === 'close' ? 'Closed.' : 'Here you go.';
+        receipt = { state: 'show', display, reply: conciseReply(spoken) };
       } else if (INSPECTION_TOOLS.some(tool => tool.name === name)) {
         const data = await this.inspection.call(name, input);
         observations.push({ tool: name, input, result: redactSecrets(JSON.stringify(data)).slice(0, 1800) });
@@ -66,7 +74,7 @@ export class HermesCoordinator {
     };
     const onTool = (name, input) => {
       if (receipt) return Promise.resolve({ result: { state: receipt.state, reply: receipt.reply }, terminal: true });
-      if (!['delegate_work', 'cancel_work', 'respond'].includes(name)) return execute(name, input);
+      if (!['delegate_work', 'cancel_work', 'respond', ...DISPLAY_TOOL_NAMES].includes(name)) return execute(name, input);
       // Multiple parallel Hermes callbacks cannot launch duplicate actions.
       action ??= execute(name, input).catch(error => { action = undefined; throw error; });
       return action;

@@ -12,6 +12,8 @@ import PresentationStage from "./views/PresentationStage";
 import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
 import GestureWidget from "./views/GestureWidget";
+import MediaStage from "./views/MediaStage";
+import { useDisplay } from "./state/display";
 import { REDUCED_MOTION, useHud } from "./state/hud";
 
 const BOOT_MS = 2300;
@@ -29,7 +31,8 @@ export default function App() {
   useVaultStream();
   useAgentPolling();
   usePresentations();
-  const presenting = usePresentation(s => s.phase !== 'idle');
+  const showing = useDisplay(s => !!s.display);
+  const presenting = usePresentation(s => s.phase !== 'idle') || showing;
   const connected = useVault(s => s.connected);
   const agents = useAgents(s => s.agents);
   const count = agents.filter(a => a.codingAgent).length;
@@ -65,6 +68,7 @@ export default function App() {
     <VoicePanel onActivate={() => { void cameraPointer.start(); }} onDeactivate={() => cameraPointer.stop()} />
     <DetailPanel disabled={presenting} />
     <PresentationStage />
+    <MediaStage />
     <GestureWidget />
     <HandCursor />
     {booting && <div className="boot" aria-hidden="true">

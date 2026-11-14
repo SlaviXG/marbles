@@ -13,6 +13,8 @@ export interface GNode {
   activityKey?: string;
   artifactCount?: number;
   artifactReady?: boolean;
+  startedAt?: number; // when the current work began, for the live dial
+  step?: string; // the latest thing the worker reported
   badge?: 'solo' | 'swarm';
   x?: number;
   y?: number;
@@ -33,12 +35,24 @@ function childPosition(parent: GNode, index: number, outward: number, distance: 
   return { x: parent.x! + Math.cos(angle) * radius, y: parent.y! + Math.sin(angle) * radius };
 }
 
+// The most recent human-readable line a worker printed: real progress, in its
+// own words. Machine output (JSON events, paths, stack frames) is skipped.
+export function latestStep(output: string | undefined, limit = 44) {
+  const lines = (output ?? '').slice(-3000).replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].replace(/^[\s>*#•\-–—\d.)\]]+/, '').replace(/[*_`]/g, '').trim();
+    if (line.length < 4 || /^[{[<]/.test(line) || !/[a-z]{3}/i.test(line) || /^(at |\/|[A-Z]:\\)/.test(line)) continue;
+    return line.length > limit ? line.slice(0, limit - 1).trimEnd() + '…' : line;
+  }
+  return '';
+}
+
 // Surface deliverables, not implementation files or dependency/build output.
 export function isCanvasArtifact(artifact: ArtifactInfo) {
   const parts = artifact.path.replace(/\\/g, '/').split('/');
   if (parts.some(part => part.startsWith('.') || ['node_modules', 'dist', 'build', 'coverage', 'target', 'vendor', '__pycache__', 'venv'].includes(part))) return false;
   if (/^(AGENTS|CLAUDE|SKILL)\.md$/i.test(artifact.name)) return false;
-  return /\.(md|markdown|mdx|pdf|doc|docx|odt|rtf|txt|xls|xlsx|ods|csv|tsv|ppt|pptx|odp|html|htm|mp3|wav|ogg|m4a|mp4|webm|mov|png|jpe?g|webp|svg)$/i.test(artifact.name);
+  return /\.(md|markdown|mdx|pdf|doc|docx|odt|rtf|txt|xls|xlsx|ods|csv|tsv|ppt|pptx|odp|html|htm|tex|mp3|wav|ogg|m4a|mp4|webm|mov|png|jpe?g|webp|svg)$/i.test(artifact.name);
 }
 
 export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false, swarms: SwarmTask[] = []) {
@@ -61,6 +75,12 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     node.activity = status === 'unavailable' ? 'unavailable' : status === 'running' ? 'working' : latestSwarm?.status === 'completed' || latest?.status === 'completed' ? 'done' : latestSwarm?.status === 'failed' || latest?.status === 'failed' ? 'failed' : 'waiting';
     node.activityKey = `${node.activity}:${latestSwarm?.id ?? latest?.id ?? 'idle'}`;
     if (latestSwarm) node.progress = `${node.activity === 'working' ? 'Working' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Team task'}: ${latestSwarm.goal}`;
+    if (status === 'running') {
+      const live = swarms.find(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ?? (latest && ['running', 'cancelling'].includes(latest.status) ? latest : undefined);
+      const began = live ? Date.parse((live as { createdAt?: string }).createdAt ?? '') : NaN;
+      if (Number.isFinite(began)) node.startedAt = began;
+      node.step = latestStep(latest && ['running', 'cancelling'].includes(latest.status) ? latest.stdout : '');
+    }
     nodes.push(node);
     agentNodes.set(agent.id, node);
   });

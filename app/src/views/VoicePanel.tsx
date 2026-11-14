@@ -8,6 +8,8 @@ import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/me
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
+import { mediaCommand } from '../voice/mediaCommand';
+import { useDisplay, type Display } from '../state/display';
 import { useVault } from '../state/store';
 import type { AgentTask, SwarmTask } from '../core/agentTypes';
 import { useHud, voiceSignal } from '../state/hud';
@@ -104,8 +106,20 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
-      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms);
+      const media = mediaCommand(request, useDisplay.getState().display);
+      if (media) {
+        const view = useDisplay.getState();
+        if (media.action === 'confirm') void view.confirm();
+        else if (media.action === 'close') view.close();
+        else if (media.action === 'grid') view.focus(null);
+        else view.step(media.action === 'next' ? 1 : -1);
+        if (media.reply) message({ id: `media:${crypto.randomUUID()}`, role: 'assistant', text: media.reply });
+        session.current?.rearm();
+        return;
+      }
+      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms, useAgents.getState().agents.filter(agent => agent.codingAgent));
       if (local) {
+        if (local.close || local.select) useDisplay.getState().close();
         if (local.close) useVault.getState().clear();
         if (local.select) useVault.getState().select(local.select);
         message({ id: `canvas:${crypto.randomUUID()}`, role: 'assistant', text: local.reply });
@@ -161,6 +175,14 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           session.current?.rearm(); watchingSwarms.current.add(data.swarm.id);
           reply(data.reply, { swarmId: data.swarm.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshSwarms()]);
+        } else if (data.state === 'show' && data.display) {
+          // Hermes chose to put something in front of the user.
+          const shown = data.display as Display | { kind: 'select'; id: string } | { kind: 'close' };
+          if (shown.kind === 'select') { useDisplay.getState().close(); useVault.getState().select(shown.id); }
+          else if (shown.kind === 'close') { useDisplay.getState().close(); useVault.getState().clear(); }
+          else { useVault.getState().clear(); useDisplay.getState().show(shown); }
+          reply(data.reply);
+          session.current?.rearm();
         } else if (data.state === 'ignore') {
           setMessages(current => current.filter(item => item.id !== id)); session.current?.rearm();
         } else {

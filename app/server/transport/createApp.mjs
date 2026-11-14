@@ -7,6 +7,8 @@ import { spawn } from "node:child_process";
 import { VoiceCommands } from "../agents/voiceCommands.mjs";
 import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
+import { searchImages, searchYouTube } from "../media/webMedia.mjs";
+import { sendEmail, placeCall } from "../comms/comms.mjs";
 import { speechHandler, ttsInfo } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
 import { randomUUID } from 'node:crypto';
@@ -16,7 +18,7 @@ import { scenarios, scenarioById } from '../scenarios/scenarios.mjs';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands } = {}) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall } } = {}) {
   taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
   swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
   taskService.externalBusy = id => swarmService.isBusy(id);
@@ -122,6 +124,25 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   app.post('/api/voice/result', async (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Voice results require a local app origin.' });
     try { res.json(await voiceCommands.summarize(req.body)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  // Web media for the in-app viewer, and the two actions a user confirms on a card.
+  app.get('/api/media/images', async (req, res) => {
+    try { res.json({ images: await searchImages(req.query.q) }); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.get('/api/media/youtube', async (req, res) => {
+    try { res.json({ videos: await searchYouTube(req.query.q) }); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/comms/email', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Email requires a local app origin.' });
+    try { res.json(await comms.sendEmail(req.body)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/comms/call', (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Calls require a local app origin.' });
+    try { res.json(comms.placeCall(req.body)); }
     catch (error) { res.status(400).json({ error: error.message }); }
   });
   app.post("/api/agents/:id/tasks", async (req, res) => {

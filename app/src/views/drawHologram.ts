@@ -78,7 +78,7 @@ export function drawHolographicSpace(ctx: CanvasRenderingContext2D, motion: Spac
 }
 
 /** A line of light from the centre to a teammate; pulses run outward while it works. */
-export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; scale: number; working: boolean; reduced: boolean; alpha: number }) {
+export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; scale: number; working: boolean; reduced: boolean; alpha: number; burst?: number }) {
   const length = Math.hypot(x, y);
   if (length < r * 2 + 50) return;
   const ux = x / length, uy = y / length;
@@ -88,6 +88,18 @@ export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, 
   line.addColorStop(0, 'oklch(80% .1 212 / 0)'); line.addColorStop(.5, `oklch(80% .1 212 / ${motion.working ? .45 : .2})`); line.addColorStop(1, `oklch(84% .1 212 / ${motion.working ? .6 : .32})`);
   ctx.strokeStyle = line; ctx.lineWidth = Math.max(.4, .8 / motion.scale);
   ctx.beginPath(); ctx.moveTo(ux * from, uy * from); ctx.lineTo(ux * to, uy * to); ctx.stroke();
+  const burst = motion.burst ?? 99;
+  if (!motion.reduced && burst >= 0 && burst < .9) {
+    const p = 1 - Math.pow(1 - burst / .9, 2);
+    const d = from + (to - from) * p;
+    const tail = Math.max(from, d - 70);
+    const streak = ctx.createLinearGradient(ux * tail, uy * tail, ux * d, uy * d);
+    streak.addColorStop(0, 'oklch(92% .09 205 / 0)'); streak.addColorStop(1, 'oklch(98% .04 205 / 1)');
+    ctx.strokeStyle = streak; ctx.lineWidth = Math.max(1.4, 2.6 / motion.scale); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ux * tail, uy * tail); ctx.lineTo(ux * d, uy * d); ctx.stroke();
+    ctx.fillStyle = 'oklch(88% .13 205 / .35)'; ctx.beginPath(); ctx.arc(ux * d, uy * d, 9, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ux * d, uy * d, 2.6, 0, TAU); ctx.fill();
+  }
   if (motion.working && !motion.reduced) {
     for (let i = 0; i < 3; i++) {
       const p = (motion.time * .55 + i / 3) % 1;
@@ -99,6 +111,28 @@ export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, 
       ctx.beginPath(); ctx.arc(ux * d, uy * d, 5, 0, TAU); ctx.fill();
     }
   }
+  ctx.restore();
+}
+
+/** A dial around a working agent: one lap a minute of real elapsed time, with a
+ * bright band running ahead of it so it never looks stalled. */
+export function drawProgressDial(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; seconds: number; scale: number; reduced: boolean }) {
+  const TICKS = 60, inner = r * 1.56, outer = r * 1.68;
+  const lap = (motion.seconds % 60) / 60;
+  const band = motion.reduced ? -1 : (motion.time * .45) % 1;
+  ctx.save(); ctx.translate(x, y); ctx.lineCap = 'butt'; ctx.lineWidth = Math.max(.7, 1.3 / motion.scale);
+  for (let i = 0; i < TICKS; i++) {
+    const p = i / TICKS, a = p * TAU - Math.PI / 2;
+    const ahead = band < 0 ? 1 : ((p - band + 1) % 1);
+    const sweep = band < 0 ? 0 : Math.max(0, 1 - ahead * 5) ;
+    const filled = p <= lap;
+    ctx.strokeStyle = `oklch(${filled ? 88 : 74}% .11 208 / ${Math.min(1, (filled ? .7 : .16) + sweep * .8)})`;
+    const reach = outer + (i % 5 === 0 ? r * .05 : 0) + sweep * r * .06;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner); ctx.lineTo(Math.cos(a) * reach, Math.sin(a) * reach); ctx.stroke();
+  }
+  // The minute hand's tip.
+  const tip = lap * TAU - Math.PI / 2;
+  ctx.fillStyle = 'oklch(97% .04 205)'; ctx.beginPath(); ctx.arc(Math.cos(tip) * outer, Math.sin(tip) * outer, r * .045, 0, TAU); ctx.fill();
   ctx.restore();
 }
 

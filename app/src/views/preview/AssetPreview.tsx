@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { ArtifactInfo } from '../../core/agentTypes';
 import { parseDelimited, readOffice, type PreviewSection } from './assetContent';
 import Markdown from './Markdown';
+import Deck from './Deck';
+import { texToMarkdown } from './latexSource';
 
 const extension = (name: string) => name.split('.').pop()?.toLowerCase() ?? '';
 export default function AssetPreview({ artifact }: { artifact: ArtifactInfo }) {
@@ -29,6 +31,7 @@ export default function AssetPreview({ artifact }: { artifact: ArtifactInfo }) {
         if (/^(docx|xlsx|pptx|odt|ods|odp)$/.test(ext)) next = readOffice(bytes);
         else {
           const text = new TextDecoder().decode(bytes);
+          if (ext === 'tex') { if (!controller.signal.aborted) setMarkdown(texToMarkdown(text)); return; }
           if (/^(md|markdown|mdx)$/.test(ext)) { if (!controller.signal.aborted) setMarkdown(text); return; }
           if (/^(csv|tsv)$/.test(ext)) next = [{ title: 'Table', rows: parseDelimited(text, ext === 'tsv' ? '\t' : ',').slice(0, 2000) }];
           else if (bytes.slice(0, 4000).includes(0)) next = [{ title: 'Binary file preview', paragraphs: [Array.from(bytes.slice(0, 2048), value => value.toString(16).padStart(2, '0')).join(' ')] }];
@@ -50,8 +53,9 @@ export default function AssetPreview({ artifact }: { artifact: ArtifactInfo }) {
         try { frame.style.height = `${Math.min(12000, Math.max(480, frame.contentDocument?.documentElement.scrollHeight ?? 480))}px`; } catch { /* Keep a readable viewport for redirected pages. */ }
       }} />
       : error ? <p role="alert">{error}</p>
-      : markdown !== null ? <Markdown text={markdown} />
+      : markdown !== null ? <Markdown text={markdown} path={artifact.path} />
       : !sections ? <div className="preview-loading" role="status"><span className="voice-sr-only">Preparing preview…</span><i /><i /><i /><i /></div>
+      : /^(pptx|ppt|odp)$/.test(ext) && sections.every(section => section.paragraphs) ? <Deck slides={sections} />
       : sections.map((section, index) => <section className="asset-section" key={index}>
         {sections.length > 1 && <h3>{section.title}</h3>}
         {section.rows ? <div className="asset-table-wrap"><table><tbody>{section.rows.map((row, r) => <tr key={r}>{row.map((cell, c) => r === 0 ? <th key={c} scope="col">{cell}</th> : <td key={c}>{cell}</td>)}</tr>)}</tbody></table>{section.rows.length >= 2000 && <p>Showing the first 2,000 rows.</p>}</div>
