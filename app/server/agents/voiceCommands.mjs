@@ -5,8 +5,9 @@ export { buildVoicePrompt } from './ClaudeCoordinator.mjs';
 
 export function classifyQuery(transcript) {
   const text = String(transcript ?? '');
+  const command = text.trim().replace(/^(?:can|could|would|will) you\s+(?:please\s+)?/i, '').replace(/^use (?:codex|claude(?: code)?|cursor) to\s+/i, '');
   const targets = [...new Set([...text.matchAll(/\b(codex|claude(?: code)?|cursor)\b/gi)].map(match => match[1].toLowerCase().startsWith('claude') ? 'claude' : match[1].toLowerCase()))];
-  if (/^(?:please\s+)?(?:make|build|create|write|fix|implement|update|change|add|remove|delete|generate|prepare)\b/i.test(text.trim())) return { intent: /\b(swarm|as a team|all (the )?agents|everyone|work together)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
+  if (/^(?:please\s+)?(?:make|build|create|write|fix|implement|update|change|add|remove|delete|generate|prepare)\b/i.test(command)) return { intent: /\b(swarm|as a team|all (the )?agents|everyone|work together)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
   if (/what(?:'s| is) (?:happening|going on)|what (?:is|are) .* doing|\bstatus\b|\bprogress\b|how(?:'s| is) .* doing|are .* (?:done|finished|working|doing)|what .* working on/i.test(text)) return { intent: 'status', targetAgents: targets };
   if (/\blogs?\b|recent activity|what did .* do|show me .* (?:output|history)/i.test(text)) return { intent: 'log', targetAgents: targets };
   return { intent: /\b(swarm|as a team|together|all (the )?agents|everyone)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
