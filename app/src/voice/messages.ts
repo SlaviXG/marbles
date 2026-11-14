@@ -1,7 +1,8 @@
-export type VoiceRequest = { transcript: string; requestId: string };
+export type VoiceRequest = { transcript: string; requestId: string; conversationId?: string; selectedId?: string | null };
+export type VoicePlan = { plan: string[]; assumptions: string[] };
 export type VoiceMessage = {
   id: string; role: 'user' | 'assistant'; text: string; label?: string;
-  pending?: boolean; taskId?: string;
+  pending?: boolean; taskId?: string; plan?: VoicePlan;
   swarmId?: string; retry?: VoiceRequest; expiresAt: number;
 };
 export const MESSAGE_LIFETIME = 20_000;

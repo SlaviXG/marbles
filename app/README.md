@@ -133,25 +133,63 @@ audio object URLs and microphone resources are released. The Vite development
 server exposes the speech handler directly as well, so updating speech playback
 does not require restarting an active agent runner. Neither route exposes the key.
 
-As soon as final transcripts arrive after a speech pause, the app sends
-the complete request to `POST /api/voice/tasks`. OpenAI `gpt-4.1-mini` extracts
-the problem, objective, constraints, and success criteria as structured JSON.
-Greetings/background speech launch nothing. Unclear requests ask a question;
-the next spoken answer includes the original request as clarification context.
-A clear task becomes a prompt containing both the original wording and the
-structured interpretation.
+After speech recognition, the actual **Nous Research Hermes Agent** runtime
+coordinates the work, powered by **Claude Sonnet 5.5** through its native Anthropic
+provider. Set `ANTHROPIC_API_KEY` in the repo-root `.env`. Install Git, uv, and
+Python 3.14, then run `npm run setup:hermes` in `app`. `npm run dev` and
+`npm run server` run setup automatically, reusing the installed runtime. `MARBLES_COORDINATOR_MODEL` optionally
+overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and Marin
+speech output; the coordinator does not send standby audio to Claude.
 
-The existing TaskService chooses an installed, supported, idle Codex, Claude, or Cursor
-CLI. Desktop-only agents and unsupported launchers are excluded. Reservations
-prevent concurrent voice/manual requests from assigning the same agent. Busy
-agents leave the request available for **Retry task**; retry IDs prevent repeated
-HTTP requests from launching a task twice. **View task** opens the canvas task
-with the transcript, understood goal, exact agent prompt, logs, and artifacts.
-Tasks run in the existing fresh per-task folders under `MARBLES_WORKSPACE_DIR`
-(default `~/marbles-workspace`), using the CLI's existing login. Mention an
-existing project's path if that is the intended target. In-memory task history,
-idle tracking, and retry IDs reset when the server restarts; idle means no active
-Marbles-managed task, not every unrelated CLI session on the machine.
+Describe the outcome in one sentence. The coordinator selects sensible,
+reversible defaults, creates a 1–3 step plan, states key assumptions, and delegates
+immediately. It asks one question only for a real missing source, target, or
+required authorization. Conversation memory preserves follow-ups and clarification
+answers without repeating the original request. Selecting a note, agent, task,
+swarm, or artifact supplies its known context, so “use this spreadsheet” can refer
+to the actual selected file.
+
+Claude can inspect available agents and their latest session logs, inspect managed
+task/swarm output and blackboards, search and read registered vault notes, find
+workspace assets, read text/CSV/code files, and request cancellation of managed
+work when asked. Binary documents return metadata and a verified path for a worker
+to analyze. Asset reads are limited to the task workspace; hidden/credential files,
+traversal, and escaping symlinks are rejected. Log credentials are redacted.
+Unmanaged CLI session logs are labeled separately from Marbles-managed work.
+
+Hermes `run_agent.AIAgent` owns the reasoning, provider calls, retries, and tool
+loop. A small Python stdio adapter registers Marbles tools in Hermes and forwards
+their execution to the existing TaskService/SwarmService. There is no custom
+JavaScript LLM loop. The source is pinned in `server/hermes/runtime.json`; setup
+uses the upstream uv lockfile and Anthropic extra. Its checkout, Python environment,
+and dedicated Hermes profile live under gitignored `app/.hermes-runtime/`; the
+user’s global Hermes profile is untouched. The small app toolset is directly
+visible, with Hermes tool-search deferral disabled for this profile.
+One idle worker is the default; explicit team requests and useful collaborative
+plans use the existing swarm runner. Reservations prevent voice/manual/swarm races.
+Cancellation keeps a worker busy until its process exits. New work uses the
+existing per-task workspace under `MARBLES_WORKSPACE_DIR` (default
+`~/marbles-workspace`); changing an external project still requires a real target
+and the worker's existing access.
+
+After an accepted delegation or final response tool, the adapter requests a
+Hermes interrupt at the tool boundary and acknowledges the actual app receipt.
+A provider/process failure after acceptance cannot duplicate the work. Spoken assignment and completion notices are limited to 25
+words. Full plans and assumptions are under
+**Plan & assumptions** and in task details; raw worker logs stay in task details.
+Completed voice tasks/swarms get one cached Hermes/Claude result summary, with a short
+local fallback if that call fails. **Read aloud** uses the same concise message.
+
+Hermes is bounded to six iterations and a 40-second run budget. The Node bridge
+bounds tool calls to twelve and terminates a stuck runtime after 50 seconds; the
+voice UI allows 55 seconds for the response. At most four voice requests are
+in flight. Summary turns expose no execution tools. Status/log requests remove
+delegation/cancellation tools from both Hermes’s schema and the app dispatcher.
+Request IDs deduplicate retries, including accepted work, and follow-ups serialize
+within each conversation. Memory is kept for up to 50 conversations with six recent
+messages each; requests and result summaries retain up to 200 entries. These are
+in-memory and reset on server restart. CLI execution uses each worker's existing
+login; coordinator and speech API usage are billed separately by their providers.
 
 To enable Cursor tasks, install its headless CLI with
 `curl https://cursor.com/install -fsS | bash` and run `cursor-agent login`.
@@ -174,8 +212,10 @@ Before sharing this server, add authentication and explicit origin configuration
 Keep the frontend on port 5173. The key, audio, and local configuration are never
 committed; transcripts and generated prompts remain in the server task history.
 
+Runtime reference: [Hermes programmatic integration](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/programmatic-integration.md).
+
 API references: [live transcription](https://developers.openai.com/api/docs/guides/realtime-transcription)
-and [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+and [Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works).
 
 ## Next
 

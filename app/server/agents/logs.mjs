@@ -2,10 +2,11 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const redact = (value) => String(value ?? '')
+export const redactSecrets = (value) => String(value ?? '')
   .replace(/\b(?:sk-[\w-]{12,}|Bearer\s+[^\s,}]+)\b/gi, '[redacted]')
   .replace(/\b(?:api[_-]?key|token|password|secret|[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*[:=]\s*[^\s,}]+/gi, '[redacted]')
-  .slice(0, 500);
+  .replace(/(["'](?:api[_-]?key|token|password|secret|authorization)["']\s*:\s*["'])[^"']+(["'])/gi, '$1[redacted]$2');
+export const redact = value => redactSecrets(value).slice(0, 500);
 const safe = redact;
 const contentText = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter(b => ['text', 'input_text', 'output_text'].includes(b?.type)).map(b => b.text).join(' ') : '';
 export function parseLog(lines, kind) {

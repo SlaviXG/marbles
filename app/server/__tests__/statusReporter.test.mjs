@@ -18,6 +18,8 @@ describe('status and log questions', () => {
     ['show me Cursor output', 'log', ['cursor']],
     ['give me the log', 'log', []],
     ['make a report', 'task', []],
+    ['Can you write a progress report?', 'task', []],
+    ['Use Codex to create a status dashboard', 'task', ['codex']],
     ['have codex and claude work together on a report', 'swarm', ['codex', 'claude']],
   ])('classifies %s', (text, intent, targetAgents) => {
     expect(classifyQuery(text)).toEqual({ intent, targetAgents });

@@ -62,10 +62,24 @@ export class TaskService {
     this.externalBusy = externalBusy;
     this.tasks = [];
     this.reservations = new Set();
+    this.executions = new Map();
   }
   snapshot() { return this.tasks.slice(-50).reverse(); }
   isBusy(agentId) {
-    return this.externalBusy(agentId) || this.reservations.has(agentId) || this.tasks.some(task => task.agentId === agentId && task.status === 'running');
+    return this.externalBusy(agentId) || this.reservations.has(agentId) || this.tasks.some(task => task.agentId === agentId && ['running', 'cancelling'].includes(task.status));
+  }
+  cancel(id) {
+    const task = this.tasks.find(task => task.id === id);
+    if (!task) return null;
+    if (task.status !== 'running') return task;
+    const execution = this.executions.get(id);
+    if (!execution) throw new Error('Task process is not available.');
+    task.status = 'cancelling'; task.updatedAt = new Date().toISOString();
+    try { if (execution.child.kill('SIGTERM') === false) throw new Error('Signal rejected'); }
+    catch { task.status = 'running'; throw new Error('Could not stop this task process.'); }
+    execution.killTimer = setTimeout(() => { try { execution.child.kill('SIGKILL'); } catch {} }, 3000);
+    execution.killTimer.unref?.();
+    return task;
   }
   async startIdle(prompt, metadata = {}) {
     const agents = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));
@@ -98,11 +112,17 @@ export class TaskService {
       child.stdout?.on('data', chunk => { task.stdout = tail(task.stdout, chunk.toString()); update(); });
       child.stderr?.on('data', chunk => { task.stderr = tail(task.stderr, chunk.toString()); update(); });
       let ended = false;
-      const finish = (status, message = '') => { if (ended) return; ended = true; task.status = status; if (message) task.stderr = tail(task.stderr, message); update(); clearInterval(timer); };
+      const finish = (status, message = '') => {
+        if (ended) return; ended = true;
+        task.status = task.status === 'cancelling' ? 'cancelled' : status;
+        if (message) task.stderr = tail(task.stderr, message);
+        update(); clearInterval(timer); clearTimeout(this.executions.get(id)?.killTimer); this.executions.delete(id);
+      };
       child.on('error', e => finish('failed', e.message));
       child.on('close', code => finish(code === 0 ? 'completed' : 'failed'));
       const timer = setInterval(update, 2000);
       timer.unref?.();
+      this.executions.set(id, { child });
       return task;
     } finally { this.reservations.delete(agentId); }
   }
