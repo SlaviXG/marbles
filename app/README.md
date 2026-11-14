@@ -77,8 +77,14 @@ directly to their producing agents. Task history and other files stay accessible
 from the agent/task panels; dependency and build directories are omitted.
 
 Standby wake recognition uses quantized `Xenova/whisper-tiny.en` in a browser
-worker via Transformers.js (Apache-2.0 model). The model downloads once and is
-cached by the browser. It runs one inference at a time over overlapping audio
+worker via Transformers.js (Apache-2.0 model). A setup script installs the pinned
+model and matching ONNX runtime under
+`app/public` and serves them from localhost. `npm run dev`, `npm run client`, and
+`npm run build` run setup automatically; `npm run setup:wake` can also be run
+explicitly. Setup needs network access once, then reuses the verified file sizes.
+The browser never downloads wake assets from Hugging Face or a CDN. Generated
+model/runtime files are gitignored and copied into production builds. It runs one
+inference at a time over overlapping audio
 windows, gated by local audio energy, with bounded history. Only a complete
 **Hey Marbles** word match opens OpenAI transcription. Word timestamps preserve
 the command after the wake phrase while dropping preceding room/playback audio.

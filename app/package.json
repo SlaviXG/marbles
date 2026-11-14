@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Live visualization of the Obsidian vault (force-directed graph).",
   "scripts": {
+    "setup:wake": "node scripts/setup-wake.mjs",
+    "predev": "npm run setup:wake",
+    "preclient": "npm run setup:wake",
+    "prebuild": "npm run setup:wake",
     "dev": "concurrently -k -n server,client -c blue,green \"node server/index.mjs\" \"vite\"",
     "server": "node server/index.mjs",
     "client": "vite",
