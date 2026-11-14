@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { VoiceCommands } from "../agents/voiceCommands.mjs";
 import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
-import { speechHandler } from "./speech.mjs";
+import { speechHandler, ttsInfo } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
 import { randomUUID } from 'node:crypto';
 import { routeTask } from '../scenarios/router.mjs';
@@ -33,6 +33,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
   app.use(express.json({ limit: "32kb" }));
   app.post('/api/voice/speech', speechHandler());
+  app.get('/api/voice/tts-info', (_req, res) => res.json(ttsInfo()));
 
   app.get("/api/vault", (_req, res) => res.json(service.snapshot()));
   app.get("/api/agents", (_req, res) => res.json(agentRegistry.snapshot().map(publicAgent)));

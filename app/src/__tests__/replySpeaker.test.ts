@@ -31,6 +31,22 @@ it('speaks a final reply once and releases the audio URL after playback', async 
   speaker.dispose();
 });
 
+it('plays a streamed MP3 after fetch assembles the response blob', async () => {
+  const { speaker, clips, fetchApi, error } = setup();
+  fetchApi.mockImplementationOnce(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('first'));
+      controller.enqueue(new TextEncoder().encode('second'));
+      controller.close();
+    },
+  }), { headers: { 'Content-Type': 'audio/mpeg' } }));
+  speaker.enqueue('streamed', 'Hello');
+  await vi.waitFor(() => expect(clips).toHaveLength(1));
+  expect(error).not.toHaveBeenCalled();
+  clips[0].onended();
+  speaker.dispose();
+});
+
 it('cancels current and queued replies when the user speaks or mutes', async () => {
   const { speaker, clips, fetchApi } = setup();
   speaker.enqueue('a', 'First'); speaker.enqueue('b', 'Second');

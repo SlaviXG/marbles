@@ -30,7 +30,9 @@
   color: var(--text);
   pointer-events: none;
 }
-.voice-dock button { pointer-events: auto; }
+.voice-dock button, .voice-dock select { pointer-events: auto; }
+.voice-picker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.7rem; pointer-events: auto; }
+.voice-picker select { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
 .voice-marble-float { margin-top: 12px; animation: marble-float 5s ease-in-out infinite; }
 .voice-marble {
   position: relative;
@@ -115,7 +117,7 @@
 .voice-message.pending .voice-message-label::after { content: ' · live'; }
 .voice-message-actions { display: flex; gap: 10px; margin-top: 8px; }
 .voice-message button { color: inherit; font: inherit; font-size: 0.72rem; background: transparent; border: 0; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.voice-dock button:focus-visible, .voice-message button:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+.voice-dock button:focus-visible, .voice-dock select:focus-visible, .voice-message button:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
 @keyframes voice-message-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .voice-dock button:disabled { opacity: 0.5; cursor: default; }
 @keyframes marble-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
