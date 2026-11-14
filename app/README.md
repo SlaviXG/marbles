@@ -59,8 +59,7 @@ Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
 `.env`, then restart `npm run dev`. Use Node.js 20+ and open
 `http://localhost:5173` in a browser with AudioWorklet support. The app requests
-microphone permission and loads a local wake model automatically. Say **Hey
-Marbles**, then describe your task. The marble returns to wake mode after a task
+microphone permission and loads a local wake model automatically. Say **Marbles**, then describe your task. The marble returns to wake mode after a task
 is assigned or 20 seconds without speech. Use **Turn mic off** to stop; click the
 marble to enable it again. Browsers that require an initial audio gesture show
 **Enable microphone** once before hands-free listening can begin.
@@ -85,11 +84,14 @@ explicitly. Setup needs network access once, then reuses the verified file sizes
 The browser never downloads wake assets from Hugging Face or a CDN. Generated
 model/runtime files are gitignored and copied into production builds. It runs one
 inference at a time over overlapping audio
-windows, gated by local audio energy, with bounded history. A **60% normalized
-edit-similarity** match to **Hey Marbles** opens OpenAI transcription. Close
-transcriptions such as "hey marvels" and "hey marble" are accepted, while an
-attention-word guard rejects ordinary phrases such as "they marbles". This is
-text similarity, not a calibrated acoustic confidence score. Saying the wake
+windows, gated by local audio energy, with bounded history. A **50% normalized
+edit-similarity** match to the individual word **Marbles** opens OpenAI
+transcription. The detector scans every word in a sentence, so "hey Marbles",
+"hi Marbles", "yo Marbles", and longer sentences work without requiring a
+particular greeting. Close word transcriptions such as "marvels" and "marble"
+are accepted. It prefers the clearest match, then the earliest occurrence,
+so later request words do not displace an exact wake word. This is text
+similarity, not a calibrated acoustic confidence score. Saying the wake
 phrase alone gets a spoken acknowledgement without launching a task.
 Word timestamps preserve
 the command after the wake phrase while dropping preceding room/playback audio.
@@ -115,7 +117,7 @@ server-side key and incurs OpenAI API usage. This Speech API model is supported
 until its announced January 6, 2027 shutdown; migrate this endpoint before then.
 
 While a reply plays, microphone audio is held out of cloud transcription. The
-local wake detector remains available, so **Hey Marbles** interrupts playback and
+local wake detector remains available, so **Marbles** interrupts playback and
 opens the next request. Spoken replies replace the literal wake phrase to avoid
 self-activation. Synthesis is cancelled on interruption, muting, or unmounting;
 audio object URLs and microphone resources are released. The Vite development

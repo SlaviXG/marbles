@@ -69,14 +69,14 @@ export class VoiceSession {
           this.events.awake?.();
           this.replyPlaying = false; this.playbackUntil = 0;
           this.awake = true; this.wakeDeadline = Date.now() + 20_000;
-          this.events.status('armed', 'Hey Marbles heard. Describe your task.');
+          this.events.status('armed', 'Marbles heard. Describe your task.');
           this.turns.begin(audio.length);
           this.speaking = true;
           this.events.activity?.(0.5, true);
           if (!this.socket) this.connect();
           this.sendRaw(pcm16(audio));
         }, message => this.fail(message));
-        this.events.status('loading', 'Loading the local Hey Marbles detector…');
+        this.events.status('loading', 'Loading the local Marbles detector…');
         this.armTimeout('Wake model download timed out. Check your connection and try again.', 180_000);
         await this.wake.load(percent => this.events.status('loading', `Downloading local wake model: ${percent}%`));
         clearTimeout(this.timer);
@@ -140,7 +140,7 @@ export class VoiceSession {
     this.turns.discard(); this.wake?.reset();
     this.awake = false; this.speaking = false;
     this.events.activity?.(0, false);
-    this.events.status('wake', 'Listening locally for Hey Marbles. Standby audio stays on this device.');
+    this.events.status('wake', 'Listening locally for Marbles. Standby audio stays on this device.');
   }
 
   setReplyPlaying(playing: boolean) {
@@ -152,7 +152,7 @@ export class VoiceSession {
 
   private reportActivity() {
     if (this.options.wake && !this.awake) {
-      this.events.status('wake', 'Listening locally for Hey Marbles.'); return;
+      this.events.status('wake', 'Listening locally for Marbles.'); return;
     }
     this.events.status(this.speaking ? "listening" : "armed", this.speaking
       ? "Transcribing with OpenAI. Your audio is being sent."
