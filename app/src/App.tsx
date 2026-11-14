@@ -1,4 +1,6 @@
 import { useVaultStream } from "./hooks/useVaultStream";
+import { useAgentPolling } from "./hooks/useAgentPolling";
+import { refreshAgents, refreshTasks } from "./state/agents";
 import { useVault, useNoteIds } from "./state/store";
 import GraphView from "./views/GraphView";
 import DetailPanel from "./views/DetailPanel";
@@ -9,6 +11,7 @@ import { useLocalFolder } from "./knowledge/useLocalFolder";
 
 export default function App() {
   useVaultStream();
+  useAgentPolling();
   const connected = useVault((s) => s.connected);
   const count = useNoteIds().length;
 
@@ -28,6 +31,7 @@ export default function App() {
       <span className={`status ${connected ? "up" : "down"}`}>
         {connected ? "live" : "offline"} · {count} notes
       </span>
+      <button className="agent-refresh" onClick={() => { void refreshAgents(); void refreshTasks(); }}>Refresh agents</button>
 
       <DetailPanel />
       <HandCursor />

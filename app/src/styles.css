@@ -658,3 +658,16 @@ body {
   cursor: pointer;
   accent-color: #f00;
 }
+
+.agent-refresh { position: fixed; top: 54px; right: 24px; z-index: 8; background: #192334; color: #e8eef7; border: 1px solid #40516a; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+.badge.agent { background: #fff; border: 1px solid #9cb7c9; }
+.badge.task { background: #39d98a; }
+.badge.artifact { background: #65a9ff; }
+.agent-task-form { display: grid; gap: 10px; margin: 20px 0; }
+.agent-task-form textarea { min-height: 90px; resize: vertical; border-radius: 8px; padding: 12px; background: #111b29; color: #fff; border: 1px solid #4d6178; font: inherit; }
+.agent-task-form button { justify-self: start; border: 0; border-radius: 7px; padding: 9px 16px; background: #39d98a; color: #082016; cursor: pointer; }
+.agent-task-form button:disabled { opacity: .5; cursor: default; }
+.task-hint, .task-error { font-size: 13px; color: #b8c4d4; }
+.task-error { color: #ff8d8d; }
+.log-line { overflow-wrap: anywhere; }
+.artifact-preview { display: block; max-width: 100%; margin-top: 20px; }

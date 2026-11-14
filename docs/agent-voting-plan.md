@@ -133,3 +133,7 @@ The `GNode` extension should retain `{ id, label, type }` for every variant, wit
 - How should the user choose graph references to attach to a request, and how much note content may the server pass to runners after the user selects them?
 - What counts as a user-visible artifact for non-code tasks, and should completed task nodes remain on the canvas or move to history after the display cap?
 - Should users be able to choose an agent directly when voting leaves a task unassigned? That would be an explicit new attempt, not a hidden fallback.
+
+## Step 2: agents, tasks and artifacts on the canvas
+
+The canvas now adds detected local agents as white nodes, direct assignments as green task nodes, and workspace files as blue artifact cards. Tasks run through supported Codex or Claude Code CLIs in per-task folders under `MARBLES_WORKSPACE_DIR` (default `~/marbles-workspace`). The agent panel polls recent local session logs and allows direct task submission; other detected agents remain visible with a disabled task input. The original voting flow above remains a future proposal.

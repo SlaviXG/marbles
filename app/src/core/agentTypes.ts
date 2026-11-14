@@ -11,3 +11,23 @@ export interface DetectedAgent {
   version: string | null;
   available: boolean;
 }
+export type AgentInfo = DetectedAgent;
+export interface ArtifactInfo { path: string; name: string; type: 'pdf' | 'spreadsheet' | 'docx' | 'image' | 'code' | 'other' }
+export interface AgentTask {
+  id: string;
+  agentId: string;
+  prompt: string;
+  status: 'running' | 'completed' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+  stdout: string;
+  stderr: string;
+  artifacts: ArtifactInfo[];
+}
+export interface AgentLog {
+  available: boolean;
+  reason?: string;
+  prompt?: { text: string; at: string | null } | null;
+  messages?: { text: string; at: string | null }[];
+  tools?: { name: string; args: string; at: string | null }[];
+}

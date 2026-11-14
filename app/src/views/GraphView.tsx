@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide } from "d3-force-3d";
 import { useVault } from "../state/store";
-import { buildGraph, type GNode } from "../core/graph";
+import { useAgents } from "../state/agents";
+import { composeGraph, type GNode } from "../core/graph";
 import { springProgress, springForSettleMs, LAYOUT, type SpringToken } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
@@ -23,15 +24,18 @@ const COLORS: Record<GNode["type"], string> = {
   note: "#e8e8ea",
   section: "#2dd4bf",
   url: "#6b7280",
+  agent: "#ffffff",
+  task: "#39d98a",
+  artifact: "#65a9ff",
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 13 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 6 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -64,6 +68,8 @@ const REDUCED_MOTION =
 
 export default function GraphView() {
   const notes = useVault((s) => s.notes);
+  const agents = useAgents((s) => s.agents);
+  const tasks = useAgents((s) => s.tasks);
   const selectedId = useVault((s) => s.selectedId);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
@@ -273,7 +279,7 @@ export default function GraphView() {
   }, [onWheel]);
 
   const data = useMemo(() => {
-    const built = buildGraph(notes);
+    const built = composeGraph(notes, agents, tasks);
     const cache = nodeCache.current;
     const liveIds = new Set(built.nodes.map((n) => n.id));
     for (const id of [...cache.keys()]) {
@@ -288,6 +294,7 @@ export default function GraphView() {
       if (prev) {
         prev.label = n.label; // a renamed heading updates in place, no restructure
         prev.type = n.type;
+        prev.artifactType = n.artifactType;
         return prev; // keep x/y/vx/vy
       }
       cache.set(n.id, n);
@@ -308,7 +315,7 @@ export default function GraphView() {
     }
 
     return { nodes, links: built.links };
-  }, [notes]);
+  }, [notes, agents, tasks]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -635,9 +642,21 @@ export default function GraphView() {
           const r = baseR * (0.45 + 0.55 * grow);
           ctx.globalAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
           ctx.beginPath();
-          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+          if (node.type === 'artifact') ctx.roundRect(node.x - 7, node.y - 6, 14, 12, 2);
+          else ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
           ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
           ctx.fill();
+          if (node.type === 'agent') {
+            ctx.strokeStyle = '#8eacc2';
+            ctx.lineWidth = 1 / scale;
+            ctx.stroke();
+          }
+          if (node.type === 'artifact') {
+            ctx.fillStyle = '#0d1117';
+            ctx.font = '5px ui-sans-serif, system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', image: 'IMG', code: '</>' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
+          }
           // Spring-animated ring: scales + fades in/out with carried velocity.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
           const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;
@@ -652,7 +671,7 @@ export default function GraphView() {
             ctx.stroke();
             ctx.globalAlpha = entranceAlpha;
           }
-          if (scale > 1.3 || node.type === "note" || sel || hot) {
+          if (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || sel || hot) {
             ctx.font = `${node.type === "note" ? 5 : 3.6}px ui-sans-serif, system-ui, sans-serif`;
             ctx.fillStyle = sel || hot ? "#ffffff" : "#c9d1d9";
             ctx.textAlign = "center";

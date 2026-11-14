@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type AnimationEvent } from "react";
 import { useVault } from "../state/store";
+import { useAgents, refreshTasks } from "../state/agents";
+import type { AgentInfo, AgentLog, AgentTask, ArtifactInfo } from "../core/agentTypes";
 import { getDetail, hostname, type Detail } from "../core/detail";
 import { sampleSpring, springDurationMs } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
@@ -20,11 +22,13 @@ const SLIDE_MS = springDurationMs("calm");
 
 export default function DetailPanel() {
   const notes = useVault((s) => s.notes);
+  const agents = useAgents((s) => s.agents);
+  const tasks = useAgents((s) => s.tasks);
   const selectedId = useVault((s) => s.selectedId);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
 
-  const open = selectedId ? !!getDetail(notes, selectedId) : false;
+  const open = selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.instanceName}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('artifact:') ? true : !!getDetail(notes, selectedId) : false;
 
   const scrimRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -248,6 +252,19 @@ export default function DetailPanel() {
                 reflows, which is what makes scrollHeight follow the zoom. */}
             <div className="immersive-content">
               {(() => {
+                if (displayedId?.startsWith('agent:')) {
+                  const agent = agents.find(a => `agent:${a.instanceName}` === displayedId);
+                  return agent && <><SpecialHeader kind="Agent" name={agent.instanceName} /><div className="ibody"><AgentBody agent={agent} tasks={tasks.filter(t => t.agentId === agent.instanceName)} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('task:')) {
+                  const task = tasks.find(t => `task:${t.id}` === displayedId);
+                  return task && <><SpecialHeader kind="Task" name={task.prompt} /><div className="ibody"><TaskBody task={task} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('artifact:')) {
+                  const [, taskId, encodedPath] = displayedId.split(':');
+                  const artifact = tasks.find(t => t.id === taskId)?.artifacts.find(a => encodeURIComponent(a.path) === encodedPath);
+                  return artifact && <><SpecialHeader kind="Artifact" name={artifact.name} /><div className="ibody"><ArtifactBody artifact={artifact} /></div></>;
+                }
                 const d = displayedId ? getDetail(notes, displayedId) : null;
                 if (!d) return null;
                 return (
@@ -379,4 +396,67 @@ function ItemsAndUrls({ items, urls }: { items: string[]; urls: string[] }) {
       )}
     </>
   );
+}
+
+function SpecialHeader({ kind, name }: { kind: string; name: string }) {
+  return <div className="ph"><div className={`badge ${kind.toLowerCase()}`} /><div className="meta"><div className="kind">{kind}</div><div className="nm">{name}</div></div></div>;
+}
+function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTask[]; select: (id: string) => void }) {
+  const [prompt, setPrompt] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const [log, setLog] = useState<AgentLog | null>(null);
+  useEffect(() => {
+    let live = true;
+    const refresh = () => { fetch(`/api/agents/${encodeURIComponent(agent.instanceName)}/log`).then(r => r.json()).then(data => { if (live) setLog(data); }).catch(() => {}); };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [agent.instanceName]);
+  const reason = agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : '';
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!prompt.trim() || sending || reason) return;
+    setSending(true); setError('');
+    try {
+      const response = await fetch(`/api/agents/${encodeURIComponent(agent.instanceName)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not start task');
+      setPrompt('');
+      await refreshTasks();
+      select(`task:${data.id}`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not start task'); }
+    finally { setSending(false); }
+  };
+  return <>
+    <div className="sec">{agent.name} · {agent.kind}</div>
+    <form className="agent-task-form" onSubmit={submit}>
+      <label htmlFor="agent-task-input">Give {agent.instanceName} a task</label>
+      <textarea id="agent-task-input" value={prompt} onChange={e => setPrompt(e.target.value)} disabled={!!reason || sending} placeholder={reason || 'Describe the task…'} />
+      <button type="submit" disabled={!!reason || sending || !prompt.trim()}>Start task</button>
+      {reason && <div className="task-hint">{reason}</div>}{error && <div className="task-error">{error}</div>}
+    </form>
+    <div className="sec">Tasks</div>
+    {tasks.length ? tasks.map(t => <button key={t.id} className="rowlink" onClick={() => select(`task:${t.id}`)}>{t.status} · {t.prompt}</button>) : <p>No tasks yet.</p>}
+    <div className="sec">Current or last session log</div>
+    {log?.available ? <>
+      {log.prompt && <><div className="task-hint">Last prompt · {log.prompt.at ?? ''}</div><p>{log.prompt.text}</p></>}
+      {log.messages?.map((m, i) => <p key={i} className="log-line">{m.at ?? ''} · {m.text}</p>)}
+      {log.tools?.length ? <><div className="sec">Recent tools</div>{log.tools.map((t, i) => <p key={i} className="log-line">{t.at ?? ''} · {t.name} ({t.args})</p>)}</> : null}
+    </> : <p>{log?.reason ?? 'Loading log…'}</p>}
+  </>;
+}
+function TaskBody({ task, select }: { task: AgentTask; select: (id: string) => void }) {
+  return <><div className="sec">{task.status} · {task.updatedAt}</div><p>{task.prompt}</p>
+    <button className="rowlink" onClick={() => select(`agent:${task.agentId}`)}>{task.agentId}</button>
+    {task.artifacts.length > 0 && <div className="sec">Files</div>}
+    {task.artifacts.map((a) => <button key={a.path} className="rowlink" onClick={() => select(`artifact:${task.id}:${encodeURIComponent(a.path)}`)}>{a.name}</button>)}
+    {task.stdout && <><div className="sec">Output</div><pre className="content">{task.stdout}</pre></>}
+    {task.stderr && <><div className="sec">Errors</div><pre className="content">{task.stderr}</pre></>}
+  </>;
+}
+function ArtifactBody({ artifact }: { artifact: ArtifactInfo }) {
+  const url = `/api/artifacts/file?path=${encodeURIComponent(artifact.path)}`;
+  const open = () => { void fetch('/api/artifacts/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: artifact.path }) }); };
+  return <><div className="sec">{artifact.type}</div><button className="rowlink" onClick={open}>Open in default app ↗</button><a className="prj" href={url} target="_blank" rel="noreferrer">Preview or download ↗</a>{artifact.type === 'image' && <img src={url} alt={artifact.name} className="artifact-preview" />}</>;
 }

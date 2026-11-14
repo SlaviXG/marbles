@@ -1,9 +1,28 @@
 import type { Note } from "./types";
+import type { AgentInfo, AgentTask } from "./agentTypes";
 
 export interface GNode {
   id: string;
   label: string;
-  type: "note" | "section" | "url";
+  type: "note" | "section" | "url" | "agent" | "task" | "artifact";
+  artifactType?: string;
+}
+
+export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[]) {
+  const graph = buildGraph(notes);
+  const nodes = [...graph.nodes];
+  const links = [...graph.links];
+  for (const agent of agents) nodes.push({ id: `agent:${agent.instanceName}`, label: agent.instanceName, type: 'agent' });
+  for (const task of tasks.slice(0, 30)) {
+    nodes.push({ id: `task:${task.id}`, label: task.prompt.slice(0, 48), type: 'task' });
+    links.push({ source: `agent:${task.agentId}`, target: `task:${task.id}` });
+    for (const artifact of task.artifacts) {
+      const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
+      nodes.push({ id, label: artifact.name, type: 'artifact', artifactType: artifact.type });
+      links.push({ source: `task:${task.id}`, target: id });
+    }
+  }
+  return { nodes, links };
 }
 export interface GLink {
   source: string;
