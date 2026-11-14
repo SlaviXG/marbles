@@ -9,11 +9,14 @@ import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { useVault } from '../state/store';
 import type { AgentTask, SwarmTask } from '../core/agentTypes';
+import { DEFAULT_SPEECH_VOICE, SPEECH_VOICES, type SpeechVoice } from '../../shared/speechVoices.mjs';
 
 export default function VoicePanel() {
   const session = useRef<VoiceSession>();
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies, setVoiceReplies] = useState(true);
+  const [speechVoice, setSpeechVoice] = useState<SpeechVoice>(DEFAULT_SPEECH_VOICE);
+  const [ttsProvider, setTtsProvider] = useState<'elevenlabs' | 'openai' | 'none'>();
   const [replyPlaying, setReplyPlaying] = useState(false);
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
@@ -45,11 +48,24 @@ export default function VoicePanel() {
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
+    speaker.current.setVoice(speechVoice);
     // Delay one event loop so StrictMode's initial cleanup cancels its trial
     // mount before requesting microphone access or loading the wake model.
     const startup = setTimeout(start, 0);
     return () => { clearTimeout(startup); mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); };
   }, []);
+  useEffect(() => {
+    const abort = new AbortController();
+    void fetch('/api/voice/tts-info', { signal: abort.signal })
+      .then(response => response.ok ? response.json() : null)
+      .then(info => {
+        if (!abort.signal.aborted && ['elevenlabs', 'openai', 'none'].includes(info?.provider)) {
+          setTtsProvider(info.provider);
+        }
+      }).catch(() => { /* The voice controls still work if provider info is unavailable. */ });
+    return () => abort.abort();
+  }, []);
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (pausedAt.current != null) return;
@@ -207,6 +223,15 @@ export default function VoicePanel() {
       <button className="voice-off" type="button" aria-pressed={voiceReplies} onClick={() => {
         const enabled = !voiceReplies; setVoiceReplies(enabled); speaker.current?.setEnabled(enabled);
       }}>{voiceReplies ? 'AI voice on' : 'AI voice muted'}</button>
+      {ttsProvider && <div className="voice-provider">Speech: {ttsProvider === 'elevenlabs' ? 'ElevenLabs' : ttsProvider === 'openai' ? 'OpenAI' : 'unavailable'}</div>}
+      <label className="voice-picker">OpenAI fallback voice
+        <select value={speechVoice} onChange={event => {
+          const voice = event.target.value as SpeechVoice;
+          setSpeechVoice(voice); speaker.current?.setVoice(voice);
+        }}>
+          {SPEECH_VOICES.map(voice => <option key={voice} value={voice}>{voice}</option>)}
+        </select>
+      </label>
       {replyPlaying && <button className="voice-off" type="button" onClick={() => speaker.current?.interrupt()}>Stop reply</button>}
       <p id="voice-detail" className="voice-sr-only" role={status === "error" ? "alert" : undefined}>{detail}</p>
       {active && <button className="voice-off" type="button" disabled={status === "stopping"}

@@ -114,16 +114,24 @@ and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
 is sent to OpenAI. Initial command audio is buffered and paced, with a bounded
 backlog and visible errors if the connection cannot keep up.
 
-Final replies are read with OpenAI `gpt-4o-mini-tts`, Marin voice, through
-`POST /api/voice/speech`. Marin is used for automatic replies and **Read aloud**;
-previously saved browser voice choices are ignored. There is no voice picker.
+Final replies are read through `POST /api/voice/speech`. Set `ELEVENLABS_API_KEY`
+in the repository-root `.env` to use ElevenLabs for spoken replies. The default
+voice is `DODLEQrClDo8wCz460ld` with model `eleven_flash_v2_5`. Optionally set
+`ELEVENLABS_VOICE_ID` and `ELEVENLABS_MODEL_ID` to override them. The server
+streams ElevenLabs MP3 audio as it arrives. If its key is missing or synthesis
+fails before audio starts, the server automatically uses OpenAI
+`gpt-4o-mini-tts`. Keep `OPENAI_API_KEY` for speech-to-text and this fallback.
+The **OpenAI fallback voice** picker selects the voice used only when OpenAI
+handles a spoken reply; it does not change the ElevenLabs voice. The default
+OpenAI voice is Marin. `GET /api/voice/tts-info` reports the configured provider,
+ElevenLabs voice ID, and model without returning API keys. The voice dock shows
+the configured speech provider.
 **AI voice on/muted** toggles automatic playback;
 **Stop reply** interrupts it; **Read aloud** replays a message. Text stays visible
 if audio fails or the browser blocks playback. Code blocks and URLs are simplified
 for speech and long replies are shortened. Up to three replies queue, with three
-clips cached in memory. The voice is AI-generated. Text-to-speech uses the same
-server-side key and incurs OpenAI API usage. This Speech API model is supported
-until its announced January 6, 2027 shutdown; migrate this endpoint before then.
+clips cached in memory. The voice is AI-generated. Text-to-speech incurs usage
+with whichever provider handles the request.
 
 While a reply plays, microphone audio is held out of cloud transcription. The
 local wake detector remains available, so **Marbles** interrupts playback and
@@ -138,8 +146,8 @@ coordinates the work, powered by **Claude Sonnet 5.5** through its native Anthro
 provider. Set `ANTHROPIC_API_KEY` in the repo-root `.env`. Install Git, uv, and
 Python 3.14, then run `npm run setup:hermes` in `app`. `npm run dev` and
 `npm run server` run setup automatically, reusing the installed runtime. `MARBLES_COORDINATOR_MODEL` optionally
-overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and Marin
-speech output; the coordinator does not send standby audio to Claude.
+overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and the
+fallback speech output; the coordinator does not send standby audio to Claude.
 
 Describe the outcome in one sentence. The coordinator selects sensible,
 reversible defaults, creates a 1–3 step plan, states key assumptions, and delegates
