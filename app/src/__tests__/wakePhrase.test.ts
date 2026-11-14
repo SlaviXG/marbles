@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest';
-import { wakeStart, withoutWakePhrase } from '../voice/wakePhrase';
+import { hasWakePhrase, wakeStart, withoutWakePhrase } from '../voice/wakePhrase';
 import { spokenText } from '../voice/ReplySpeaker';
 
 it('matches the exact wake phrase as complete words and keeps its timestamp', () => {
+  expect(hasWakePhrase('Hey, Marbles!')).toBe(true);
+  expect(hasWakePhrase('they marbles')).toBe(false);
   expect(wakeStart([{ text: 'Hey,', timestamp: [0.2, 0.5] }, { text: 'Marbles!', timestamp: [0.5, 1] }])).toBe(0.2);
   expect(wakeStart([{ text: 'they marbles', timestamp: [0, 1] }])).toBeUndefined();
   expect(wakeStart([{ text: 'hey marble', timestamp: [0, 1] }])).toBeUndefined();

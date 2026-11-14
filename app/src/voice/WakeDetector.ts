@@ -10,6 +10,9 @@ export class WakeDetector {
   private busy = false;
   private epoch = 0;
   private disposed = false;
+  private loaded = false;
+  private failures = 0;
+  private retryAt = 0;
   private rejectLoad?: (error: Error) => void;
   constructor(private wake: (audio: Float32Array) => void, private error: (message: string) => void) {}
 
@@ -17,19 +20,37 @@ export class WakeDetector {
     return new Promise((resolve, reject) => {
       this.rejectLoad = reject;
       this.worker = new Worker(new URL('./wake.worker.ts', import.meta.url), { type: 'module' });
-      this.worker.onerror = () => { reject(new Error('Wake model could not start. Reload and try again.')); this.error('Wake model stopped. Reload and try again.'); };
+      this.worker.onerror = event => {
+        const detail = event.message || 'The browser stopped the wake worker.';
+        if (!this.loaded) reject(new Error(`Wake model could not start: ${detail}`));
+        else this.error(`Wake worker stopped: ${detail}. Use Enable microphone to retry.`);
+      };
       this.worker.onmessage = ({ data }) => {
         if (this.disposed) return;
-        if (data.type === 'ready') { this.rejectLoad = undefined; resolve(); }
+        if (data.type === 'ready') { this.loaded = true; this.rejectLoad = undefined; resolve(); }
         else if (data.type === 'progress') progress(data.progress);
-        else if (data.type === 'error') { reject(new Error(data.message)); this.error('Wake model failed. Check your connection and reload.'); }
+        else if (data.type === 'error') {
+          this.busy = false;
+          const detail = typeof data.message === 'string' ? data.message.slice(0, 300) : 'Unknown local model error';
+          if (!this.loaded || data.phase === 'load') {
+            reject(new Error(`Wake model could not load: ${detail}`));
+            return;
+          }
+          // A single noisy/short frame or failed alignment must not stop the
+          // microphone. Back off and try a fresh window, but bound failures.
+          console.warn('Local wake inference failed:', detail);
+          this.failures++;
+          this.retryAt = Date.now() + 1000;
+          if (this.failures >= 3) this.error(`Wake recognition failed repeatedly: ${detail}. Use Enable microphone to retry.`);
+        }
         else if (data.type === 'result') {
           this.busy = false;
-          if (data.epoch !== this.epoch || data.start == null) return;
+          this.failures = 0;
+          if (data.epoch !== this.epoch || !Number.isFinite(data.start) || data.start < 0 || data.start > data.length / SAMPLE_RATE) return;
           const absoluteStart = data.end - data.length + Math.floor(Math.max(0, data.start - 0.1) * SAMPLE_RATE);
           const start = absoluteStart - (this.total - this.audio.length);
-          // If inference fell behind our buffer, ask the user to repeat rather
-          // than dispatch a clipped command that has lost its wake boundary.
+          // Ignore a window that fell behind the buffer rather than dispatch
+          // a clipped command that has lost its wake boundary.
           if (start < 0) return;
           const audio = this.audio.slice(start);
           this.reset();
@@ -41,12 +62,12 @@ export class WakeDetector {
   }
 
   push(audio: Float32Array) {
-    if (this.disposed) return;
+    if (this.disposed || !this.loaded || !audio.length || !audio.every(Number.isFinite)) return;
     const joined = new Float32Array(this.audio.length + audio.length);
     joined.set(this.audio); joined.set(audio, this.audio.length);
     this.audio = joined.slice(-SAMPLE_RATE * 8);
     this.total += audio.length; this.sinceJob += audio.length;
-    if (this.busy || this.audio.length < SAMPLE_RATE || this.sinceJob < SAMPLE_RATE * 0.65) return;
+    if (this.busy || Date.now() < this.retryAt || this.audio.length < SAMPLE_RATE || this.sinceJob < SAMPLE_RATE * 0.65) return;
     const recent = this.audio.slice(-SAMPLE_RATE);
     const rms = Math.sqrt(recent.reduce((sum, v) => sum + v * v, 0) / recent.length);
     if (rms < 0.004) return;

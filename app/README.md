@@ -84,6 +84,9 @@ windows, gated by local audio energy, with bounded history. Only a complete
 the command after the wake phrase while dropping preceding room/playback audio.
 This is local ASR-based wake recognition rather than a trained keyword-only
 model; latency and accuracy depend on the device, accent, and room noise.
+An isolated inference failure retries with a fresh window after a short backoff.
+Repeated failures show the actual runtime error. Word alignment runs only after
+a possible wake phrase is detected, reducing background inference work.
 
 After wake-up, an adaptive sound trigger commits phrases after 700 ms of quiet
 and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted

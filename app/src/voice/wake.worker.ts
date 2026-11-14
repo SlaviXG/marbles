@@ -1,5 +1,5 @@
 import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from '@huggingface/transformers';
-import { wakeStart } from './wakePhrase';
+import { hasWakePhrase, wakeStart } from './wakePhrase';
 
 env.allowLocalModels = false;
 env.backends.onnx.wasm!.numThreads = 1;
@@ -14,9 +14,24 @@ self.onmessage = async ({ data }: MessageEvent) => {
       });
       self.postMessage({ type: 'ready' });
     } else {
+      if (!(data.audio instanceof Float32Array) || !data.audio.length || !data.audio.every(Number.isFinite)) {
+        self.postMessage({ type: 'result', end: data.end, length: data.length, epoch: data.epoch });
+        return;
+      }
+      // Ordinary room sound needs only a phrase check. Run the more costly
+      // cross-attention/timestamp alignment only for a possible wake phrase.
+      const textResult = await model(data.audio, { max_new_tokens: 72 });
+      const textOutput = Array.isArray(textResult) ? textResult[0] : textResult;
+      if (!hasWakePhrase(textOutput.text)) {
+        self.postMessage({ type: 'result', end: data.end, length: data.length, epoch: data.epoch });
+        return;
+      }
       const result = await model(data.audio, { return_timestamps: 'word', max_new_tokens: 72 });
       const output = Array.isArray(result) ? result[0] : result;
       self.postMessage({ type: 'result', start: wakeStart(output.chunks ?? []), end: data.end, length: data.length, epoch: data.epoch });
     }
-  } catch (error) { self.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) }); }
+  } catch (error) {
+    self.postMessage({ type: 'error', phase: data.type === 'load' ? 'load' : 'inference',
+      message: error instanceof Error ? error.message : String(error) });
+  }
 };

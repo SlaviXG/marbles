@@ -11,3 +11,7 @@ export function withoutWakePhrase(text: string): string {
   const last = matches[matches.length - 1];
   return last ? text.slice(last.index! + last[0].length).trim() : text;
 }
+
+export function hasWakePhrase(text: string): boolean {
+  return /\bhey marbles\b/.test(text.toLowerCase().replace(/[^a-z]+/g, ' ').trim());
+}
