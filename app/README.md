@@ -85,8 +85,13 @@ explicitly. Setup needs network access once, then reuses the verified file sizes
 The browser never downloads wake assets from Hugging Face or a CDN. Generated
 model/runtime files are gitignored and copied into production builds. It runs one
 inference at a time over overlapping audio
-windows, gated by local audio energy, with bounded history. Only a complete
-**Hey Marbles** word match opens OpenAI transcription. Word timestamps preserve
+windows, gated by local audio energy, with bounded history. A **60% normalized
+edit-similarity** match to **Hey Marbles** opens OpenAI transcription. Close
+transcriptions such as "hey marvels" and "hey marble" are accepted, while an
+attention-word guard rejects ordinary phrases such as "they marbles". This is
+text similarity, not a calibrated acoustic confidence score. Saying the wake
+phrase alone gets a spoken acknowledgement without launching a task.
+Word timestamps preserve
 the command after the wake phrase while dropping preceding room/playback audio.
 This is local ASR-based wake recognition rather than a trained keyword-only
 model; latency and accuracy depend on the device, accent, and room noise.
@@ -138,7 +143,9 @@ idle tracking, and retry IDs reset when the server restarts; idle means no activ
 Marbles-managed task, not every unrelated CLI session on the machine.
 
 The relay accepts one voice session from local app origins on ports 5173/5174.
-The server binds to loopback and limits payloads, backlogs, and session duration.
+The server binds to loopback and limits payloads, backlogs, and session duration. Closing sockets do not reserve the voice
+slot; heartbeat cleanup removes abandoned connections. Initial connection handshakes
+retry up to three times without replaying audio from an established session.
 Before sharing this server, add authentication and explicit origin configuration.
 Keep the frontend on port 5173. The key, audio, and local configuration are never
 committed; transcripts and generated prompts remain in the server task history.

@@ -29,6 +29,8 @@ export class VoiceSession {
   private queued: (ArrayBuffer | string)[] = [];
   private queuedBytes = 0;
   private sendTimer?: ReturnType<typeof setTimeout>;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private connectionAttempts = 0;
   private timer?: ReturnType<typeof setTimeout>;
 
   constructor(private events: VoiceEvents, private options: { wake?: boolean } = {}) {}
@@ -162,15 +164,35 @@ export class VoiceSession {
     this.armTimeout("Connection timed out. Check your server and API key.", 20_000);
     const url = new URL("/api/voice", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    this.socket = new WebSocket(url);
-    this.socket.onerror = () => this.fail("Cannot connect to voice. Check the app server and OPENAI_API_KEY.");
-    this.socket.onclose = () => this.fail("Voice connection closed. Try again.");
+    const socket = new WebSocket(url);
+    this.socket = socket;
+    this.connectionAttempts++;
+    let retrying = false;
+    const connectionFailed = () => {
+      if (this.disposed || this.socket !== socket || retrying) return;
+      if (!this.ready && this.connectionAttempts < 3 && !this.stopping) {
+        retrying = true;
+        socket.onerror = socket.onclose = socket.onmessage = null;
+        socket.close();
+        this.events.status('loading', 'Reconnecting to the local voice server…');
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          if (!this.disposed) this.connect();
+        }, this.connectionAttempts * 500);
+        return;
+      }
+      this.fail(this.ready ? 'Voice connection closed. Please try again.'
+        : 'The local voice server refused the connection. Close other Marbles tabs using voice, or restart the app server.');
+    };
+    socket.onerror = connectionFailed;
+    socket.onclose = connectionFailed;
     this.socket.onmessage = ({ data }) => {
       if (this.disposed) return;
       try {
         const event = JSON.parse(data);
         if (event.type === "ready") {
           this.ready = true;
+          this.connectionAttempts = 0;
           clearTimeout(this.timer);
           this.drain();
           if (this.stopping) this.armTimeout("Final transcription timed out. You can copy the text received so far.", 15_000);
@@ -245,6 +267,7 @@ export class VoiceSession {
     this.disposed = true;
     clearTimeout(this.timer);
     clearTimeout(this.sendTimer);
+    clearTimeout(this.reconnectTimer);
     this.wake?.dispose();
     this.releaseMicrophone();
     this.events.activity?.(0, false);

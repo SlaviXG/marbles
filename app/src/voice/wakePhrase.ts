@@ -1,4 +1,4 @@
-export const WAKE_MATCH_THRESHOLD = 0.7;
+export const WAKE_MATCH_THRESHOLD = 0.6;
 const TARGET = 'hey marbles';
 const GREETINGS = new Set(['hey', 'hay', 'hi', 'hei', 'ay']);
 

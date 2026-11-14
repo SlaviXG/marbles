@@ -93,7 +93,10 @@ export default function VoicePanel() {
       for (const id of Object.keys(draft.current.items)) consumed.current.add(id);
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
       const request = withoutWakePhrase(text);
-      if (!request) return; // A standalone wake phrase opens listening, not a task.
+      if (!request) {
+        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: "I’m listening. What would you like me to do?" });
+        return; // A standalone wake phrase gets a reply without launching a task.
+      }
       enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${request}` : request,
         requestId: crypto.randomUUID() });
     });
