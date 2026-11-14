@@ -171,6 +171,18 @@ export const PALM_OFF = 0.3;
 export const UP_ON = 0.1;
 export const UP_OFF = 0;
 
+// Whether a hand is used as input this frame. A hand that is pinching is kept
+// whatever its pose: a pinch is a click, drag or two-hand zoom in progress,
+// and wrists turn while dragging and zooming. Dropping the hand mid-gesture
+// would release the press or end the zoom. The pose gate decides whether a
+// hand may START a gesture, not whether it may finish one; once the pinch
+// opens, the pose gate applies again.
+// poseOk: poseUsable() this frame. pinching: the hand's own pinch, from the
+// previous frame. required: the requirePalm setting.
+export function keepHand(poseOk: boolean, pinching: boolean, required = true): boolean {
+  return !required || poseOk || pinching;
+}
+
 // was: whether this hand counted on the previous frame.
 export function poseUsable(p: HandPose, was: boolean): boolean {
   return was ? p.palm > PALM_OFF && p.up > UP_OFF : p.palm > PALM_ON && p.up > UP_ON;

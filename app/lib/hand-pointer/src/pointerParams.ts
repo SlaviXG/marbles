@@ -46,6 +46,18 @@ export interface PointerParams {
   // while the other rests (see handArbiter.ts). Off: the nominated primary
   // hand always drives when both are visible.
   autoHand: boolean;
+  // Distance compensation: the active zone grows and shrinks with the hand's
+  // apparent size, so the same arm movement moves the cursor the same distance
+  // near the camera or far from it (see depthZone.ts). Off: the zone is fixed.
+  depthZone: boolean;
+  // The hand size (frame heights, see handScale) at which the zone keeps its
+  // configured size. 0 learns it from the first second of tracking.
+  depthRef: number;
+  // Scale every hand-measured threshold (pinch on/off, the aim point's
+  // freeze, the fast-motion pinch guard) with the hand's apparent size, so a
+  // pinch takes the same physical finger gap near the camera or far from it
+  // (see depthFactor in depthZone.ts). Off: thresholds are fixed frame units.
+  depthThresholds: boolean;
 }
 
 // Defaults seeded from the desk-distance prototype (CPU, ~83ms infer, ~11px
@@ -78,6 +90,9 @@ export const DEFAULT_PARAMS: PointerParams = {
   aimHoldMs: 150,
   requirePalm: true,
   autoHand: true,
+  depthZone: true,
+  depthRef: 0,
+  depthThresholds: true,
 };
 
 const KEY = "marbles.pointer.params";

@@ -43,6 +43,21 @@ export { VirtualPointer } from "./virtualPointer";
 
 export { PinchGuard, nextPinch, PINCH_SETTLE } from "./pinchGuard";
 export { AimPoint, type AimParams } from "./aimPoint";
+export { dedupeHands, handOverlap, SAME_HAND, type Detection } from "./dedupeHands";
+export {
+  DepthZone,
+  SizeTracker,
+  depthFactor,
+  handScale,
+  FACTOR_MIN,
+  FACTOR_MAX,
+  DEPTH_TAU,
+  LEARN_SECONDS,
+  RATIO_MIN,
+  RATIO_MAX,
+  RECENTER,
+  type Zone,
+} from "./depthZone";
 
 export {
   HandRecorder,
@@ -83,6 +98,7 @@ export {
 export {
   handPose,
   poseUsable,
+  keepHand,
   palmFacing,
   fingersUp,
   palmLength,
