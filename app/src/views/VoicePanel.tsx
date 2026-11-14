@@ -4,11 +4,13 @@ import { emptyTranscript, transcriptText, updateTranscript } from "../voice/tran
 import { CommandBuffer } from "../voice/CommandBuffer";
 import { refreshAgents, refreshTasks, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
-import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
+import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
+import { canvasCommand } from '../voice/canvasCommand';
+import { useVault } from '../state/store';
 
-export default function VoicePanel() {
+export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: () => void; onDeactivate?: () => void } = {}) {
   const session = useRef<VoiceSession>();
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies, setVoiceReplies] = useState(true);
@@ -18,20 +20,18 @@ export default function VoicePanel() {
   const requestQueue = useRef(Promise.resolve());
   const clarificationContext = useRef("");
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
-  const [now, setNow] = useState(Date.now());
-  const pausedAt = useRef<number>();
   const draft = useRef(emptyTranscript());
   const consumed = useRef(new Set<string>());
   const draftId = useRef('');
   const watching = useRef(new Map<string, string>());
   const tasks = useAgents(state => state.tasks);
   const [status, setStatus] = useState<VoiceStatus>("idle");
-  const [detail, setDetail] = useState("Enable your mic, then describe a task. OpenAI turns your words into a prompt for an idle agent.");
+  const [detail, setDetail] = useState("Enable the microphone, then say “Hey Marbles” and your task. Voice requests start when you finish speaking. Transcription uses OpenAI.");
   const [level, setLevel] = useState(0);
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
   const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Hey Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
     : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
-    : status === "error" ? "Enable microphone" : "Microphone off";
+    : status === "error" ? "Touch the orb to try again" : "Touch the orb to begin";
 
 
   useEffect(() => {
@@ -41,20 +41,8 @@ export default function VoicePanel() {
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
-    // Delay one event loop so StrictMode's initial cleanup cancels its trial
-    // mount before requesting microphone access or loading the wake model.
-    const startup = setTimeout(start, 0);
-    return () => { clearTimeout(startup); mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); };
+    return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
   }, []);
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (pausedAt.current != null) return;
-      const time = Date.now(); setNow(time);
-      setMessages(current => visibleMessages(current, time));
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, []);
-
   useEffect(() => {
     for (const task of tasks) {
       if (task.status === 'running' && task.source === 'voice' && !watching.current.has(task.id)) {
@@ -69,18 +57,10 @@ export default function VoicePanel() {
   }, [tasks]);
 
   function message(item: Omit<VoiceMessage, 'expiresAt'>) {
-    const time = Date.now(); setNow(time);
+    const time = Date.now();
     setMessages(current => upsertMessage(current, item, time));
     if (item.role === 'assistant' && !item.pending && item.id !== 'speech-error') speaker.current?.enqueue(item.id, item.text);
   }
-  function pause() { pausedAt.current ??= Date.now(); }
-  function resume() {
-    if (pausedAt.current == null) return;
-    const elapsed = Date.now() - pausedAt.current;
-    setMessages(current => current.map(item => ({ ...item, expiresAt: item.expiresAt + elapsed })));
-    pausedAt.current = undefined;
-  }
-
   function start() {
     commands.current?.dispose();
     speaker.current?.interrupt();
@@ -94,6 +74,14 @@ export default function VoicePanel() {
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
       const request = withoutWakePhrase(text);
       if (!request) return; // A standalone wake phrase opens listening, not a task.
+      const local = canvasCommand(request, useAgents.getState().tasks);
+      if (local) {
+        if (local.close) useVault.getState().clear();
+        if (local.select) useVault.getState().select(local.select);
+        message({ id: `canvas:${crypto.randomUUID()}`, role: 'assistant', text: local.reply });
+        session.current?.rearm();
+        return;
+      }
       enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${request}` : request,
         requestId: crypto.randomUUID() });
     });
@@ -155,15 +143,14 @@ export default function VoicePanel() {
 
   return (
     <>
-    <VoiceConversation messages={messages} now={now} pause={pause} resume={resume} retry={enqueue}
-      read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />
     <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice transcription"
       style={{ "--voice-level": level } as CSSProperties}>
+
       <div className="voice-marble-float">
         <button type="button" className="voice-marble" disabled={status === "stopping"}
-          aria-label={active ? "Turn off microphone" : "Enable voice detection"}
+          aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
           aria-pressed={active} aria-describedby="voice-detail"
-          onClick={() => active ? session.current?.stop() : start()}>
+          onClick={() => { if (active) { session.current?.stop(); onDeactivate?.(); } else { start(); onActivate?.(); } }}>
           <span className="voice-halo" aria-hidden="true" />
           <span className="voice-sphere" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -174,14 +161,10 @@ export default function VoicePanel() {
         </button>
       </div>
       <div className="voice-caption" role="status">{caption}</div>
-      <button className="voice-off" type="button" aria-pressed={voiceReplies} onClick={() => {
-        const enabled = !voiceReplies; setVoiceReplies(enabled); speaker.current?.setEnabled(enabled);
-      }}>{voiceReplies ? 'AI voice on' : 'AI voice muted'}</button>
-      {replyPlaying && <button className="voice-off" type="button" onClick={() => speaker.current?.interrupt()}>Stop reply</button>}
-      <p id="voice-detail" className="voice-sr-only" role={status === "error" ? "alert" : undefined}>{detail}</p>
-      {active && <button className="voice-off" type="button" disabled={status === "stopping"}
-        onClick={() => session.current?.stop()}>Turn mic off</button>}
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Hey Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
+    <VoiceConversation messages={messages} retry={enqueue}
+      read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />
     </>
   );
 }

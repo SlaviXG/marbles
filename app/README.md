@@ -38,7 +38,7 @@ To use a different knowledge base (Notion, SQLite, an API), implement
 
 Vite + React. `useVaultStream` feeds SSE into a Zustand store. A force-directed
 graph (notes -> sections -> URLs, plus `[[wikilinks]]`) with manual hit-testing.
-Click a node to open a detail panel; click the background to close. `detail.ts`
+Point and pinch (or click) a marble to open its details. Use **Close details**, Escape, or a short press on empty canvas to dismiss. `detail.ts`
 resolves a node id to renderable detail via a small resolver chain.
 
 ## Run
@@ -58,23 +58,40 @@ Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 
 Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
 `.env`, then restart `npm run dev`. Use Node.js 20+ and open
-`http://localhost:5173` in a browser with AudioWorklet support. The app requests
-microphone permission and loads a local wake model automatically. Say **Hey
-Marbles**, then describe your task. The marble returns to wake mode after a task
-is assigned or 20 seconds without speech. Use **Turn mic off** to stop; click the
-marble to enable it again. Browsers that require an initial audio gesture show
-**Enable microphone** once before hands-free listening can begin.
+`http://localhost:5173` in a browser with AudioWorklet support. The single canvas
+shows colorful agent marbles with readable names, availability and the latest
+task state. There are no navigation tabs or typed task composer.
 
-The marble floats and glows with microphone energy. Live speech and replies
-appear as a conversation at the bottom left, with at most three recent bubbles.
-Finished messages fade after 20 seconds; hovering or focusing the conversation
-pauses expiry. Live transcription and pending handoffs stay visible. Completion
-messages include the agent reply and a link to full task details.
+The single canvas is a restrained holographic space: dark blue surfaces, cyan
+agent cores, a quiet projection plane and readable labels. Agent motion follows
+real task state: breathing halos while waiting, rotating segmented rings while
+working, a short completion pulse and checkmark when finished, and amber warning
+glyphs after failure. Reduced motion keeps static glyphs. Positions stay fixed
+for hand targeting, and hidden pages stop requesting animation repaints.
 
-The graph reserves green nodes for key deliverables: Markdown, text documents,
-Word/PDF files, spreadsheets, slides, and images. Up to 18 recent files connect
-directly to their producing agents. Task history and other files stay accessible
-from the agent/task panels; dependency and build directories are omitted.
+Touch the **glowing orb** to enable voice and hand control. The browser requests
+microphone and camera access, and the local wake model loads. Say **Hey Marbles**,
+then describe your task. Voice returns to wake mode after assignment or 20
+seconds without speech. Touch the orb again to pause both microphone and camera.
+There are no navigation tabs, typed composer or persistent button bars.
+Mouse and keyboard remain available as accessibility fallbacks.
+
+Live speech and replies appear at the bottom left, with at most three recent
+bubbles. They stay until newer messages replace them, rather than fading while
+someone is reading. Completion messages include the agent reply and a link to
+full task details. Agent/task details stay open when the pointer moves away;
+technical activity and diagnostics are expandable.
+
+Completed deliverables appear beside their producing agent as holographic
+file objects. Documents, spreadsheets, slides and images have distinct glyphs;
+multiple files form one stack. Point and pinch a stack to browse its files, then
+select a file for details, image preview, download or opening in its default app.
+Source files and dependency/build output stay out of the canvas.
+
+After waking Marbles, **show me report.pdf** opens a matching known filename
+locally, and **close the preview** returns to the canvas. These viewing commands
+never launch another agent. Duplicate filenames require selecting the intended
+file; unknown targets follow the existing task interpretation path.
 
 Standby wake recognition uses quantized `Xenova/whisper-tiny.en` in a browser
 worker via Transformers.js (Apache-2.0 model). A setup script installs the pinned

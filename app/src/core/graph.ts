@@ -7,26 +7,22 @@ export interface GNode {
   type: "note" | "section" | "url" | "agent" | "task" | "artifact";
   artifactType?: string;
   available?: boolean;
+  status?: 'idle' | 'running' | 'unavailable';
+  progress?: string;
+  activity?: 'waiting' | 'working' | 'done' | 'failed' | 'unavailable';
+  activityKey?: string;
+  artifactCount?: number;
   x?: number;
   y?: number;
   fx?: number;
   fy?: number;
 }
 
-const AGENT_RADIUS = 42;
+const AGENT_RADIUS = 90;
 const AGENT_ANGLES: Record<string, number> = { claude: -Math.PI / 2, codex: Math.PI / 6, cursor: 5 * Math.PI / 6 };
 
 function pinned(id: string, label: string, type: GNode["type"], x: number, y: number, artifactType?: string): GNode {
   return { id, label, type, x, y, fx: x, fy: y, ...(artifactType ? { artifactType } : {}) };
-}
-
-// Small, stable slots keep new children adjacent to their parent. Every third
-// child starts another shallow ring, so later tasks do not move existing ones.
-function childPosition(parent: GNode, index: number, outward: number, distance: number) {
-  const angle = outward + [0, -0.75, 0.75][index % 3];
-  const ring = Math.floor(index / 3);
-  const radius = distance + ring * 20;
-  return { x: parent.x! + Math.cos(angle) * radius, y: parent.y! + Math.sin(angle) * radius };
 }
 
 // Surface deliverables, not implementation files or dependency/build output.
@@ -47,32 +43,37 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
     const status = !agent.available || agent.kind !== 'cli' || !['codex', 'claude'].includes(agent.id)
       ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') ? 'running' : 'idle';
-    const node = pinned(`agent:${agent.id}`, `${agent.name} · ${status}`, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
+    node.status = status;
+    const latest = tasks.find(task => task.agentId === agent.id && task.status === 'running') ?? tasks.find(task => task.agentId === agent.id);
+    node.progress = latest ? `${latest.status === 'completed' ? 'Ready to review' : latest.status === 'failed' ? 'Needs attention' : 'Working'}: ${latest.title || latest.intent?.objective || latest.prompt}` : undefined;
+    node.activity = status === 'unavailable' ? 'unavailable' : status === 'running' ? 'working' : latest?.status === 'completed' ? 'done' : latest?.status === 'failed' ? 'failed' : 'waiting';
+    node.activityKey = `${node.activity}:${latest?.id ?? 'idle'}`;
     nodes.push(node);
     agentNodes.set(agent.id, node);
   });
-  const childCounts = new Map<string, number>();
-  let fileCount = 0;
-  for (const task of tasks.slice(0, 30)) {
-    const parent = agentNodes.get(task.agentId);
-    if (!parent) continue;
-    const outward = Math.atan2(parent.y!, parent.x!);
-    for (const artifact of task.artifacts.filter(isCanvasArtifact)) {
-      if (fileCount >= 18) break;
-      fileCount++;
-      const index = childCounts.get(task.agentId) ?? 0;
-      childCounts.set(task.agentId, index + 1);
-      const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
-      const artifactPoint = childPosition(parent, index, outward, 36);
-      const format = /\.(md|markdown|mdx)$/i.test(artifact.name) ? 'markdown'
-        : /\.(ppt|pptx|odp)$/i.test(artifact.name) ? 'slides'
-        : /\.(doc|docx|odt|rtf)$/i.test(artifact.name) ? 'docx'
-        : /\.(xls|xlsx|ods|csv|tsv)$/i.test(artifact.name) ? 'spreadsheet'
-        : artifact.type;
-      nodes.push(pinned(id, artifact.name, 'artifact', artifactPoint.x, artifactPoint.y, format));
-      links.push({ source: `agent:${task.agentId}`, target: id });
+  for (const [agentId, parent] of agentNodes) {
+    const files = tasks.slice(0, 30).filter(task => task.agentId === agentId && task.status === 'completed')
+      .flatMap(task => task.artifacts.filter(isCanvasArtifact).map(artifact => ({ task, artifact })));
+    if (!files.length) continue;
+    const side = parent.x! < 0 ? -1 : 1;
+    const point = { x: parent.x! + side * 90, y: parent.y! - 18 };
+    if (files.length > 1) {
+      const id = `assets:${agentId}`;
+      const stack = pinned(id, `${files.length} files ready`, 'artifact', point.x, point.y, 'stack');
+      stack.artifactCount = files.length;
+      nodes.push(stack); links.push({ source: parent.id, target: id });
+      continue;
     }
+    const { task, artifact } = files[0];
+    const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
+    const format = /\.(md|markdown|mdx)$/i.test(artifact.name) ? 'markdown'
+      : /\.(ppt|pptx|odp)$/i.test(artifact.name) ? 'slides'
+      : /\.(doc|docx|odt|rtf)$/i.test(artifact.name) ? 'docx'
+      : /\.(xls|xlsx|ods|csv|tsv)$/i.test(artifact.name) ? 'spreadsheet' : artifact.type;
+    nodes.push(pinned(id, artifact.name, 'artifact', point.x, point.y, format));
+    links.push({ source: parent.id, target: id });
   }
   return { nodes, links };
 }

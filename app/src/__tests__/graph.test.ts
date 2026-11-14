@@ -38,7 +38,7 @@ describe('agent canvas mapping', () => {
     expect(graph.nodes.map(n => n.id)).toEqual(['agent:claude', 'agent:codex', 'agent:cursor']);
     expect(graph.links).toEqual([]);
     for (const node of graph.nodes) {
-      expect(Math.hypot(node.x!, node.y!)).toBeLessThanOrEqual(42.1);
+      expect(Math.hypot(node.x!, node.y!)).toBeLessThanOrEqual(90.1);
       expect([node.fx, node.fy]).toEqual([node.x, node.y]);
     }
   });
@@ -50,10 +50,10 @@ describe('agent canvas mapping', () => {
     expect(graph.nodes.some(n => n.type === 'task')).toBe(false);
     expect(artifact).toMatchObject({ label: 'out.pdf', type: 'artifact', artifactType: 'pdf' });
     expect(graph.links).toContainEqual({ source: 'agent:codex', target: `artifact:t1:${encodeURIComponent('codex/t1/out.pdf')}` });
-    expect(Math.hypot(artifact.x! - parent.x!, artifact.y! - parent.y!)).toBeLessThanOrEqual(37);
+    expect(Math.hypot(artifact.x! - parent.x!, artifact.y! - parent.y!)).toBeLessThanOrEqual(93);
   });
 
-  it('filters source/dependency clutter and caps the recent deliverables', () => {
+  it('filters source/dependency clutter and groups deliverables into a single tray', () => {
     for (const name of ['report.md', 'budget.xlsx', 'proposal.docx', 'deck.pptx', 'chart.png']) {
       expect(isCanvasArtifact({ name, path: `codex/t1/${name}`, type: 'other' })).toBe(true);
     }
@@ -63,8 +63,8 @@ describe('agent canvas mapping', () => {
     expect(isCanvasArtifact({ name: 'README.md', path: 'codex/t1/node_modules/lib/README.md', type: 'code' })).toBe(false);
     const files = Array.from({ length: 30 }, (_, i) => ({ name: `${i}.md`, path: `codex/t1/${i}.md`, type: 'code' as const }));
     const graph = composeGraph(notes, [agent('codex', true)], [{ ...task, artifacts: files }]);
-    expect(graph.nodes.filter(n => n.type === 'artifact')).toHaveLength(18);
-    expect(graph.nodes.find(n => n.type === 'artifact')?.artifactType).toBe('markdown');
+    expect(graph.nodes.filter(n => n.type === 'artifact')).toHaveLength(1);
+    expect(graph.nodes.find(n => n.type === 'artifact')).toMatchObject({ id: 'assets:codex', artifactType: 'stack', artifactCount: 30, label: '30 files ready' });
   });
 
   it('keeps the vault graph available behind the flag', () => {
@@ -84,5 +84,21 @@ describe('agent canvas mapping', () => {
     const unavailable = composeGraph(notes, [{ ...codex, available: false }], [task]);
     expect(unavailable.nodes.find(n => n.id === 'agent:codex')).toMatchObject({ available: false });
     expect(unavailable.nodes.some(n => n.type === 'artifact')).toBe(true);
+  });
+
+  it('shows a running request before any files exist, then keeps its review state', () => {
+    const codex = agent('codex', true);
+    const running = { ...task, status: 'running' as const, title: 'Prepare the meeting agenda', artifacts: [] };
+    const before = composeGraph({}, [codex], [running]).nodes[0];
+    expect(before).toMatchObject({ label: 'codex', status: 'running', activity: 'working', progress: 'Working: Prepare the meeting agenda' });
+    const finished = composeGraph({}, [codex], [{ ...running, status: 'completed' }]).nodes[0];
+    expect(finished).toMatchObject({ status: 'idle', activity: 'done', progress: 'Ready to review: Prepare the meeting agenda', x: before.x, y: before.y });
+  });
+
+  it('does not label an unsupported or unavailable teammate ready to help', () => {
+    const cursor = composeGraph({}, [agent('cursor', true)], []).nodes[0];
+    const missing = composeGraph({}, [{ ...agent('codex', true), available: false }], []).nodes[0];
+    expect(cursor.status).toBe('unavailable');
+    expect(missing.status).toBe('unavailable');
   });
 });

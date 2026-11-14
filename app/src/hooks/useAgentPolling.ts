@@ -4,7 +4,7 @@ export function useAgentPolling() {
   useEffect(() => {
     let live = true;
     let stream: EventSource | null = null;
-    const tasks = () => { void refreshTasks().catch(() => {}); };
+    const tasks = () => { void Promise.all([refreshTasks(), refreshAgents()]).catch(() => {}); };
     void refreshAgents().catch(() => {}).then(() => {
       if (!live) return;
       stream = new EventSource('/api/agents/stream');

@@ -1,0 +1,84 @@
+/* One holographic space. The glowing orb remains the main control. */
+.canvas-app {
+  --bg:oklch(14% .022 240); --panel:oklch(20% .03 235); --border:oklch(35% .045 230);
+  --text:oklch(92% .018 225); --muted:oklch(70% .035 230); --marble:var(--text); --teal:oklch(82% .1 210);
+  color:var(--text); font-size:16px; line-height:1.55;
+  background:radial-gradient(ellipse at 50% 80%,oklch(26% .07 230 / .65),transparent 55%),radial-gradient(ellipse at 80% 18%,oklch(22% .045 255 / .35),transparent 60%),var(--bg);
+}
+.canvas-app button { min-height:48px; font:inherit; cursor:pointer; }
+.canvas-app button:disabled { opacity:.5; cursor:default; }
+.canvas-app :focus-visible { outline:2px solid var(--teal); outline-offset:5px; }
+.canvas-app h1,.canvas-app p { margin-top:0; }
+.canvas-app p { max-width:70ch; }
+.skip-link { position:fixed; left:16px; top:-80px; z-index:100; color:var(--teal); background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px 20px; }
+.skip-link:focus { top:16px; }
+.canvas-header { position:absolute; inset:26px 32px auto; z-index:42; display:flex; align-items:center; justify-content:space-between; gap:24px; pointer-events:none; }
+.canvas-brand { display:flex; gap:11px; align-items:center; font-size:1.35rem; font-weight:650; letter-spacing:.12em; color:var(--text); }
+.brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:50%; background:radial-gradient(circle at 35% 25%,oklch(76% .1 210 / .3),oklch(25% .06 230)); border:1px solid oklch(78% .09 215 / .5); color:var(--teal); box-shadow:0 0 18px oklch(70% .12 220 / .13); font-size:1.2rem; }
+.brand-caption { font-size:.6875rem; font-weight:400; color:var(--muted); letter-spacing:.12em; margin-left:12px; padding-left:22px; border-left:1px solid var(--border); }
+.canvas-connection { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:.8125rem; }
+.canvas-connection>span { width:6px; height:6px; border-radius:50%; background:oklch(70% .1 65); }
+.canvas-connection.connected>span { background:var(--teal); }
+.canvas-intro { position:absolute; top:100px; left:50%; transform:translateX(-50%); z-index:4; text-align:center; pointer-events:none; width:min(600px,calc(100vw - 32px)); }
+.canvas-intro h1 { color:var(--text); font-size:1.5rem; line-height:1.3; font-weight:350; letter-spacing:.01em; margin-bottom:8px; }
+.canvas-intro p { font-size:.875rem; color:var(--muted); margin:0; }
+.canvas-empty { position:absolute; top:40%; left:50%; transform:translateX(-50%); max-width:42ch; text-align:center; font-size:.9375rem; color:var(--muted); background:var(--panel); padding:16px; border-radius:12px; }
+/* Keep the original floating, glowing, microphone-responsive voice marble. */
+.canvas-app .voice-dock { position:fixed; bottom:38px; left:50%; transform:translateX(-50%); z-index:41; width:min(360px,calc(100vw - 32px)); display:flex; flex-direction:column; align-items:center; }
+.canvas-app .voice-caption { color:var(--muted); font-size:.8125rem; text-shadow:none; }
+.canvas-app .voice-sphere { color:oklch(95% .035 210); background:radial-gradient(ellipse at 28% 21%,oklch(97% .025 210 / .9),transparent 22%),radial-gradient(ellipse at 72% 80%,oklch(65% .16 230 / .8),transparent 48%),conic-gradient(from 35deg at 42% 60%,oklch(32% .08 240),oklch(77% .11 215),oklch(39% .1 250),oklch(86% .08 210),oklch(32% .08 240)); box-shadow:inset -8px -12px 18px oklch(20% .05 240 / .7),inset 2px 3px 5px oklch(95% .04 210 / .75),0 0 32px oklch(72% .14 220 / .3),0 0 70px oklch(65% .12 225 / .13); }
+.canvas-app .voice-sphere::before { border-color:oklch(85% .09 210 / .5); box-shadow:0 3px 5px oklch(82% .08 210 / .24),inset 0 3px 8px oklch(95% .03 210 / .25); }
+.canvas-app .voice-halo { background:radial-gradient(circle,oklch(75% .12 215 / .25),oklch(65% .1 235 / .09) 42%,transparent 70%); }
+.canvas-app .voice-help { position:absolute; bottom:calc(100% + 18px); padding:16px; background:var(--panel); border:1px solid var(--border); border-radius:12px; text-shadow:none; font-size:.875rem; width:min(360px,calc(100vw - 32px)); }
+.gesture-guide { position:fixed; bottom:12px; left:16px; right:16px; text-align:center; color:var(--muted); font-size:.75rem; margin:0 auto; pointer-events:none; }
+.canvas-app .voice-conversation { position:fixed; left:28px; bottom:32px; width:min(320px,26vw); max-height:38dvh; }
+.canvas-app .voice-message { background:var(--panel); color:var(--text); border:1px solid var(--border); box-shadow:none; border-radius:12px; animation:none; transition:none; }
+.canvas-app .voice-message.user { background:oklch(25% .045 230); }
+.canvas-app .voice-message-label { font-size:.75rem; }
+.canvas-app .voice-message p { font-size:.875rem; line-height:1.6; }
+.canvas-app .voice-message button { min-height:44px; font-size:.8125rem; }
+/* Task details appear on demand, with no persistent sidebars. */
+.canvas-app .immersive-root { display:block; inset:88px 24px 190px auto; width:min(620px,calc(100vw - 48px)); }
+.canvas-app .immersive-root[hidden] { display:none; }
+.canvas-app .immersive-scrim,.canvas-app .immersive-bg { display:none; }
+.canvas-app .stage.blurred { filter:none; }
+.canvas-app .immersive-frame { width:100%; height:100%; border-radius:16px; border:1px solid var(--border); background:var(--panel); overflow:hidden; box-shadow:0 12px 40px oklch(8% .015 240 / .45); }
+.canvas-app .immersive { top:56px; mask-image:none; -webkit-mask-image:none; }
+.canvas-app .immersive-layer { scrollbar-width:auto; }
+.canvas-app .ph { padding:16px 28px 20px; }
+.canvas-app .ibody { padding:0 28px 28px; }
+.canvas-app .nm { font-size:1.375rem; line-height:1.4; overflow-wrap:anywhere; }
+.canvas-app .kind,.canvas-app .sec { font-size:.8125rem; text-transform:none; letter-spacing:0; color:var(--muted); }
+.canvas-app .content { font:.875rem/1.65 ui-monospace,monospace; white-space:pre-wrap; background:var(--bg); }
+.canvas-app .rowlink { border:1px solid var(--border); border-radius:9px; padding:12px 14px; font-size:.9375rem; color:var(--text); background:var(--bg); font-weight:450; overflow-wrap:anywhere; }
+.canvas-app .rowlink:hover { border-color:var(--teal); }
+.canvas-app .prj { min-height:48px; background:var(--bg); color:var(--text); }
+.canvas-app .badge.agent { background:oklch(78% .1 210); border:0; }
+.canvas-app .badge.task { background:oklch(71% .08 250); }
+.detail-close { position:absolute; top:8px; right:12px; z-index:2; border:0; padding:8px 12px; color:var(--teal); background:transparent; font-size:.875rem !important; }
+.detail-close span { font-size:1.25rem; margin-left:12px; }
+.technical-details { margin-top:24px; }
+.canvas-app .immersive summary { display:flex; align-items:center; min-height:48px; cursor:pointer; font-weight:500; padding:8px 0; }
+.canvas-app .immersive summary::before { content:'+'; color:var(--teal); margin-right:10px; }
+.canvas-app .immersive details[open]>summary::before { content:'−'; }
+.agent-voice-hint { color:var(--muted); font-size:.875rem; }
+/* Keyboard fallback for the same scene objects, never a second navigation UI. */
+.canvas-node-access { position:absolute; z-index:5; top:190px; left:24px; }
+.canvas-node-access button { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.canvas-node-access button:focus { position:relative; display:block; width:auto; height:auto; padding:12px 20px; clip-path:none; background:var(--panel); color:var(--text); border:1px solid var(--teal); border-radius:10px; }
+@media(max-width:1000px) { .canvas-app .voice-conversation { left:20px; bottom:200px; width:270px; max-height:25dvh; } }
+@media(max-width:600px) {
+ .canvas-header { inset:16px 18px auto; } .canvas-brand { font-size:1.15rem; } .brand-caption { display:none; }
+ .canvas-intro { top:90px; } .canvas-intro h1 { font-size:1.25rem; } .canvas-connection { font-size:.75rem; }
+ .canvas-app .voice-dock { bottom:46px; } .gesture-guide { font-size:.6875rem; max-width:40ch; }
+ .canvas-app .voice-conversation { left:16px; bottom:200px; width:min(270px,calc(100vw - 32px)); max-height:24dvh; }
+ .canvas-app .immersive-root { inset:76px 12px 190px; width:auto; } .canvas-app .ph { padding:12px 20px 16px; } .canvas-app .ibody { padding:0 20px 24px; }
+}
+@media(max-height:650px) { .canvas-intro { top:74px; } .canvas-intro h1 { font-size:1.125rem; } .canvas-app .voice-dock { bottom:24px; } .gesture-guide { bottom:4px; } }
+@media(prefers-reduced-motion:reduce) { .canvas-app *,.canvas-app *::before,.canvas-app *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+
+.canvas-brand { text-transform:uppercase; font-size:1.05rem; font-weight:500; }
+.canvas-intro h1 { text-shadow:0 0 28px oklch(75% .1 220 / .14); }
+
+.canvas-app .ph .badge { display:none; }
+.canvas-app .rowlink,.canvas-app .prj { background:transparent; border:0; border-bottom:1px solid var(--border); border-radius:0; padding:12px 0; }

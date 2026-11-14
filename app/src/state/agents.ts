@@ -22,9 +22,11 @@ export const useAgents = create<AgentState>((set) => ({
 }));
 export async function refreshAgents() {
   const response = await fetch('/api/agents');
-  if (response.ok) useAgents.getState().setAgents(await response.json());
+  if (!response.ok) throw new Error('Could not refresh teammates');
+  useAgents.getState().setAgents(await response.json());
 }
 export async function refreshTasks() {
   const response = await fetch('/api/tasks');
-  if (response.ok) useAgents.getState().setTasks(await response.json());
+  if (!response.ok) throw new Error('Could not refresh tasks');
+  useAgents.getState().setTasks(await response.json());
 }

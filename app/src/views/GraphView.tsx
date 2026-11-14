@@ -1,3 +1,5 @@
+import { drawHolographicAgent, drawHolographicSpace } from "./drawHologram";
+import { drawAsset } from "./drawAsset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide } from "d3-force-3d";
@@ -30,12 +32,12 @@ const COLORS: Record<GNode["type"], string> = {
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 15 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 24, task: 10, artifact: 15 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 9 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 20, task: 6, artifact: 9 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -66,7 +68,7 @@ const HOVER_RING_MS = 300;
 const REDUCED_MOTION =
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export default function GraphView() {
+export default function GraphView({ ambientMotion = true }: { ambientMotion?: boolean }) {
   const notes = useVault((s) => s.notes);
   const agents = useAgents((s) => s.agents);
   const tasks = useAgents((s) => s.tasks);
@@ -83,7 +85,8 @@ export default function GraphView() {
   const nodeCache = useRef(new Map<string, any>());
   // When each node first appeared, for the fade/grow-in animation.
   const bornAt = useRef(new Map<string, number>());
-  const [size, setSize] = useState({ w: 800, h: 600 });
+  const activityAt = useRef(new Map<string, { key: string; at: number }>());
+  const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [hovered, setHovered] = useState<string | null>(null);
 
   // Spring-animated selection/hover rings, advanced by the one shared ticker.
@@ -144,7 +147,7 @@ export default function GraphView() {
     if (!fg || !el || camInit.current) return;
     // The pinned agent ring is centered on the origin. Frame it before the
     // first interaction, including when discovery has not returned yet.
-    const zoom = Math.min(2.5, Math.max(1, Math.min(el.clientWidth / 320, el.clientHeight / 260)));
+    const zoom = Math.min(1.9, Math.max(.65, Math.min(el.clientWidth / 650, (el.clientHeight - 320) / 340)));
     centerX.current.jump(0);
     centerY.current.jump(0);
     fg.zoom(zoom);
@@ -154,7 +157,14 @@ export default function GraphView() {
     camInit.current = true;
   }, []);
 
-  useEffect(() => { ensureViewInit(); }, [ensureViewInit]);
+  // Reframe after the canvas receives its real dimensions. This also avoids
+  // clipping teammates when a projector or window changes aspect ratio.
+  useEffect(() => {
+    camInit.current = false;
+    ensureViewInit();
+    fgRef.current?.resumeAnimation?.();
+    fgRef.current?.d3ReheatSimulation?.();
+  }, [size.w, size.h, ensureViewInit]);
 
   const startTicking = useCallback(() => {
     if (ticking.current) return;
@@ -302,6 +312,11 @@ export default function GraphView() {
         prev.type = n.type;
         prev.artifactType = n.artifactType;
         prev.available = n.available;
+        prev.status = n.status;
+        prev.progress = n.progress;
+        prev.activity = n.activity;
+        prev.activityKey = n.activityKey;
+        prev.artifactCount = n.artifactCount;
         if (n.fx != null) {
           prev.x = n.x;
           prev.y = n.y;
@@ -424,6 +439,16 @@ export default function GraphView() {
     fgRef.current?.d3ReheatSimulation?.();
   }, [nodeIdsKey]);
 
+  useEffect(() => {
+    if (REDUCED_MOTION || !ambientMotion) { requestRedraw(); return; }
+    // One modest shared repaint rate for state rings and the holographic cores.
+    // No React updates per frame; hidden pages do not spend time animating.
+    const timer = window.setInterval(() => {
+      if (!document.hidden) requestRedraw();
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [requestRedraw, ambientMotion]);
+
   // Drive the rings toward present (1) / absent (0) on hover and selection.
   useEffect(() => {
     if (hovered) ringNode.current.hover = hovered;
@@ -454,17 +479,6 @@ export default function GraphView() {
     }
   }, [selectedId, startTicking, requestRedraw]);
 
-  // While a node is open the graph is fully occluded by the overlay. Pause its
-  // render loop so it stops repainting behind the scrim; otherwise every frame it
-  // cools/ticks forces the full-screen backdrop blur to recompute, which janks
-  // the open + node-to-node transitions. Resume on close.
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    if (selectedId) fg.pauseAnimation?.();
-    else fg.resumeAnimation?.();
-  }, [selectedId]);
-
   // Opening is a click, never a dwell. Dwell made resting the cursor a
   // commitment, which is the wrong default for a pointer that is always resting
   // somewhere, and it forced a reopen-blocking timer to stop a node reopening
@@ -492,7 +506,7 @@ export default function GraphView() {
       const dx = n.x - p.x;
       const dy = n.y - p.y;
       const d = dx * dx + dy * dy;
-      const r = HIT[n.type as GNode["type"]];
+      const r = Math.max(HIT[n.type as GNode["type"]], 40 / kRef.current);
       if (d <= r * r && d < bestD) {
         bestD = d;
         best = n;
@@ -616,12 +630,28 @@ export default function GraphView() {
         if (!dragging.current) setHovered(null);
       }}
     >
+      <div className="canvas-node-access" aria-label="Canvas items" onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}>
+        {data.nodes.filter(node => node.type === 'agent' || node.type === 'artifact').map(node => <button key={node.id} onClick={() => select(node.id)}>{node.label}{node.type === 'agent' ? `: ${node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Not available for tasks' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Ready to help'}` : ''}</button>)}
+      </div>
       <ForceGraph2D
         ref={fgRef}
         width={size.w}
         height={size.h}
         graphData={data}
-        backgroundColor="#0d1117"
+        onRenderFramePre={ctx => drawHolographicSpace(ctx)}
+        onEngineTick={() => {
+          const fg = fgRef.current;
+          // The library auto-fits newly discovered nodes at its default zoom.
+          // Keep the gesture camera authoritative, including on small screens.
+          if (fg && camInit.current) {
+            if (Math.abs(fg.zoom() - kRef.current) > 0.001) fg.zoom(kRef.current);
+            const center = fg.centerAt();
+            if (Math.abs(center.x - centerX.current.value) > 0.001 || Math.abs(center.y - centerY.current.value) > 0.001) {
+              fg.centerAt(centerX.current.value, centerY.current.value);
+            }
+          }
+        }}
+        backgroundColor="rgba(0,0,0,0)"
         // Reduced motion: pre-settle off-screen so there's little visible
         // motion, but always keep cooldown ticks so the layout actually runs.
         warmupTicks={REDUCED_MOTION ? 120 : 0}
@@ -639,30 +669,33 @@ export default function GraphView() {
           const elapsed = (performance.now() - born) / 1000;
           const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, elapsed);
           const grow = Math.max(0, p);
-          const baseR = VIS_R[node.type as GNode["type"]] ?? 3;
+          const baseR = node.type === 'agent' ? Math.max(20, 36 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
           const r = baseR * (0.45 + 0.55 * grow);
           ctx.globalAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
           ctx.beginPath();
           if (node.type === 'artifact') ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 3);
           else ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-          ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
-          ctx.fill();
+          ctx.fillStyle = node.type === 'agent' ? 'oklch(85% .03 280)' : COLORS[node.type as GNode["type"]] ?? 'oklch(65% .01 260)';
+          if (node.type !== 'agent' && node.type !== 'artifact') ctx.fill();
           if (node.type === 'agent') {
-            ctx.strokeStyle = node.available === false ? '#ee8b83' : '#8eacc2';
-            ctx.lineWidth = 1 / scale;
-            ctx.stroke();
-            if (node.available === false) {
-              ctx.fillStyle = '#0d1117';
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r * 0.42, 0, 2 * Math.PI);
-              ctx.fill();
+            const now = performance.now() / 1000;
+            let activity = activityAt.current.get(node.id);
+            if (!activity || activity.key !== node.activityKey) {
+              activity = { key: node.activityKey, at: now };
+              activityAt.current.set(node.id, activity);
+            }
+            drawHolographicAgent(ctx, node.x, node.y, r, node.id.replace('agent:', ''), {
+              state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at,
+              reduced: REDUCED_MOTION || !ambientMotion,
+            });
+            if (node.status === 'running') {
+              ctx.strokeStyle = 'oklch(78% .11 215)';
+              ctx.lineWidth = 2 / scale;
+              ctx.beginPath(); ctx.arc(node.x, node.y, r + 5 / scale, 0, Math.PI * 2); ctx.stroke();
             }
           }
           if (node.type === 'artifact') {
-            ctx.fillStyle = '#0d1117';
-            ctx.font = '5px ui-sans-serif, system-ui, sans-serif';
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', markdown: 'MD', slides: 'PPT', image: 'IMG' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
+            drawAsset(ctx, node.x, node.y, r, node.artifactType);
           }
           // Spring-animated ring: scales + fades in/out with carried velocity.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
@@ -672,18 +705,25 @@ export default function GraphView() {
           if (ring > 0.002) {
             ctx.globalAlpha = Math.min(1, ring) * entranceAlpha;
             ctx.lineWidth = 2 / scale;
-            ctx.strokeStyle = selAmt >= hovAmt ? "#ffffff" : "#2dd4bf";
+            ctx.strokeStyle = selAmt >= hovAmt ? "oklch(85% .1 210)" : "oklch(73% .1 225)";
             ctx.beginPath();
             ctx.arc(node.x, node.y, r + 3 * Math.min(1.2, ring), 0, 2 * Math.PI);
             ctx.stroke();
             ctx.globalAlpha = entranceAlpha;
           }
           if (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || sel || hot) {
-            ctx.font = `${node.type === "note" ? 5 : 3.6}px ui-sans-serif, system-ui, sans-serif`;
-            ctx.fillStyle = sel || hot ? "#ffffff" : "#c9d1d9";
+            ctx.font = `${node.type === "agent" ? 16 / scale : 12 / scale}px ui-sans-serif, system-ui, sans-serif`;
+            ctx.fillStyle = sel || hot ? "oklch(94% .025 210)" : "oklch(87% .025 230)";
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            ctx.fillText(node.label, node.x, node.y + r + 3);
+            const limit = node.type === 'artifact' ? 17 : 34;
+            const label = node.label.length > limit ? node.label.slice(0, limit - 2) + '…' : node.label;
+            ctx.fillText(label, node.x, node.y + r + 5 / scale);
+            if (node.type === 'agent') {
+              ctx.font = `${12 / scale}px ui-sans-serif, system-ui, sans-serif`;
+              ctx.fillStyle = node.status === 'running' ? 'oklch(83% .1 210)' : 'oklch(67% .035 230)';
+              ctx.fillText(node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Not available' : node.progress?.startsWith('Ready to review:') ? 'Ready to review' : node.progress?.startsWith('Needs attention:') ? 'Needs attention' : 'Ready to help', node.x, node.y + r + 27 / scale);
+            }
           }
           ctx.globalAlpha = 1;
         }}
