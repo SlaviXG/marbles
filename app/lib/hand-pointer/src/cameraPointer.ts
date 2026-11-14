@@ -3,7 +3,7 @@ import { OneEuro } from "./oneEuro";
 import { loadParams, subscribeParams, type PointerParams } from "./pointerParams";
 import { createHandWorker, type HandAssets, type HandOut, type WorkerOut } from "./handWorker";
 import { ArticulationTracker } from "./articulation";
-import { handPose, poseUsable, type HandPose } from "./palm";
+import { handPose, keepHand, poseUsable, type HandPose } from "./palm";
 import {
   DRIVER_GRACE,
   HandArbiter,
@@ -14,6 +14,8 @@ import {
 } from "./handArbiter";
 import { PinchGuard, nextPinch } from "./pinchGuard";
 import { AimPoint } from "./aimPoint";
+import { DepthZone, SizeTracker, depthFactor, handScale, type Zone } from "./depthZone";
+import { dedupeHands } from "./dedupeHands";
 import { HandRecorder, installHandRecorder } from "./handRecorder";
 import { DEFAULT_CURSOR_PARAMS } from "./cursorDriver";
 
@@ -135,6 +137,15 @@ export const handDebug = {
   // What the arbiter is doing about a handover (see HandArbiter.why). Empty
   // when there is nothing to decide.
   arbiter: "",
+  // The active zone in use (mirrored normalized frame coords), and how it is
+  // scaled for the hand's distance (see depthZone.ts). ratio 1 = configured.
+  zone: null as Zone | null,
+  depth: { scale: 0, ref: 0, ratio: 1 },
+  // Per hand: how much its thresholds are scaled for its distance (see
+  // depthFactor), and its thumb-index gap after that scaling, which is the
+  // number the pinch thresholds actually compare against.
+  factor: { L: 1, R: 1 } as Record<"L" | "R", number>,
+  gap: { L: 0, R: 0 } as Record<"L" | "R", number>,
   // Progress toward a handover, 0..1 (see HandArbiter.evidence).
   evidence: 0,
 };
@@ -199,6 +210,10 @@ class CameraPointer {
   private video: HTMLVideoElement | null = null;
   private worker: Worker | null = null;
   private params: PointerParams = loadParams();
+  // The active zone, resized for the driving hand's distance from the camera.
+  private depth = new DepthZone(zoneOf(this.params));
+  // Per physical hand: smoothed apparent size, for scaling its thresholds.
+  private size: Record<"L" | "R", SizeTracker> = { L: new SizeTracker(), R: new SizeTracker() };
   private fx = new OneEuro(this.params.minCutoff, this.params.beta);
   private fy = new OneEuro(this.params.minCutoff, this.params.beta);
   // The second hand needs its own filter pair: sharing one would blend two
@@ -371,12 +386,16 @@ class CameraPointer {
     this.aim.R.reset();
     this.guard.L.reset();
     this.guard.R.reset();
+    this.depth.reset();
+    this.size.L.reset();
+    this.size.R.reset();
     pointerTarget.present = false;
     pointerStore.getState().set("off");
   }
 
   private applyParams(p: PointerParams) {
     this.params = p;
+    this.depth.setHome(zoneOf(p));
     this.fx = new OneEuro(p.minCutoff, p.beta);
     this.fy = new OneEuro(p.minCutoff, p.beta);
     this.fx2 = new OneEuro(p.minCutoff, p.beta);
@@ -387,6 +406,10 @@ class CameraPointer {
   // active-zone mapping are the same for either hand, so both go through here.
   private toScreen(nx: number, ny: number) {
     const p = this.params;
+    if (p.depthZone) {
+      const m = this.depth.map(nx, ny);
+      return { x: m.u * window.innerWidth, y: m.v * window.innerHeight };
+    }
     const u = clamp01((nx - p.zoneX0) / (p.zoneX1 - p.zoneX0));
     const v = clamp01((ny - p.zoneY0) / (p.zoneY1 - p.zoneY0));
     return { x: u * window.innerWidth, y: v * window.innerHeight };
@@ -519,15 +542,24 @@ class CameraPointer {
     // seen from the back, turned sideways, lying level, hanging down or tipped
     // so the fingers point at the lens is dropped here, before any gesture is
     // read from it, and from then on is treated like a hand not in frame.
+    //
+    // First, one hand reported twice is merged into one (see dedupeHands.ts):
+    // a duplicate would otherwise act as a second hand that pinches whenever
+    // the real one does, and a one-handed pinch would zoom the canvas.
+    const detected = dedupeHands(msg.hands, this.aspect, this.driving);
     for (const side of ["L", "R"] as const) {
-      if (!msg.hands.some((c) => c.hand === side)) this.palm[side] = false;
+      if (!detected.some((c) => c.hand === side)) this.palm[side] = false;
     }
     const pose = new Map<HandOut, HandPose>();
-    const hands = msg.hands.filter((c) => {
+    for (const c of msg.hands) if (!detected.includes(c)) pose.set(c, handPose(c.pts, c.hand, this.aspect));
+    const hands = detected.filter((c) => {
       const s = handPose(c.pts, c.hand, this.aspect);
       pose.set(c, s);
       this.palm[c.hand] = poseUsable(s, this.palm[c.hand]);
-      return !this.params.requirePalm || this.palm[c.hand];
+      // A pinching hand is never dropped for its pose, single pinch or
+      // two-hand: see keepHand. this.pinch is the hand's own pinch, held
+      // through brief tracking losses, as of the previous frame.
+      return keepHand(this.palm[c.hand], this.pinch[c.hand], this.params.requirePalm);
     });
 
     const p = this.params;
@@ -548,6 +580,7 @@ class CameraPointer {
     // pinches must not read as a hand that is pointing and take the cursor.
     const motion: Partial<Record<"L" | "R", number>> = {};
     const reversal: Partial<Record<"L" | "R", boolean>> = {};
+    const onset: Partial<Record<"L" | "R", number>> = {};
     // Thumb tip to index tip distance in normalized space: what the pinch
     // thresholds on.
     const gap: Partial<Record<"L" | "R", number>> = {};
@@ -563,19 +596,34 @@ class CameraPointer {
           t,
         );
         reversal[side] = tracker.reversal;
+        onset[side] = tracker.onset;
+        // Distance scaling for this hand's thresholds. Every threshold below
+        // is a physical size or speed expressed in frame units, and the image
+        // shrinks both the hand and its gaps with distance by the same factor,
+        // so dividing the measurement by the hand's apparent size (relative
+        // to the reference) makes the thresholds hold at any distance. A
+        // hand twice as close needs a gap twice as wide in the image for the
+        // same physical pinch: the threshold scales WITH apparent size.
+        const k = p.depthThresholds
+          ? depthFactor(this.size[side].update(handScale(seen.pts, this.aspect), t), this.depth.ref)
+          : 1;
+        handDebug.factor[side] = k;
         // Palm speed from the middle knuckle (landmark 9), which survives
         // blur and does not move when the fingers close.
         handDebug.fast[side] = this.guard[side].update(
           seen.pts[18] * this.aspect,
           seen.pts[19],
           t,
-          p.pinchMaxSpeed,
+          p.pinchMaxSpeed * k,
         );
         // Pinch, with hysteresis so a click does not flicker at the
         // threshold. It may not START while the hand is sweeping fast: blur
-        // makes the fingertips read as touching (see pinchGuard.ts).
-        const d = Math.hypot(seen.x - seen.thumbX, seen.y - seen.thumbY);
+        // makes the fingertips read as touching (see pinchGuard.ts). The gap
+        // is in reference-hand units, so it serves the pinch, the pinch latch
+        // and the aim point's freeze alike.
+        const d = Math.hypot(seen.x - seen.thumbX, seen.y - seen.thumbY) / k;
         gap[side] = d;
+        handDebug.gap[side] = d;
         this.pinch[side] = nextPinch(
           this.pinch[side],
           d,
@@ -587,8 +635,10 @@ class CameraPointer {
         this.motion[side].reset();
         this.guard[side].reset();
         this.aim[side].reset();
+        this.size[side].reset();
         this.pinch[side] = false;
         handDebug.fast[side] = false;
+        handDebug.factor[side] = 1;
       }
       handDebug.motion[side] = motion[side] ?? 0;
     }
@@ -645,12 +695,19 @@ class CameraPointer {
     // while the other rests (see handArbiter.ts); the user's nominated hand is
     // the starting choice, and the only choice when autoHand is off.
     const want = pointerStore.getState().priority;
+    // Locked while the driving hand's press is down (a click or drag in
+    // progress), and while BOTH hands are pinching: that is a two-hand zoom or
+    // pan, in which one hand often holds still while the other moves, exactly
+    // the pattern a takeover looks for. Both are read from the physical pinch
+    // of each hand, so a press held back by the pinch latch, or a zoom the
+    // driver has not yet registered as a press, still locks. Each hand's pinch
+    // is held through its grace period, so a hand lost for a frame mid-zoom
+    // keeps the lock. The other hand pinching on its own does not lock: a
+    // relaxed hand often rests with thumb and finger close enough to read as
+    // one, and that must not stop it taking the cursor.
+    const bothPinching = this.pinch.L && this.pinch.R;
     const pick = p.autoHand
-      ? // Locked only by the driving hand's pinch (a click, drag or zoom in
-        // progress). The other hand's pinch does not count: a relaxed hand
-        // often rests with thumb and finger close enough to read as one, and
-        // that must not stop it taking the cursor.
-        this.arbiter.update(motion, reversal, pointerTarget.pinching, want, t)
+      ? this.arbiter.update(motion, reversal, pointerTarget.pinching || bothPinching, want, t, onset)
       : want;
     handDebug.arbiter = p.autoHand ? this.arbiter.why : "";
     handDebug.evidence = p.autoHand ? this.arbiter.evidence : 0;
@@ -695,7 +752,12 @@ class CameraPointer {
     }
 
     // The other hand, if there is one. Tracked for two-handed gestures only.
-    const o = hands.find((c) => c !== h);
+    // It must carry the other label: all per-hand state (pinch, aim, filters)
+    // is keyed by label, so a second detection labelled like the driver would
+    // read the DRIVER's pinch and turn every pinch into a two-hand pinch. Two
+    // real hands with one label is a tracker mistake; that frame simply has
+    // no second hand.
+    const o = hands.find((c) => c !== h && (h === null || c.hand !== h.hand));
     if (o) {
       secondaryHand.pinching = this.pinch[o.hand];
       const oa = this.aim[o.hand].update(o.pts, gap[o.hand]!, this.pinch[o.hand], t, p);
@@ -749,8 +811,21 @@ class CameraPointer {
     // against is the finger curling, whether or not that is a press.
     const ha = this.aim[h.hand].update(h.pts, pinchDist, this.pinch[h.hand], t, p);
     // mirror x (front camera), de-jitter in normalized space, then active zone
-    // -> full screen (same mapping the second hand goes through).
-    const raw = this.toScreen(this.fx.filter(1 - ha.x, t), this.fy.filter(ha.y, t));
+    // -> full screen (same mapping the second hand goes through). The zone is
+    // first resized for this hand's distance, about the point it aims at, so
+    // leaning in or out never moves the cursor (see depthZone.ts). A cursor
+    // that had gone starts again from the configured zone.
+    const fnx = this.fx.filter(1 - ha.x, t);
+    const fny = this.fy.filter(ha.y, t);
+    // Always updated, even with the zone fixed: it also learns the reference
+    // size the thresholds are scaled against.
+    if (!pointerTarget.present) this.depth.release();
+    this.depth.update(fnx, fny, handScale(h.pts, this.aspect), t, p.depthRef);
+    handDebug.zone = p.depthZone ? this.depth.zone : null;
+    handDebug.depth.scale = this.depth.scale;
+    handDebug.depth.ref = this.depth.ref;
+    handDebug.depth.ratio = p.depthZone ? this.depth.ratio : 1;
+    const raw = this.toScreen(fnx, fny);
     pointerTarget.lastSeen = now;
 
     // A different hand took over: it picks the cursor up from where it stands
@@ -785,6 +860,10 @@ class CameraPointer {
         rawX: raw.x,
         rawY: raw.y,
         aimFrozen: this.aim[h.hand].frozen,
+        handScale: this.depth.scale,
+        zoneRatio: handDebug.depth.ratio,
+        factor: { ...handDebug.factor },
+        onset,
       });
     }
 
@@ -806,6 +885,8 @@ class CameraPointer {
 }
 
 const clamp01 = (n: number) => (n < 0 ? 0 : n > 1 ? 1 : n);
+
+const zoneOf = (p: PointerParams): Zone => ({ x0: p.zoneX0, y0: p.zoneY0, x1: p.zoneX1, y1: p.zoneY1 });
 
 // One source per app.
 export const cameraPointer = new CameraPointer();

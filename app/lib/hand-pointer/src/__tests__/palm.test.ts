@@ -6,6 +6,7 @@ import {
   UP_ON,
   fingersUp,
   handPose,
+  keepHand,
   palmFacing,
   palmLength,
   poseUsable,
@@ -167,5 +168,20 @@ describe("poseUsable", () => {
       expect(poseUsable(between, true)).toBe(true);
     }
     expect(poseUsable({ ...good, up: UP_OFF - 0.01 }, true)).toBe(false);
+  });
+});
+
+describe("keepHand", () => {
+  it("drops a badly posed hand that is not pinching", () => {
+    expect(keepHand(false, false)).toBe(false);
+    expect(keepHand(true, false)).toBe(true);
+  });
+
+  it("keeps a pinching hand whatever its pose, so a drag or zoom is not cut off", () => {
+    expect(keepHand(false, true)).toBe(true);
+  });
+
+  it("keeps every hand with the gate switched off", () => {
+    expect(keepHand(false, false, false)).toBe(true);
   });
 });

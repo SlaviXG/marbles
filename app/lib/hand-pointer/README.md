@@ -116,7 +116,7 @@ with a shaky hand.
 
 | Object | Covers |
 | --- | --- |
-| `PointerParams` (`loadParams`, `saveParams`) | Jitter filter, active zone of the camera frame, deadzone, inference rate, pinch thresholds, fast-motion pinch guard (`pinchMaxSpeed`), pose gate on or off (`requirePalm`), automatic hand choice (`autoHand`) |
+| `PointerParams` (`loadParams`, `saveParams`) | Jitter filter, active zone of the camera frame, deadzone, inference rate, pinch thresholds, fast-motion pinch guard (`pinchMaxSpeed`), pose gate on or off (`requirePalm`), automatic hand choice (`autoHand`), distance compensation (`depthZone`, `depthRef`, `depthThresholds`) |
 | `CursorParams` (`DEFAULT_CURSOR_PARAMS`) | Cursor smoothing, pinch anchor, press hold, magnet feel, zoom gain |
 
 | Constants in `src/palm.ts` | Pose gate thresholds (see below) |
@@ -129,6 +129,91 @@ clears it. Every threshold in this library was first set by estimate, and a
 recording is how to set them from your own camera instead. See
 [RECORDING.md](RECORDING.md) for the takes to record and
 `tools/analyzeRecording.mjs` for the numbers it produces.
+
+## Distance from the camera
+
+The same arm movement moves the cursor the same distance whether the hand is
+near the camera or far from it. Without this, a hand twice as close moves the
+cursor twice as far.
+
+It follows from similar triangles. The camera shrinks both the hand's movement
+and the hand itself by its distance, so movement measured in hand sizes does
+not depend on distance, and neither the focal length nor the real hand size
+needs to be known. The library measures the hand's apparent size and resizes
+the active zone (the part of the camera frame that maps to the whole screen)
+in proportion: a hand that looks 20% bigger gets a zone 20% bigger.
+
+**Hand size** is the longest of five rigid palm segments: wrist to each of the
+four knuckles, and across the knuckles (`handScale` in `src/depthZone.ts`).
+None of them bend with the fingers. Rotating the hand shortens some of them,
+but rarely all at once. Turning the hand 60 degrees sideways changes the
+reading by under 10%. Tipping it toward the camera is the weak spot: at 45
+degrees the reading drops by about a quarter, and the cursor gets that much
+more sensitive.
+
+**The cursor never moves by itself:**
+
+- The zone is resized about the point the hand is aiming at, so leaning in or
+  out with a still hand leaves the cursor where it is.
+- Resizing about the hand pulls the zone off-centre. It eases back toward its
+  configured position only while the hand travels (15% of the travel), never
+  at rest. While it does, the cursor moves up to 15% faster or slower than the
+  hand.
+- The size reading is smoothed over 1.5 s, and the zone's scale is capped
+  between 0.6x and 1.4x.
+
+**Reference size.** By default the size the hand has during the first second
+of tracking becomes the reference, at which the zone keeps its configured
+size. So the cursor feels exactly as configured at whatever distance you
+start, and only changes of distance after that are compensated. The reference
+is kept when the hand leaves the frame and forgotten when the hand cursor is
+turned off. Set `depthRef` (frame heights) to fix it instead.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `depthZone` (`PointerParams`) | `true` | Off: the zone is fixed, as before |
+| `depthRef` (`PointerParams`) | 0 | Reference hand size; 0 learns it |
+| `DEPTH_TAU` | 1.5 s | Smoothing of the size reading |
+| `LEARN_SECONDS` | 1 s | Tracking time used to learn the reference |
+| `RATIO_MIN` / `RATIO_MAX` | 0.6 / 1.4 | Limits on the zone's scale |
+| `RECENTER` | 0.15 | Share of hand travel spent easing the zone back home |
+
+The overlay draws the live zone and shows `zone x1.12` in the top right while
+the scale is in use. The defaults are estimates, not camera measurements.
+
+| Symptom | Change |
+| --- | --- |
+| The cursor gets twitchy when you sit back | Raise `RATIO_MIN` |
+| Leaning in still makes the cursor too fast | Raise `RATIO_MAX` (up to about 1.4 for the default zone, or the zone no longer fits the frame) |
+| The zone visibly breathes while you hold still | Raise `DEPTH_TAU` |
+| Pointing feels too fast or slow overall | Fix `depthRef` at the size you want as normal (read `handDebug.depth.scale`) |
+| A corner of the screen is hard to reach after leaning in | Raise `RECENTER` |
+
+### Thresholds scale with distance too
+
+Thresholds measured on the hand itself must scale **in proportion to the
+hand's apparent size**, which is **inversely to its distance**. By the same
+similar triangles, a 2 cm thumb-index gap on a 9 cm hand looks like 2/9 of the
+hand's size at any distance; in frame units it doubles when the hand comes
+twice as close. A fixed frame-unit threshold would need a wider physical
+pinch to trigger close up, and fire on a half-open hand further back.
+
+So each hand's measurements are divided by its distance factor (its own
+smoothed size over the reference size, capped between 0.5 and 2) before they
+meet a threshold:
+
+| Threshold | What scales |
+| --- | --- |
+| `pinchOn`, `pinchOff` | The thumb-index gap, also as used by the pinch latch |
+| `aimFreezeDist`, `aimFreezeRate` | The same gap, and so its closing rate |
+| `pinchMaxSpeed` | Multiplied by the factor: a closer hand moves faster in the image for the same arm speed |
+
+Not scaled, because they already are distance-free: the takeover thresholds
+(in palm lengths), the pose gate (ratios and angles), and everything after the
+zone mapping (screen pixels, now distance-free through the zone). The factor
+uses the same reference as the zone, so it is 1 at the distance where you
+started. The overlay's `pin` readout shows the scaled gap, the number the
+thresholds actually see. `depthThresholds: false` turns this off.
 
 ## Keeping the cursor still through a pinch
 
@@ -202,10 +287,19 @@ of the handover. `cameraPointer` wires them together.
 A wrong switch is worse than a late one, so the rules lean toward staying put.
 With both hands in frame, on every inference result:
 
-1. The other hand's motion must exceed `MOVE`, and must also exceed the
-   driving hand's motion divided by `REST_RATIO`. In words: the other hand is
-   moving, and the driving hand is moving less than 0.6 times as much. Two
-   hands moving alike, or two still hands, change nothing.
+1. The other hand's motion must exceed `MOVE`. And it must beat the driving
+   hand by comparison: each hand is scored as its motion plus its change of
+   speed (how far its motion is above its own average over the last second,
+   `BASE_TAU`), and the other hand's score must exceed the driving hand's
+   divided by `REST_RATIO`. In words: the other hand is moving, and the
+   driving hand is moving less than 0.6 times as much, or the other hand has
+   just sped up and the driving hand has not. Two hands moving alike, two
+   hands speeding up together, or two still hands, change nothing.
+
+   The change of speed is what lets you take the cursor while still drifting
+   the first hand: speeding up the other hand is enough, it does not need to
+   move 1.7 times as fast as a hand you have not quite stopped. It never
+   lifts a hand over `MOVE`, so jitter on a still hand cannot use it.
 2. While that holds, evidence builds up. It is measured in seconds, weighted
    by how far past the bar the other hand is: clearing the bar by `MOVE`
    earns one second per second, more earns faster (up to `GAIN_MAX` times),
@@ -235,10 +329,14 @@ frame.
 
 ### What stops a handover
 
-- **Pinch.** Nothing switches while the driving hand is pinching, so a click,
-  drag or two-hand zoom is never interrupted. A pinch on the other hand does
-  not block it: a relaxed hand often rests with thumb and finger close enough
-  to read as one.
+- **Pinch.** Nothing switches while the driving hand is pinching, or while
+  both hands are pinching, so a click, drag or two-hand zoom is never
+  interrupted. The both-hands rule matters most for zoom: one hand often holds
+  still while the other moves, which is exactly what a takeover looks for. It
+  reads each hand's own pinch, so it holds even while the driver's press is
+  held back by the pinch latch. A pinch on the other hand alone does not
+  block a takeover: a relaxed hand often rests with thumb and finger close
+  enough to read as one.
 - **Grace period.** If the driving hand is missing from a result while the
   other is visible, it keeps the cursor for `DRIVER_GRACE` (0.25 s, about
   three results). Single misses are common and are not the user changing
@@ -322,7 +420,9 @@ All in `src/handArbiter.ts`.
 | Constant | Default | Meaning |
 | --- | --- | --- |
 | `MOVE` | 0.12 palm lengths | Least motion that counts as pointing |
-| `REST_RATIO` | 0.6 | The driving hand counts as resting while its motion is below this fraction of the other hand's |
+| `REST_RATIO` | 0.6 | The driving hand counts as resting while its score (motion plus change of speed) is below this fraction of the other hand's |
+| `ONSET_WEIGHT` | 1 | How much a hand's change of speed adds to its score. 0 compares motion alone |
+| `BASE_TAU` | 1 s | The averaging time a hand's change of speed is measured against |
 | `EVIDENCE` | 0.08 s | Evidence needed for a handover |
 | `GAIN_MAX` | 2 | Fastest rate evidence can build, in seconds per second |
 | `LEAK` | 1 /s | Rate evidence drains while the condition fails |
@@ -352,7 +452,7 @@ is doing and `handDebug.evidence` how far along a handover is, from 0 to 1
 | --- | --- | --- |
 | `other still` | The other hand's motion is below the bar (`MOVE`, or twice that just after a handover) | Lower `MOVE`; if it only happens right after a handover, lower `REFRACTORY` |
 | `driver moving` | The other hand is over the bar, but the driving hand is not resting by comparison | Raise `REST_RATIO`, or lower `MOTION_TAU` if it clears a moment after the driving hand stops |
-| `pinch` | The driving hand reads as pinching | Check `pinchOn` / `pinchOff`; a relaxed hand may be reading as a pinch |
+| `pinch` | The driving hand reads as pinching, or both hands do | Check `pinchOn` / `pinchOff`; a relaxed hand may be reading as a pinch |
 | `glitch` | The other hand's last step undid the one before; evidence was zeroed | Usually correct. If it shows during deliberate moves, the tracker is unstable; improve the light before changing anything |
 | `evidence` | The condition holds and evidence is building | Lower `EVIDENCE` or raise `GAIN_MAX` to make it faster |
 | `grace` | The driving hand is missing and is being waited for | If the driving hand is drawn red it is failing the pose gate; otherwise lower `DRIVER_GRACE` |
@@ -395,6 +495,30 @@ changes hands. With `autoHand` on, that setting only decides which hand starts
 with the cursor when both appear in the same frame, and changing it moves the
 cursor to that hand at once (unless the driving hand is pinching).
 
+## One hand seen twice
+
+With two hands allowed, the tracker sometimes reports one hand twice, most
+often when it is close to the camera and fills much of the frame. The copies
+sit almost on top of each other, with the same left/right label or opposite
+ones. Before this was handled, the copy acted as a second hand that pinched
+whenever the real one did, so a one-handed pinch read as a two-hand pinch and
+the canvas zoomed a little with the jitter between the copies.
+
+Two defences, both before any gesture is read:
+
+- **Merging** (`dedupeHands` in `src/dedupeHands.ts`): two detections whose
+  landmarks are on average closer than `SAME_HAND` (0.35 hand sizes) are one
+  hand. The copy labelled as the driving hand is kept, else the more
+  confident one. Two real hands cannot get that close without overlapping.
+- **Label check**: the second hand must carry the other label. All per-hand
+  state is keyed by label, so a second detection labelled like the driver
+  would read the driver's pinch. When both detections share a label, that
+  frame has no second hand.
+
+Merged copies still appear in `handDebug.hands` and recordings, marked
+inactive, so duplicates can be counted (the recorder's summary reports
+duplicate labels).
+
 ## Which hands count
 
 A hand seen in a bad pose produces pinches nobody meant, so the library ignores
@@ -425,6 +549,13 @@ value. The gap stops a hand held near a limit from flickering in and out.
 | --- | --- | --- |
 | `PALM_ON` / `PALM_OFF` | 0.4 / 0.3 | Turned 55 / 65 degrees away from facing the camera |
 | `UP_ON` / `UP_OFF` | 0.1 / 0 | Highest finger middle joint 0.1 knuckle widths above the wrist / all four below it |
+
+**A pinching hand is never dropped for its pose.** The gate decides whether a
+hand may start a gesture, not whether it may finish one: wrists turn while
+dragging and zooming, and dropping the hand would release the press or end the
+zoom. This holds for a single pinch and for both hands in a two-hand zoom, and
+through brief tracking losses. Once the pinch opens, the gate applies again
+(`keepHand` in `src/palm.ts`).
 
 Set `requirePalm: false` in `PointerParams` to switch the gate off and accept a
 hand in any pose.
