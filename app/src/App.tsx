@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useVaultStream } from "./hooks/useVaultStream";
 import { useAgentPolling } from "./hooks/useAgentPolling";
-import { refreshAgents, refreshTasks } from "./state/agents";
+import { refreshAgents, refreshTasks, refreshSwarms } from "./state/agents";
 import { useVault, useNoteIds } from "./state/store";
 import GraphView from "./views/GraphView";
 import DetailPanel from "./views/DetailPanel";
@@ -32,8 +33,9 @@ export default function App() {
       <span className={`status ${connected ? "up" : "down"}`}>
         {connected ? "live" : "offline"} · {count} notes
       </span>
-      <button className="agent-refresh" onClick={() => { void refreshAgents(); void refreshTasks(); }}>Refresh agents</button>
+      <button className="agent-refresh" onClick={() => { void refreshAgents(); void refreshTasks(); void refreshSwarms(); }}>Refresh agents</button>
 
+      <SwarmStart />
       <DetailPanel />
       <VoicePanel />
       <HandCursor />
@@ -164,4 +166,20 @@ function HandPriorityToggle() {
       {priority}
     </button>
   );
+}
+
+function SwarmStart() {
+  const [goal, setGoal] = useState(''); const [error, setError] = useState(''); const [sending, setSending] = useState(false);
+  const select = useVault(s => s.select);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); if (!goal.trim() || sending) return;
+    setSending(true); setError('');
+    try {
+      const response = await fetch('/api/swarm/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal }) });
+      const data = await response.json(); if (!response.ok) throw new Error(data.error ?? 'Could not start swarm');
+      setGoal(''); await Promise.all([refreshSwarms(), refreshAgents()]); select(`swarm:${data.swarm.id}`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not start swarm'); }
+    finally { setSending(false); }
+  };
+  return <form className="swarm-start" onSubmit={submit}><input aria-label="Swarm goal" placeholder="Give agents a shared goal…" value={goal} onChange={e => setGoal(e.target.value)} maxLength={6000} /><button disabled={sending || !goal.trim()}>Start swarm</button>{error && <span role="alert">{error}</span>}</form>;
 }

@@ -17,6 +17,7 @@ describe('voice task understanding', () => {
     const payload = JSON.parse(options.body);
     expect(options.headers.Authorization).toBe('Bearer secret');
     expect(payload.text.format.strict).toBe(true);
+    expect(payload.text.format.schema.properties.collaboration.enum).toEqual(['solo', 'swarm']);
     expect(payload.input).toBe(request.transcript);
     expect(payload.store).toBe(false);
     expect(buildVoicePrompt(request.transcript, intent)).toContain(request.transcript);

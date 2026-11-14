@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type AnimationEvent } from "react";
 import { useVault } from "../state/store";
-import { useAgents, refreshTasks } from "../state/agents";
-import type { AgentInfo, AgentLog, AgentTask, ArtifactInfo } from "../core/agentTypes";
+import { useAgents, refreshTasks, refreshSwarm } from "../state/agents";
+import type { AgentInfo, AgentLog, AgentTask, ArtifactInfo, SwarmTask } from "../core/agentTypes";
 import { getDetail, hostname, type Detail } from "../core/detail";
 import { sampleSpring, springDurationMs } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
@@ -24,11 +24,19 @@ export default function DetailPanel() {
   const notes = useVault((s) => s.notes);
   const agents = useAgents((s) => s.agents);
   const tasks = useAgents((s) => s.tasks);
+  const swarms = useAgents((s) => s.swarms);
   const selectedId = useVault((s) => s.selectedId);
+  useEffect(() => {
+    if (!selectedId?.startsWith('swarm:')) return;
+    const id = selectedId.slice(6);
+    void refreshSwarm(id).catch(() => {});
+    const timer = window.setInterval(() => { void refreshSwarm(id).catch(() => {}); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [selectedId]);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
 
-  const open = selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.id}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('artifact:') ? true : !!getDetail(notes, selectedId) : false;
+  const open = selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.id}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('swarm:') ? swarms.some(s => `swarm:${s.id}` === selectedId) : selectedId.startsWith('post:') ? true : selectedId.startsWith('artifact:') ? true : !!getDetail(notes, selectedId) : false;
 
   const scrimRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -260,9 +268,18 @@ export default function DetailPanel() {
                   const task = tasks.find(t => `task:${t.id}` === displayedId);
                   return task && <><SpecialHeader kind="Task" name={task.prompt} /><div className="ibody"><TaskBody task={task} select={select} /></div></>;
                 }
+                if (displayedId?.startsWith('swarm:')) {
+                  const swarm = swarms.find(s => `swarm:${s.id}` === displayedId);
+                  return swarm && <><SpecialHeader kind="Swarm" name={swarm.goal} /><div className="ibody"><SwarmBody swarm={swarm} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('post:')) {
+                  const [, swarmId, seq] = displayedId.split(':');
+                  const post = swarms.find(s => s.id === swarmId)?.blackboard.find(p => p.seq === Number(seq));
+                  return post && <><SpecialHeader kind="Blackboard post" name={post.kind} /><div className="ibody"><p>{post.text}</p><p>{post.agentId} · turn {post.turn} · {post.ts}</p></div></>;
+                }
                 if (displayedId?.startsWith('artifact:')) {
                   const [, taskId, encodedPath] = displayedId.split(':');
-                  const artifact = tasks.find(t => t.id === taskId)?.artifacts.find(a => encodeURIComponent(a.path) === encodedPath);
+                  const artifact = (tasks.find(t => t.id === taskId)?.artifacts ?? swarms.find(s => s.id === taskId)?.artifacts)?.find(a => encodeURIComponent(a.path) === encodedPath);
                   return artifact && <><SpecialHeader kind="Artifact" name={artifact.name} /><div className="ibody"><ArtifactBody artifact={artifact} /></div></>;
                 }
                 const d = displayedId ? getDetail(notes, displayedId) : null;
@@ -463,4 +480,22 @@ function ArtifactBody({ artifact }: { artifact: ArtifactInfo }) {
   const url = `/api/artifacts/file?path=${encodeURIComponent(artifact.path)}`;
   const open = () => { void fetch('/api/artifacts/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: artifact.path }) }); };
   return <><div className="sec">{artifact.type}</div><button className="rowlink" onClick={open}>Open in default app ↗</button><a className="prj" href={url} target="_blank" rel="noreferrer">Preview or download ↗</a>{artifact.type === 'image' && <img src={url} alt={artifact.name} className="artifact-preview" />}</>;
+}
+
+function SwarmBody({ swarm, select }: { swarm: SwarmTask; select: (id: string) => void }) {
+  return <>
+    <div className="sec">{swarm.mode} · {swarm.status}</div><p>{swarm.goal}</p>
+    <div className="sec">Participants</div>
+    {swarm.agents.map(id => <button key={id} className="rowlink" onClick={() => select(`agent:${id}`)}>{id}</button>)}
+    <div className="sec">Team result</div>
+    <p>Reward: {swarm.reward == null ? 'Pending' : swarm.reward.toFixed(3)} · Success: {swarm.success == null ? 'Pending' : swarm.success.toFixed(3)} · Output chars: {swarm.tokenProxy}</p>
+    {swarm.winnerId && <p>Best solo agent: {swarm.winnerId}</p>}
+    {swarm.rationale && <p>{swarm.rationale}</p>}{swarm.lesson && <p>Lesson: {swarm.lesson}</p>}
+    <div className="sec">Runs</div>
+    {swarm.runs.map((run, index) => <details key={index}><summary>{run.agentId} · turn {run.turn} · {run.status} · {run.outputChars} chars</summary><pre className="content">{run.stdout}</pre></details>)}
+    <div className="sec">Shared files</div>
+    {swarm.artifacts.map(a => <button key={a.path} className="rowlink" onClick={() => select(`artifact:${swarm.id}:${encodeURIComponent(a.path)}`)}>{a.name}</button>)}
+    <div className="sec">Blackboard</div>
+    {swarm.blackboard.slice(-200).map(post => <p key={post.seq} className="log-line">{post.agentId} · {post.kind} · {post.text}</p>)}
+  </>;
 }

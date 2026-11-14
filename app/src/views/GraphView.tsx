@@ -27,15 +27,17 @@ const COLORS: Record<GNode["type"], string> = {
   agent: "#ffffff",
   task: "#8b949e",
   artifact: "#39d98a",
+  swarm: "#a78bfa",
+  post: "#8b5cf6",
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 15 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 15, swarm: 12, post: 7 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 9 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 9, swarm: 8, post: 3 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -70,6 +72,7 @@ export default function GraphView() {
   const notes = useVault((s) => s.notes);
   const agents = useAgents((s) => s.agents);
   const tasks = useAgents((s) => s.tasks);
+  const swarms = useAgents((s) => s.swarms);
   const selectedId = useVault((s) => s.selectedId);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
@@ -285,7 +288,7 @@ export default function GraphView() {
   }, [onWheel]);
 
   const data = useMemo(() => {
-    const built = composeGraph(notes, agents, tasks);
+    const built = composeGraph(notes, agents, tasks, false, swarms);
     const cache = nodeCache.current;
     const liveIds = new Set(built.nodes.map((n) => n.id));
     for (const id of [...cache.keys()]) {
@@ -316,7 +319,7 @@ export default function GraphView() {
     });
 
     return { nodes, links: built.links };
-  }, [notes, agents, tasks]);
+  }, [notes, agents, tasks, swarms]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -678,7 +681,7 @@ export default function GraphView() {
             ctx.stroke();
             ctx.globalAlpha = entranceAlpha;
           }
-          if (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || sel || hot) {
+          if (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || node.type === 'swarm' || sel || hot) {
             ctx.font = `${node.type === "note" ? 5 : 3.6}px ui-sans-serif, system-ui, sans-serif`;
             ctx.fillStyle = sel || hot ? "#ffffff" : "#c9d1d9";
             ctx.textAlign = "center";

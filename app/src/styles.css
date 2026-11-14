@@ -788,3 +788,8 @@ body {
 .task-error { color: #ff8d8d; }
 .log-line { overflow-wrap: anywhere; }
 .artifact-preview { display: block; max-width: 100%; margin-top: 20px; }
+
+.swarm-start { position: absolute; top: 64px; right: 20px; z-index: 15; display: flex; gap: 6px; max-width: min(440px, 60vw); }
+.swarm-start input { min-width: 0; flex: 1; background: #171924; color: white; border: 1px solid #7c6cac; border-radius: 8px; padding: 7px 10px; }
+.swarm-start button { color: white; background: #6d4ba6; border: 0; border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+.swarm-start span { color: #ffb4b4; }

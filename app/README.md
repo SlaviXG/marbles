@@ -158,3 +158,15 @@ and [structured outputs](https://developers.openai.com/api/docs/guides/structure
 ## Next
 
 Richer parsing (remark AST, frontmatter), search/focus, graph layout polish.
+
+## Swarm mode
+
+Use **Start swarm** in the canvas or ask by voice for agents to work together. A
+swarm runs 1–4 supported CLI agents in one workspace under
+`MARBLES_WORKSPACE_DIR/swarms/<id>/`. They receive the same prompt, coordinate
+through a server merged blackboard, and place joint deliverables in `shared/`.
+The detail panel shows runs, posts, files, evaluation, and one shared team reward.
+`POST /api/swarm/tasks` accepts `{ "goal": "...", "agents": ["codex", "claude"],
+"mode": "swarm" }`; omit agents for reward guided selection, or use
+`"mode": "best-of-n"` to compare independent solo runs. History, lessons, and
+selection statistics persist in the workspace root.

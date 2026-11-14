@@ -1,10 +1,10 @@
 import type { Note } from "./types";
-import type { AgentInfo, AgentTask, ArtifactInfo } from "./agentTypes";
+import type { AgentInfo, AgentTask, ArtifactInfo, SwarmTask } from "./agentTypes";
 
 export interface GNode {
   id: string;
   label: string;
-  type: "note" | "section" | "url" | "agent" | "task" | "artifact";
+  type: "note" | "section" | "url" | "agent" | "task" | "artifact" | "swarm" | "post";
   artifactType?: string;
   available?: boolean;
   x?: number;
@@ -37,7 +37,7 @@ export function isCanvasArtifact(artifact: ArtifactInfo) {
   return /\.(md|markdown|mdx|pdf|doc|docx|odt|rtf|txt|xls|xlsx|ods|csv|tsv|ppt|pptx|odp|png|jpe?g|webp|svg)$/i.test(artifact.name);
 }
 
-export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false) {
+export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false, swarms: SwarmTask[] = []) {
   const graph = includeVaultNodes ? buildGraph(notes) : { nodes: [] as GNode[], links: [] as GLink[] };
   const nodes = [...graph.nodes];
   const links = [...graph.links];
@@ -46,7 +46,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   visibleAgents.forEach((agent, index) => {
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
     const status = !agent.available || agent.kind !== 'cli' || !['codex', 'claude'].includes(agent.id)
-      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') ? 'running' : 'idle';
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle';
     const node = pinned(`agent:${agent.id}`, `${agent.name} · ${status}`, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     nodes.push(node);
@@ -72,6 +72,25 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
         : artifact.type;
       nodes.push(pinned(id, artifact.name, 'artifact', artifactPoint.x, artifactPoint.y, format));
       links.push({ source: `agent:${task.agentId}`, target: id });
+    }
+  }
+  for (const swarm of swarms.slice(0, 20)) {
+    const anchor = swarm.agents.map(id => agentNodes.get(id)).find(Boolean);
+    const x = anchor?.x ?? 0, y = anchor?.y ?? 0;
+    const parent = pinned(`swarm:${swarm.id}`, swarm.goal.slice(0, 36), 'swarm', x + 30, y + 30);
+    nodes.push(parent);
+    for (const agentId of swarm.agents) if (agentNodes.has(agentId)) links.push({ source: parent.id, target: `agent:${agentId}` });
+    for (const [index, post] of (swarm.blackboard ?? []).slice(-12).entries()) {
+      const pos = childPosition(parent, index, 0.5, 28);
+      const id = `post:${swarm.id}:${post.seq}`;
+      nodes.push(pinned(id, `${post.kind}: ${post.text.slice(0, 28)}`, 'post', pos.x, pos.y));
+      links.push({ source: parent.id, target: id });
+    }
+    for (const [index, artifact] of (swarm.artifacts ?? []).filter(isCanvasArtifact).slice(0, 18).entries()) {
+      const pos = childPosition(parent, index, 2.5, 38);
+      const id = `artifact:${swarm.id}:${encodeURIComponent(artifact.path)}`;
+      nodes.push(pinned(id, artifact.name, 'artifact', pos.x, pos.y, artifact.type));
+      links.push({ source: parent.id, target: id });
     }
   }
   return { nodes, links };

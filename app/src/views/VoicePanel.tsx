@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { VoiceSession, type VoiceStatus } from "../voice/VoiceSession";
 import { emptyTranscript, transcriptText, updateTranscript } from "../voice/transcript";
 import { CommandBuffer } from "../voice/CommandBuffer";
-import { refreshAgents, refreshTasks, useAgents } from "../state/agents";
+import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
 import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
@@ -144,6 +144,10 @@ export default function VoicePanel() {
           watching.current.set(data.task.id, data.intent.objective);
           reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
           await Promise.all([refreshAgents(), refreshTasks()]);
+        } else if (data.state === 'swarm') {
+          session.current?.rearm(); clarificationContext.current = '';
+          reply(`Started a swarm with ${data.swarm.agents.join(' and ')}: ${data.intent.objective}`, { swarmId: data.swarm.id });
+          await Promise.all([refreshAgents(), refreshSwarms()]);
         } else if (data.state === 'clarify') {
           clarificationContext.current = request.transcript;
           reply(data.intent.clarification);
