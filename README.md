@@ -192,8 +192,7 @@ desktop app first.
 
 ## Status
 
-marbles is a hackathon prototype under active development; this README tracks
-the current plan and will change as the branches land on `main`.
+Hackathon prototype, built 14 to 15 November 2026.
 
 ## Contributing
 
