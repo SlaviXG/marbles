@@ -13,6 +13,8 @@ import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
 import GestureWidget from "./views/GestureWidget";
 import MediaStage from "./views/MediaStage";
+import GestureDismiss from "./views/GestureDismiss";
+import { attentionTracker } from "./attention/AttentionTracker";
 import VideoWindow from "./views/VideoWindow";
 import { useDisplay } from "./state/display";
 import { REDUCED_MOTION, useHud } from "./state/hud";
@@ -66,13 +68,14 @@ export default function App() {
       <span className={`canvas-connection${connected ? ' connected' : ''}`} role="status"><span aria-hidden="true" />{connected ? 'Online' : 'Reconnecting'}<Clock /></span>
     </header>
     {!count && !booting && <p className="canvas-empty">Looking for Codex, Claude Code or Cursor on this computer.</p>}
-    <VoicePanel onActivate={() => { void cameraPointer.start(); }} onDeactivate={() => cameraPointer.stop()} />
+    <VoicePanel onActivate={() => { void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); }} />
     <DetailPanel disabled={presenting} />
     <PresentationStage />
     <MediaStage />
     <VideoWindow />
     <GestureWidget />
     <HandCursor />
+    <GestureDismiss />
     {booting && <div className="boot" aria-hidden="true">
       <svg viewBox="0 0 200 200">
         <circle className="boot-ring a" cx="100" cy="100" r="62" pathLength="100" />

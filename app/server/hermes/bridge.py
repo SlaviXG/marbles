@@ -67,8 +67,10 @@ def main():
 
         agent = AIAgent(model=payload["model"], provider="anthropic", api_mode="anthropic_messages",
             api_key=os.environ["ANTHROPIC_API_KEY"], base_url="https://api.anthropic.com",
-            enabled_toolsets=["marbles"], max_iterations=6, max_tokens=payload.get("maxTokens", 1400),
-            reasoning_config={"enabled": False}, run_budget_seconds=40,
+            enabled_toolsets=["marbles"], max_iterations=payload.get("maxIterations", 8), max_tokens=payload.get("maxTokens", 6000),
+            # Adaptive thinking: the model decides how much to reason before it acts.
+            # Effort is the dial (low / medium / high); thinking shares max_tokens.
+            reasoning_config={"enabled": True, "effort": payload.get("effort", "medium")}, run_budget_seconds=payload.get("budgetSeconds", 55),
             quiet_mode=True, verbose_logging=False, save_trajectories=False,
             skip_context_files=True, skip_memory=True, skip_background_review=True,
             cwd=payload.get("cwd"))

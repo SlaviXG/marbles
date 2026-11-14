@@ -9,6 +9,8 @@ type VoiceEvents = {
   awake?: () => void;
   wakeDetected?: (diagnostic?: WakeDiagnostic) => void;
   activity?: (level: number, speaking: boolean) => void;
+  /** What was just heard turned out to be background sound; drop any draft of it. */
+  discard?: () => void;
 };
 
 export class VoiceSession {
@@ -20,6 +22,8 @@ export class VoiceSession {
   private wakeDeadline = 0;
   private replyPlaying = false;
   private playbackUntil = 0;
+  private attention: boolean | null = null; // is the user looking at the screen? null = unknown
+  private muteTranscriptUntil = 0;
   private stream?: MediaStream;
   private context?: AudioContext;
   private source?: MediaStreamAudioSourceNode;
@@ -47,7 +51,10 @@ export class VoiceSession {
       if (!this.options.wake) await this.context.resume();
       if (this.disposed) return;
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        // Echo cancellation removes what this browser itself is playing (a video
+        // in the app, spoken replies). Voice isolation, where the system offers
+        // it, also suppresses other sound in the room; unsupported, it is ignored.
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: true } as MediaTrackConstraints,
       });
       if (this.disposed) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
@@ -122,9 +129,23 @@ export class VoiceSession {
     if (this.replyPlaying || performance.now() < this.playbackUntil) return;
     const turn = this.turns.push(data);
     this.events.activity?.(turn.level, turn.speaking);
+    const started = turn.speaking && !this.speaking;
     this.speaking = turn.speaking;
+    if (turn.background) {
+      // Music or a video, not a request: close the turn, ignore whatever
+      // transcript it produces, and go back to waiting (for the wake word, or
+      // for the user's eyes) instead of streaming the room to the transcriber.
+      this.send({ type: 'commit' });
+      this.muteTranscriptUntil = performance.now() + 6000;
+      this.events.discard?.();
+      this.rearm();
+      return;
+    }
+    // Looking at the screen keeps the conversation open; otherwise each new
+    // phrase buys a little more time, but continuous sound does not.
+    if (this.attention) this.wakeDeadline = Math.max(this.wakeDeadline, Date.now() + 4000);
     if (turn.audio) {
-      this.wakeDeadline = Date.now() + 20_000;
+      if (started) this.wakeDeadline = Math.max(this.wakeDeadline, Date.now() + 15_000);
       if ((this.socket?.bufferedAmount ?? 0) > SAMPLE_RATE * 2 * 3) {
         this.fail('Connection cannot keep up. Recording stopped; please try again.'); return;
       }
@@ -140,11 +161,35 @@ export class VoiceSession {
     if (!this.options.wake || this.disposed || this.stopping) return;
     if (this.turns.flush()) this.send({ type: 'commit' });
     this.turns.discard(); this.wake?.reset();
-    this.awake = false; this.speaking = false;
+    this.speaking = false;
     this.events.activity?.(0, false);
+    if (this.attention) {
+      // Still being looked at: stay ready, no wake word needed.
+      this.awake = true; this.wakeDeadline = Date.now() + 4000;
+      this.events.status('armed', 'Listening while you look at the screen.');
+      return;
+    }
+    this.awake = false;
     this.events.status('wake', this.wake?.browserRecognitionActive
       ? 'Listening for Marbles with local and browser speech recognition.'
       : 'Listening locally for Marbles. Standby audio stays on this device.');
+  }
+
+  /** Tell the session whether the user is looking at the screen (true / false),
+   * or that this is unknown (null: no camera, no face model). Looking arms the
+   * microphone the way the wake word does; looking away lets it lapse. */
+  setAttention(looking: boolean | null) {
+    if (looking === this.attention) return;
+    this.attention = looking;
+    if (!this.options.wake || this.disposed || this.stopping || !this.capture) return;
+    if (looking && !this.awake && !this.replyPlaying) {
+      this.awake = true; this.wakeDeadline = Date.now() + 4000;
+      this.turns.discard(); this.wake?.reset();
+      this.events.status('armed', 'Listening while you look at the screen.');
+    } else if (!looking && this.awake && !this.speaking) {
+      // Give a glance away a moment; a real look away ends the conversation.
+      this.wakeDeadline = Math.min(this.wakeDeadline, Date.now() + 3000);
+    }
   }
 
   setReplyPlaying(playing: boolean) {
@@ -205,7 +250,7 @@ export class VoiceSession {
         else if (event.type === "finished") {
           this.dispose();
           this.events.status("idle", "Transcript ready. Microphone off.");
-        } else this.events.transcript(event);
+        } else if (performance.now() >= this.muteTranscriptUntil) this.events.transcript(event);
       } catch { this.fail("Invalid voice response. Please reconnect."); }
     };
   }

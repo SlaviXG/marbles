@@ -9,6 +9,8 @@ import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
 import { mediaCommand } from '../voice/mediaCommand';
+import { setDucked } from '../voice/ducking';
+import { useAttention } from '../attention/AttentionTracker';
 import { useDisplay, type Display } from '../state/display';
 import { usePresentation } from '../state/presentation';
 import { artifactSelection } from '../core/presentation';
@@ -26,7 +28,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const pulseTimer = useRef<ReturnType<typeof setTimeout>>();
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
-  const requestQueue = useRef(Promise.resolve());
+  const backlog = useRef<VoiceRequest[]>([]);
+  const flying = useRef(false);
   const conversationId = useRef(crypto.randomUUID());
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
   const draft = useRef(emptyTranscript());
@@ -43,6 +46,13 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model') : 'Waking up' : status === "stopping" ? "Standing down"
     : status === "error" ? "Tap to retry" : "Tap to wake";
   useEffect(() => { useHud.getState().setVoice(status); }, [status]);
+  // Anything the app is playing steps back while you are heard or answered.
+  useEffect(() => { setDucked(replyPlaying || status === 'armed' || status === 'listening'); return () => setDucked(false); }, [status, replyPlaying]);
+  // Looking at the screen opens the microphone; only a known answer is passed on.
+  const attention = useAttention(state => state.status);
+  useEffect(() => {
+    session.current?.setAttention(attention === 'looking' ? true : attention === 'away' || attention === 'nobody' ? false : null);
+  }, [attention, status === 'idle' || status === 'loading']);
   useEffect(() => { useHud.getState().setSpeaking(replyPlaying); }, [replyPlaying]);
   useEffect(() => () => { voiceSignal.level = 0; useHud.getState().setVoice('idle'); useHud.getState().setSpeaking(false); }, []);
 
@@ -154,6 +164,13 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       },
       activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
+      // What was heard was the room, not a request: take the half-written line away.
+      discard: () => {
+        const id = draftId.current;
+        for (const item of Object.keys(draft.current.items)) consumed.current.add(item);
+        draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
+        setMessages(current => current.filter(item => item.id !== id));
+      },
       wakeDetected: () => {
         setWakePulse(false);
         requestAnimationFrame(() => setWakePulse(true));
@@ -165,20 +182,41 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     void next.start();
   }
 
+  // One request is with Hermes at a time. Anything said meanwhile waits here
+  // and goes out together when it returns: the newest as the request, the
+  // rest as "earlier", so the latest thing has priority and nothing is lost.
   function enqueue(request: VoiceRequest) {
-    requestQueue.current = requestQueue.current.then(async () => {
+    backlog.current.push(request);
+    if (!flying.current) void flush();
+  }
+  async function flush() {
+    flying.current = true;
+    try {
+      while (backlog.current.length && mounted.current) {
+        const waiting = backlog.current.splice(0);
+        const newest = waiting[waiting.length - 1];
+        await send({ ...newest, earlier: [...waiting.slice(0, -1).flatMap(item => [...(item.earlier ?? []), item.transcript])].slice(-6) });
+      }
+    } finally { flying.current = false; }
+  }
+  async function send(request: VoiceRequest) {
+    await (async () => {
       if (!mounted.current) return;
       const id = `reply:${request.requestId}`;
-      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Hermes', text, ...extra });
+      const replyFirst = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Hermes', text, ...extra });
+      const reply = replyFirst;
       reply('Planning…', { pending: true });
       try {
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request), signal: AbortSignal.timeout(55_000),
+          body: JSON.stringify(request), signal: AbortSignal.timeout(150_000),
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not delegate the task.');
+        const first = await response.json();
+        if (!response.ok) throw new Error(first.error || 'Could not delegate the task.');
         if (!mounted.current) return;
+        // The reply to the newest request, then to anything picked up from earlier.
+        for (const [turn, data] of [first, ...(first.followUp ? [first.followUp] : [])].entries()) {
+        const reply = turn ? (text: string, extra: Partial<VoiceMessage> = {}) => message({ id: `${id}:earlier`, role: 'assistant', label: 'Marbles · Hermes', text, ...extra }) : replyFirst;
         if (data.state === 'assigned') {
           session.current?.rearm();
           // One sentence can hold several tasks; follow every one of them.
@@ -204,11 +242,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           reply(data.reply);
           if (data.state !== 'clarify') session.current?.rearm();
         }
+        }
       } catch (error) {
         if (!mounted.current) return;
         reply(error instanceof Error ? error.message : 'Could not delegate the task.', { retry: request });
       }
-    });
+    })();
   }
 
   return (

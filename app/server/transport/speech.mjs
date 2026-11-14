@@ -1,21 +1,30 @@
 import { localVoiceOrigin } from './voice.mjs';
+import { liveEnv } from '../env.mjs';
 import { DEFAULT_SPEECH_VOICE, isSpeechVoice } from '../../shared/speechVoices.mjs';
 import { DEFAULT_ELEVENLABS_MODEL_ID, DEFAULT_ELEVENLABS_VOICE_ID, elevenLabsTts, openAiTts } from './ttsProviders.mjs';
 
 const MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 
-export function ttsInfo({ elevenLabsApiKey = process.env.ELEVENLABS_API_KEY, apiKey = process.env.OPENAI_API_KEY,
-  voiceId = process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_VOICE_ID,
-  modelId = process.env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_MODEL_ID } = {}) {
-  return { provider: elevenLabsApiKey ? 'elevenlabs' : apiKey ? 'openai' : 'none', voiceId, model: modelId };
+// Keys and voice settings are looked up per request (see env.mjs), so a key
+// added to .env while the server is running starts working straight away.
+const setting = (given, name, fallback) => given ?? (liveEnv(name) || fallback);
+
+export function ttsInfo(options = {}) {
+  const elevenLabsApiKey = setting(options.elevenLabsApiKey, 'ELEVENLABS_API_KEY');
+  const apiKey = setting(options.apiKey, 'OPENAI_API_KEY');
+  return { provider: elevenLabsApiKey ? 'elevenlabs' : apiKey ? 'openai' : 'none',
+    voiceId: setting(options.voiceId, 'ELEVENLABS_VOICE_ID', DEFAULT_ELEVENLABS_VOICE_ID), model: setting(options.modelId, 'ELEVENLABS_MODEL_ID', DEFAULT_ELEVENLABS_MODEL_ID) };
 }
 
-export function speechHandler({ apiKey = process.env.OPENAI_API_KEY, elevenLabsApiKey = process.env.ELEVENLABS_API_KEY,
-  voiceId = process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_VOICE_ID,
-  modelId = process.env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_MODEL_ID, fetchApi = fetch } = {}) {
+export function speechHandler(options = {}) {
+  const { fetchApi = fetch } = options;
   let active = 0;
   return async (req, res) => {
     res.set('Cache-Control', 'no-store');
+    const apiKey = setting(options.apiKey, 'OPENAI_API_KEY');
+    const elevenLabsApiKey = setting(options.elevenLabsApiKey, 'ELEVENLABS_API_KEY');
+    const voiceId = setting(options.voiceId, 'ELEVENLABS_VOICE_ID', DEFAULT_ELEVENLABS_VOICE_ID);
+    const modelId = setting(options.modelId, 'ELEVENLABS_MODEL_ID', DEFAULT_ELEVENLABS_MODEL_ID);
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Speech playback requires a local app origin.' });
     const text = req.body?.text;
     if (typeof text !== 'string' || !text.trim() || text.length > 2000) return res.status(400).json({ error: 'Supply reply text under 2,000 characters.' });
@@ -84,6 +93,7 @@ export function speechHandler({ apiKey = process.env.OPENAI_API_KEY, elevenLabsA
         try { await attempt('elevenlabs'); return; }
         catch (error) {
           fallbackReason = error.ttsReason || (error.status ? `http_${error.status}` : error.message === 'empty_body' ? 'empty_body' : 'network_error');
+          console.warn(`[tts] ElevenLabs failed (${fallbackReason})${fallbackReason === 'http_401' ? ': the key was rejected' : fallbackReason === 'http_402' ? ': this voice needs a paid plan' : ''}; ${apiKey ? 'using OpenAI for this reply' : 'no fallback key'}.`);
           if (closed || res.headersSent || !apiKey) throw error;
         }
       }

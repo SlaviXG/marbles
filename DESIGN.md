@@ -33,3 +33,9 @@ Everything projected can be picked up: pinch (or press) a window's title bar and
 A video plays in a small side window that blocks nothing and can be dragged or enlarged, so work continues around it.
 
 Work queues instead of failing or being dropped. One sentence can hold several tasks and each is delegated; tasks that cannot start wait at the centre of the canvas ("2 queued") and start in order as agents free up. Finished results queue too: a result on screen is never replaced or closed by a stray pinch on the canvas. It closes on its button, Escape or by voice, and the waiting one is a "Next" away.
+
+## Attention, quiet and waving away
+
+The canvas is quieter: no lines run from the centre to the agents. A working agent is shown by its own dial, timer and latest line.
+
+Looking at the screen opens the microphone; looking away lets it lapse. Steady sound (music, a video) is recognised and ignored, and a video in the app steps back while Marbles listens or speaks. A fast swipe across a window closes it, and dropping your hands clears the stage. See `docs/voice-attention-and-gestures.md` for how each works and its limits.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GONE_MS, handDebug, loadParams, pointerTarget, secondaryHand, subscribeParams, usePointerStore } from '../input';
 import { subscribeFrame } from '../motion/ticker';
+import { useAttention } from '../attention/AttentionTracker';
 
 const BONES = [
   [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
@@ -14,6 +15,7 @@ export default function GestureWidget() {
   const status = usePointerStore(s => s.status);
   const error = usePointerStore(s => s.error);
   const mode = usePointerStore(s => s.mode);
+  const attention = useAttention(s => s.status);
   const [feedback, setFeedback] = useState<Feedback>('waiting');
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -91,6 +93,10 @@ export default function GestureWidget() {
       <i className="holo-corner tl" /><i className="holo-corner tr" /><i className="holo-corner bl" /><i className="holo-corner br" />
     </div>
     <p className="gesture-feedback" role="status" aria-live="polite" aria-atomic="true"><span aria-hidden="true" />{label}</p>
+    {(attention === 'looking' || attention === 'away') && <p className={`attention-badge ${attention}`} role="status">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" /><circle cx="12" cy="12" r="2.6" /></svg>
+      {attention === 'looking' ? 'Eyes on' : 'Looking away'}
+    </p>}
     {hint && <p className="gesture-widget-hint">{hint}</p>}
   </aside>;
 }

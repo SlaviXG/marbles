@@ -144,6 +144,9 @@
 .gesture-widget.feedback-pinching .gesture-feedback > span, .gesture-widget.feedback-zooming .gesture-feedback > span { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
 .gesture-widget.denied .gesture-feedback, .gesture-widget.error .gesture-feedback { color: var(--amber); }
 .gesture-widget.denied .gesture-feedback > span, .gesture-widget.error .gesture-feedback > span { background: var(--amber); }
+.canvas-app .attention-badge { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--muted); font: 500 .66rem/1 var(--hud); letter-spacing: .24em; text-transform: uppercase; transition: color .4s; }
+.canvas-app .attention-badge.looking { color: var(--teal); }
+.attention-badge.looking svg { filter: drop-shadow(0 0 6px var(--teal)); }
 .canvas-app .gesture-widget-hint { max-width: 26ch; margin: 0; text-align: right; color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .has-presentation .gesture-visual { display: none !important; }
 @keyframes sweep { from { transform: translateY(-100%); } to { transform: translateY(220%); } }

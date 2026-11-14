@@ -55,10 +55,14 @@ describe('coordinator memory and receipts', () => {
   it('keeps memory bounded and ignores background speech', async () => {
     const { commands, run } = setup();
     for (let i = 0; i < 8; i++) await commands.dispatch({ ...request, requestId: `request-${i}00` });
-    expect(commands.conversations.get(request.conversationId).history).toHaveLength(6);
+    const conversation = commands.conversations.get(request.conversationId);
+    expect(conversation.history).toHaveLength(8);
+    // Older turns are folded into the running memory rather than dropped.
+    await conversation.remembering;
+    expect(conversation.memory).toBeTruthy();
     run.mockResolvedValueOnce({ state: 'ignore', reply: '' });
     await commands.dispatch({ ...request, requestId: 'ignored-123' });
-    expect(commands.conversations.get(request.conversationId).history).toHaveLength(6);
+    expect(conversation.history).toHaveLength(8);
   });
   it('summarizes each completed voice result once and remembers the outcome', async () => {
     const { commands, summarize, record } = setup();

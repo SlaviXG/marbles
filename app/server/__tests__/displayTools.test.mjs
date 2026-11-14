@@ -147,3 +147,44 @@ it('delegates every task named in one request, not just the first', async () => 
   await expect(new HermesCoordinator({ taskService: { ...taskService, startOrQueue }, apiKey: 'k',
     runner: async (_payload, call) => { await call('delegate_many', { tasks: [plan(1)] }); } }).run({ transcript: 'x' })).rejects.toThrow();
 });
+
+// ---- configuration, memory and what was said meanwhile ----
+import { envFiles } from '../env.mjs';
+import { VoiceCommands } from '../agents/voiceCommands.mjs';
+import fsp from 'node:fs/promises';
+
+it('finds the main checkout’s .env from a linked worktree', async () => {
+  const base = await fsp.mkdtemp(path.join(os.tmpdir(), 'marbles-env-'));
+  const main = path.join(base, 'main'), tree = path.join(base, 'tree');
+  await fsp.mkdir(path.join(main, '.git', 'worktrees', 'tree'), { recursive: true });
+  await fsp.mkdir(tree);
+  await fsp.writeFile(path.join(main, '.env'), 'ELEVENLABS_API_KEY=abc\n');
+  await fsp.writeFile(path.join(tree, '.git'), `gitdir: ${path.join(main, '.git', 'worktrees', 'tree')}\n`);
+  expect(envFiles(tree)).toEqual([path.join(main, '.env')]);
+  await fsp.writeFile(path.join(tree, '.env'), 'X=1\n');
+  expect(envFiles(tree)).toEqual([path.join(tree, '.env'), path.join(main, '.env')]);
+  expect(envFiles(main)).toEqual([path.join(main, '.env')]);
+});
+
+it('puts the newest request first, still handles what was said earlier, and remembers', async () => {
+  const run = vi.fn()
+    .mockResolvedValueOnce({ state: 'show', reply: 'Here are the pictures.', display: { kind: 'images', query: 'aurora', images: [] } })
+    .mockResolvedValueOnce({ state: 'assigned', reply: 'Drafting the brief.', task: { id: 'task-0001' }, intent: { objective: 'Brief' } });
+  const remember = vi.fn(async (memory, turns) => `${memory} | ${turns.length} turns folded`);
+  const commands = new VoiceCommands({ taskService: { snapshot: () => [] }, coordinator: { run, remember } });
+  const result = await commands.dispatch({ transcript: 'Show me pictures of the aurora', earlier: ['Write the Q3 brief'], requestId: 'request-0001', conversationId: 'conversation-1' });
+  expect(run.mock.calls[0][0]).toMatchObject({ transcript: 'Show me pictures of the aurora', earlier: ['Write the Q3 brief'] });
+  expect(run.mock.calls[1][0].transcript).toBe('Write the Q3 brief');
+  expect(result.state).toBe('show'); expect(result.followUp).toMatchObject({ state: 'assigned', reply: 'Drafting the brief.' });
+  // A delegation already covers earlier requests (delegate_many), so no second pass.
+  run.mockResolvedValue({ state: 'assigned', reply: 'Two tasks under way.', task: { id: 'task-0002' }, intent: { objective: 'x' } });
+  await commands.dispatch({ transcript: 'And a budget', earlier: ['Make a deck'], requestId: 'request-0002', conversationId: 'conversation-1' });
+  expect(run).toHaveBeenCalledTimes(3);
+  for (let i = 3; i < 8; i++) await commands.dispatch({ transcript: `Task ${i}`, requestId: `request-000${i}`, conversationId: 'conversation-1' });
+  const conversation = commands.conversations.get('conversation-1');
+  await conversation.remembering;
+  expect(conversation.history).toHaveLength(8);
+  expect(remember).toHaveBeenCalled(); expect(conversation.memory).toContain('turns folded');
+  expect(run.mock.calls.at(-1)[0].memory).toBeDefined();
+  expect(() => commands.dispatch({ transcript: 'x', earlier: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], requestId: 'request-0099', conversationId: 'conversation-1' })).toThrow();
+});

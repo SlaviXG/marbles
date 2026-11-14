@@ -1,4 +1,4 @@
-import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawQueue, drawTether } from "./drawHologram";
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawQueue } from "./drawHologram";
 import { HUD_FONT, voiceSignal } from "../state/hud";
 import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
 import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
@@ -15,6 +15,7 @@ import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
 import {
   clickSlop,
+  steady,
   dispatchAction,
   registerActionHandler,
   setMagnetProvider,
@@ -653,7 +654,8 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
             const held = carry.current;
             if (!held) return;
             const dx = e.clientX - held.sx, dy = e.clientY - held.sy;
-            if (!held.moving && Math.hypot(dx, dy) < clickSlop(DRAG_THRESHOLD) * 2.5) return;
+            if (!held.moving && Math.hypot(dx, dy) < clickSlop(DRAG_THRESHOLD) * 1.4) return;
+            if (!held.moving) steady.drag(true);
             held.moving = true;
             el.style.cursor = "grabbing";
             moved.current.set(held.id, { x: held.ox + dx / kRef.current, y: held.oy + dy / kRef.current });
@@ -713,7 +715,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         carry.current = null;
         downRef.current = null;
         downNode.current = null;
-        if (carried) { if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
+        if (carried) { steady.drag(false); if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
         if (wasDrag) {
           // Fling: throw the center with the release velocity; the spring settles it.
           const { x: vx, y: vy } = panVel.current;
@@ -748,6 +750,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         // the press state without selecting anything and without touching
         // hover: no click was completed, and the pointer has not gone anywhere.
         dragging.current = false;
+        if (carry.current?.moving) steady.drag(false);
         carry.current = null;
         downRef.current = null;
         downNode.current = null;
@@ -779,15 +782,6 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           if (presenting) ctx.globalAlpha = .45;
           drawHolographicSpace(ctx, { time: still ? 0 : time, scale, reduced: still, energy: sceneEnergy.current, level: still ? 0 : sceneLevel.current });
           if (queuedCount.current > 0) drawQueue(ctx, queuedCount.current, { time, scale, reduced: still });
-          for (const node of nodeCache.current.values()) {
-            if (node.type !== 'agent' || node.x == null || node.status === 'unavailable') continue;
-            if (Math.hypot(node.x - node.homeX, node.y - node.homeY) > 4) continue; // away presenting
-            const born = bornAt.current.get(node.id) ?? 0;
-            const appear = REDUCED_MOTION ? 1 : Math.max(0, Math.min(1, (performance.now() - born - 250) / 700));
-            drawTether(ctx, node.x, node.y, Math.max(22, Math.min(36 / scale, 52)), { time, scale, working: node.status === 'running', reduced: still, alpha: appear,
-              // A task being handed over: one bright charge runs out to the agent.
-              burst: node.status === 'running' ? time - (activityAt.current.get(node.id)?.at ?? -100) : 99 });
-          }
           ctx.restore();
         }}
         onEngineTick={() => {
