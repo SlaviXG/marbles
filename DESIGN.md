@@ -4,6 +4,8 @@ An office worker directs a projected team through voice and short hand gestures.
 
 Keep the original glowing, floating, microphone-responsive voice orb. It starts and pauses both microphone and camera. Agent cores animate from actual task state: quiet breathing while waiting, rotating segmented rings while working, a short completion pulse and checkmark when finished, and an amber warning when a task needs attention. Positions stay fixed for gesture targeting. Reduced motion keeps static state glyphs.
 
+Keep a gesture recognition widget visible before and after activation. Show camera status, mirrored live hand outlines, pinch and two-hand zoom feedback, mouse takeover, and actionable camera errors. Use the same orb to start and pause tracking. Keep the widget compact while a result is being presented and above the main canvas on narrow screens.
+
 Represent outputs as small holographic document, grid, image or slide objects. Multiple deliverables form one file stack next to their creator. Point and pinch opens a readable detail surface. Known filenames can be opened by voice without starting another task. Technical activity is secondary, and details never dismiss because the pointer leaves.
 
 Use system sans typography, generous gesture targets, restrained lighting, and no fake metrics, decorative terminal output or dense controls.

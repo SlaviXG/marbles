@@ -76,6 +76,11 @@ seconds without speech. Touch the orb again to pause both microphone and camera.
 There are no navigation tabs, typed composer or persistent button bars.
 Mouse and keyboard remain available as accessibility fallbacks.
 
+A gesture recognition widget stays visible on the canvas. It shows camera
+status before activation, live hand outlines after tracking starts, and feedback
+for pointing, pinching, two-hand zoom and mouse takeover. Camera errors are
+visible here. The orb remains the single start/pause control for voice and hands.
+
 Live speech and replies appear at the bottom left, with at most three recent
 bubbles. They stay until newer messages replace them, rather than fading while
 someone is reading. Completion messages include the agent reply and a link to

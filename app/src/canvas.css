@@ -31,6 +31,30 @@
 .canvas-app .voice-halo { background:radial-gradient(circle,oklch(75% .12 215 / .25),oklch(65% .1 235 / .09) 42%,transparent 70%); }
 .canvas-app .voice-help { position:absolute; bottom:calc(100% + 18px); padding:16px; background:var(--panel); border:1px solid var(--border); border-radius:12px; text-shadow:none; font-size:.875rem; width:min(360px,calc(100vw - 32px)); }
 .gesture-guide { position:fixed; bottom:12px; left:16px; right:16px; text-align:center; color:var(--muted); font-size:.75rem; margin:0 auto; pointer-events:none; }
+/* Always-visible camera feedback, controlled by the same voice orb. */
+.gesture-widget { position:fixed; right:28px; bottom:32px; z-index:42; width:216px; padding:14px 15px; border:1px solid oklch(55% .06 220 / .35); border-radius:12px; background:oklch(18% .025 235 / .97); pointer-events:none; }
+.gesture-widget-title { display:flex; align-items:center; gap:8px; font-size:.6875rem; font-weight:500; letter-spacing:.035em; color:var(--muted); }
+.gesture-widget-title>span { width:5px; height:5px; border-radius:50%; background:oklch(59% .025 230); }
+.gesture-widget.tracking .gesture-widget-title>span { background:var(--teal); box-shadow:0 0 8px oklch(80% .1 210 / .3); }
+.gesture-widget.denied .gesture-widget-title>span,.gesture-widget.error .gesture-widget-title>span { background:oklch(80% .1 75); }
+.gesture-visual { position:relative; height:138px; margin:12px 0; overflow:hidden; border-radius:6px; background:linear-gradient(oklch(58% .05 220 / .045) 1px,transparent 1px),linear-gradient(90deg,oklch(58% .05 220 / .045) 1px,transparent 1px); background-size:23px 23px; }
+.gesture-visual canvas { position:absolute; inset:0; max-width:100%; opacity:0; }
+.gesture-widget.tracking .gesture-visual canvas { opacity:1; }
+.gesture-hand-guide { position:absolute; top:18px; left:50%; transform:translateX(-50%); height:102px; width:82px; color:oklch(70% .05 220 / .35); }
+.gesture-widget.has-hand .gesture-hand-guide { opacity:0; }
+.gesture-widget .gesture-feedback { margin:0 0 4px; font-size:.8125rem; color:var(--text); }
+.gesture-widget .gesture-widget-hint { margin:0; color:var(--muted); font-size:.6875rem; line-height:1.5; }
+.has-presentation .gesture-widget .gesture-visual { display:none; }
+@media(max-width:849px) { .gesture-widget { right:16px; bottom:160px; width:176px; padding:12px; } .gesture-visual { height:100px; } .gesture-visual canvas { width:100%!important; height:100%!important; } .gesture-hand-guide { top:8px; height:84px; } .has-presentation .gesture-widget { top:76px; bottom:auto; right:auto; left:16px; width:140px; } .has-presentation .gesture-widget-title { font-size:.625rem; gap:6px; } .has-presentation .gesture-widget-hint { display:none; } }
+@media(max-width:600px) {
+ .gesture-widget { top:76px; bottom:auto; left:16px; right:16px; width:auto; min-height:88px; padding-left:86px; }
+ .gesture-widget .gesture-visual { position:absolute; left:12px; top:12px; width:60px; height:60px; margin:0; }
+ .gesture-widget .gesture-visual canvas { top:7px; height:45px!important; }
+ .gesture-widget .gesture-hand-guide { top:3px; width:44px; height:54px; }
+ .canvas-app .canvas-intro { top:184px; }
+ .has-presentation .gesture-widget { min-height:0; padding-left:12px; }
+}
+@media(max-height:650px) { .gesture-widget .gesture-visual { display:none; } }
 .canvas-app .voice-conversation { position:fixed; left:28px; bottom:32px; width:min(320px,26vw); max-height:38dvh; }
 .canvas-app .voice-message { background:var(--panel); color:var(--text); border:1px solid var(--border); box-shadow:none; border-radius:12px; animation:none; transition:none; }
 .canvas-app .voice-message.user { background:oklch(25% .045 230); }

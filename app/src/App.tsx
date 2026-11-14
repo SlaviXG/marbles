@@ -10,6 +10,7 @@ import VoicePanel from "./views/VoicePanel";
 import PresentationStage from "./views/PresentationStage";
 import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
+import GestureWidget from "./views/GestureWidget";
 
 export default function App() {
   useVaultStream();
@@ -37,6 +38,7 @@ export default function App() {
     <p className="gesture-guide">Say what you need. Point and pinch to check in with your team.</p>
     <DetailPanel disabled={presenting} />
     <PresentationStage />
+    <GestureWidget />
     <HandCursor />
   </div>;
 }
