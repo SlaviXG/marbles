@@ -12,7 +12,7 @@ marbles is a multi-purpose extension that uses multi-agent swarms to automate ta
 
 ### Roadmap (from the team's task list)
 
-1. UI with gesture recognition (owner: Joush)
+1. UI with gesture recognition 
 2. Integrate voice AI
 3. Integrate agents as nodes and display their context inside each node
 4. Test voice AI + agents together
