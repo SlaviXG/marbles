@@ -219,7 +219,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         </svg>
       </button>
       <div className="voice-caption" role="status" key={caption}>{caption}</div>
-      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Browser-assisted wake recognition may use your browser’s speech service. Command transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
     </>
   );

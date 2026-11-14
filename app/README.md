@@ -112,10 +112,12 @@ Only the newest window waits while inference is busy; eight seconds of local aud
 remain available for the command. Fast decoding uses 12 tokens and estimates the
 wake boundary from audio energy. A guarded phonetic match accepts common Marbles
 transcriptions while excluding near misses such as “marvelous” and “tables.”
-If supported, interim Web Speech recognition races the local Whisper detector;
-the first match wins and a 1.5-second cooldown prevents duplicate wakes. Web Speech
-audio is never used for the command: the local buffer supplies it. Standby audio
-stays local until a wake match, then OpenAI transcribes the command. The orb gives
+On supported browsers, interim Web Speech recognition races the local Whisper
+detector by default. The first match wins and a 1.5-second cooldown prevents
+duplicate wakes. Browser recognition may use the browser vendor’s remote speech
+service; see [SpeechRecognition](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition).
+If the browser API is unavailable or fails, local Whisper continues. The command
+always comes from the local audio buffer, then OpenAI transcribes it. The orb gives
 a short wake pulse. Set localStorage `marbles.debugWake` to `true` for detection
 latency, match, score, inference time, and dropped-window logs. Run
 `npm run wake:latency` for an offline replay against the local model and two WAV

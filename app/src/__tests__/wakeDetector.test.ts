@@ -60,6 +60,30 @@ it('rejects silence, accepts a short word over the adaptive noise floor', async 
   detector.dispose();
 });
 
+it('keeps local wake detection working when browser recognition is unavailable', async () => {
+  vi.stubGlobal('window', {});
+  const { detector, worker, wake, load, recognitions } = setup(); await load;
+  expect(recognitions).toHaveLength(0);
+  expect(detector.browserRecognitionActive).toBe(false);
+  detector.push(frame(.03, 500));
+  result(worker, 'Marbles', 0);
+  expect(wake).toHaveBeenCalledOnce();
+  expect(wake.mock.calls[0][1].detector).toBe('whisper');
+  detector.dispose();
+});
+
+it.each([
+  {},
+  { getItem: () => { throw new Error('Storage access denied'); } },
+])('still activates when diagnostic storage is unavailable: %j', async storage => {
+  vi.stubGlobal('localStorage', storage);
+  const { detector, worker, wake, load } = setup(); await load;
+  detector.push(frame(.03, 500));
+  result(worker, 'Marbles', 0);
+  expect(wake).toHaveBeenCalledOnce();
+  detector.dispose();
+});
+
 it.each(['webspeech', 'whisper'] as const)('%s wins the dual detector race and cooldown dedupes the other', async winner => {
   vi.useFakeTimers();
   const { detector, worker, wake, load, recognitions } = setup(true); await load;
@@ -79,10 +103,12 @@ it.each(['webspeech', 'whisper'] as const)('%s wins the dual detector race and c
 it('restarts Web Speech after end and disables it on network errors', async () => {
   const { detector, load, recognitions } = setup(true); await load;
   const speech = recognitions[0];
+  expect(detector.browserRecognitionActive).toBe(true);
   expect(speech.continuous).toBe(true); expect(speech.interimResults).toBe(true);
   speech.onend(); expect(speech.start).toHaveBeenCalledTimes(2);
   speech.onerror({ error: 'network' });
   expect(speech.stop).toHaveBeenCalled(); expect(speech.onend).toBeNull();
+  expect(detector.browserRecognitionActive).toBe(false);
   detector.dispose();
 });
 

@@ -41,6 +41,8 @@ export class WakeDetector {
   private rejectLoad?: (error: Error) => void;
   constructor(private wake: (audio: Float32Array, diagnostic: WakeDiagnostic) => void, private error: (message: string) => void) {}
 
+  get browserRecognitionActive() { return this.recognition !== undefined; }
+
   load(progress: (percent: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
       this.rejectLoad = reject;
@@ -129,7 +131,9 @@ export class WakeDetector {
     const diagnostic: WakeDiagnostic = { latencyMs: Math.round((this.total - this.voiceOnset) / SAMPLE_RATE * 1000), text: text.slice(match.start, match.end), score: match.score, detector, inferenceMs, droppedWindows: this.droppedWindows };
     this.cooldownUntil = Date.now() + WAKE_COOLDOWN_MS;
     this.reset();
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('marbles.debugWake') === 'true') console.debug('Wake detected', diagnostic);
+    try {
+      if (globalThis.localStorage?.getItem?.('marbles.debugWake') === 'true') console.debug('Wake detected', diagnostic);
+    } catch { /* Optional diagnostic storage must never block activation. */ }
     this.wake(command, diagnostic);
   }
 
@@ -162,5 +166,5 @@ export class WakeDetector {
     this.audio = new Float32Array(0); this.total = 0; this.lastVoiceEnd = this.voiceOnset = this.lastScheduled = 0;
     this.finalScheduled = false; this.pending = undefined; this.epoch++;
   }
-  dispose() { this.disposed = true; this.rejectLoad?.(new Error('Wake startup cancelled.')); this.recognition?.stop(); this.worker?.terminate(); this.reset(); }
+  dispose() { this.disposed = true; this.rejectLoad?.(new Error('Wake startup cancelled.')); this.recognition?.stop(); this.recognition = undefined; this.worker?.terminate(); this.reset(); }
 }
