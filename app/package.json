@@ -6,6 +6,7 @@
   "description": "Live visualization of the Obsidian vault (force-directed graph).",
   "scripts": {
     "setup:wake": "node scripts/setup-wake.mjs",
+    "wake:latency": "node scripts/wake-latency.mjs",
     "setup:hermes": "node scripts/setup-hermes.mjs",
     "predev": "npm run setup:wake && npm run setup:hermes",
     "preserver": "npm run setup:hermes",

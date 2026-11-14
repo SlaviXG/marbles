@@ -18,6 +18,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies] = useState(true);
   const [replyPlaying, setReplyPlaying] = useState(false);
+  const [wakePulse, setWakePulse] = useState(false);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout>>();
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
@@ -48,7 +50,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
-    return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
+    return () => { mounted.current = false; clearTimeout(pulseTimer.current); commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
   }, []);
   useEffect(() => {
     for (const task of tasks) {
@@ -133,6 +135,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       },
       activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
+      wakeDetected: () => {
+        setWakePulse(false);
+        requestAnimationFrame(() => setWakePulse(true));
+        clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setWakePulse(false), 600);
+      },
     }, { wake: true });
     session.current = next;
     void next.start();
@@ -177,7 +185,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   return (
     <>
     <VoiceConversation messages={messages} retry={enqueue} />
-    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice control">
+    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}${wakePulse ? ' wake-detected' : ''}`} aria-label="Voice control">
       <button type="button" className="voice-marble" disabled={status === "stopping"}
         aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
         aria-pressed={active} aria-describedby="voice-detail"

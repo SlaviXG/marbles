@@ -78,6 +78,9 @@
 .canvas-app .voice-dock { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 41; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
 .voice-marble { position: relative; display: grid; place-items: center; width: 150px; height: 150px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--bright); pointer-events: auto; transition: transform .5s var(--out); -webkit-tap-highlight-color: transparent; }
 .voice-marble:hover:not(:disabled) { transform: scale(1.05); }
+.voice-dock.wake-detected .voice-marble { animation: wake-pulse .55s ease-out; }
+@keyframes wake-pulse { 40% { filter: drop-shadow(0 0 14px rgba(76, 225, 255, .65)); transform: scale(1.055); } }
+@media (prefers-reduced-motion: reduce) { .voice-dock.wake-detected .voice-marble { animation: none; filter: drop-shadow(0 0 9px rgba(76, 225, 255, .5)); } }
 .has-presentation .voice-marble { transform: scale(.7) translateY(26px); }
 .voice-marble:active:not(:disabled) { transform: scale(.96); transition-duration: .12s; }
 .canvas-app .voice-marble:focus-visible { outline-offset: -8px; }

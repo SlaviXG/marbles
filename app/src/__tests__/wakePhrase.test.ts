@@ -2,22 +2,22 @@ import { expect, it } from 'vitest';
 import { hasWakePhrase, wakeMatch, wakeStart, withoutWakePhrase, WAKE_MATCH_THRESHOLD } from '../voice/wakePhrase';
 import { spokenText } from '../voice/ReplySpeaker';
 
-it('compares the trigger word with a 50 percent threshold', () => {
-  expect(WAKE_MATCH_THRESHOLD).toBe(0.5);
+it('uses a guarded phonetic threshold', () => {
+  expect(WAKE_MATCH_THRESHOLD).toBe(0.72);
   expect(wakeMatch('Marbles')?.score).toBe(1);
-  expect(wakeMatch('marvels')?.score).toBeGreaterThanOrEqual(0.5);
+  expect(wakeMatch('marvels')?.score).toBeGreaterThanOrEqual(0.72);
 });
 
 it.each([
   'Marbles', 'hey marbles', 'hi marbles', 'yo marbles', 'Heymarbles',
   'Could you help me today, Marbles, and write a report?',
   'I have a long request for you and I will say marbles in the middle of it.',
-  'marvels', 'marble',
+  'marvels', 'marble', 'marbels', 'marbel', 'marvel', 'mabels', 'mables', 'marbos', 'marbleous', 'mar bles', 'heymarbles',
 ])('finds the trigger word without matching the whole sentence: %s', text => {
   expect(hasWakePhrase(text)).toBe(true);
 });
 
-it.each(['the sky', 'hey there', 'write a report', 'make a brief', 'something'])('rejects words below the threshold: %s', text => {
+it.each(['the sky', 'hey there', 'write a report', 'make a brief', 'something', 'tables', 'cables', 'bubbles', 'mumbles', 'nobles', 'marvelous', 'marbella', 'marks', 'maples'])('rejects near misses: %s', text => {
   expect(hasWakePhrase(text)).toBe(false);
 });
 
