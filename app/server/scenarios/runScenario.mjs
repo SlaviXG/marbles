@@ -36,7 +36,7 @@ export function fakeScenarioSpawn(scenario, mode) {
     queueMicrotask(async () => {
       try {
         const partial = mode==='best-of-n' && (scenario.id==='split-info-roster' || ['doc-diff','data-report','email-triage'].includes(scenario.id));
-        await writeCannedOutput(mode==='swarm' ? path.join(options.cwd,'shared') : options.cwd, scenario, partial);
+        await writeCannedOutput(path.join(options.cwd,'shared'), scenario, partial);
         child.stdout.emit('data',`Completed ${scenario.id}`); child.emit('close',0);
       } catch (error) { child.stderr.emit('data',String(error)); child.emit('close',1); }
     });
@@ -62,7 +62,7 @@ export async function runScenarios({ selected = scenarios.map(s=>s.id), agents =
         progress('running');
         // SwarmService owns the agent budget; the rest of the mode budget is for evaluation and persistence.
         const service=serviceFactory({root:path.join(runRoot,mode),agentDetector:async()=>active,spawnProcess:dryRun?fakeScenarioSpawn(scenario,mode):undefined,timeoutMs:Math.floor(timeoutMs*2/3),
-          evaluator:async ({soloDir,swarmDir})=>{ const result=await scenario.check(soloDir??path.join(swarmDir,'shared')); return {...result,contributions:{},lesson:'',rationale:'Deterministic scenario rubric'}; }});
+          evaluator:async ({soloDir,swarmDir})=>{ const result=await scenario.check(path.join(soloDir??swarmDir,'shared')); return {...result,contributions:{},lesson:'',rationale:'Deterministic scenario rubric'}; }});
         const start=Date.now();
         let swarm, completed = false, error;
         try {

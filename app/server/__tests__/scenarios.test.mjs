@@ -1,4 +1,5 @@
 import { describe,it,expect,vi } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import { scenarios, scenarioById, writeCannedOutput } from '../scenarios/scenari
 import { routeTask } from '../scenarios/router.mjs';
 import { runScenarios, waitFor } from '../scenarios/runScenario.mjs';
 import { createApp } from '../transport/createApp.mjs';
+import { SwarmService } from '../swarm/SwarmService.mjs';
 
 async function temporary(fn) { const dir=await mkdtemp(path.join(os.tmpdir(),'marbles-scenario-')); try { return await fn(dir); } finally { await rm(dir,{recursive:true,force:true}); } }
 const route=(app,method,url)=>app._router.stack.find(layer=>layer.route?.path===url&&layer.route.methods[method]).route.stack[0].handle;
@@ -73,7 +75,27 @@ describe('office scenarios',()=>{
   }));
   it('all eight known good outputs pass and empty outputs fail',async()=>temporary(async dir=>{
     expect(scenarios).toHaveLength(8);
-    for(const scenario of scenarios){const good=path.join(dir,scenario.id,'good'),bad=path.join(dir,scenario.id,'bad'); await mkdir(bad,{recursive:true}); await writeCannedOutput(good,scenario); expect((await scenario.check(good)).score,scenario.id).toBe(1); expect((await scenario.check(bad)).score,scenario.id).toBeLessThan(1);}
+    for(const scenario of scenarios){const good=path.join(dir,scenario.id,'good'),bad=path.join(dir,scenario.id,'bad'); await mkdir(bad,{recursive:true}); await writeCannedOutput(good,scenario); const goodResult=await scenario.check(good), badResult=await scenario.check(bad); expect(goodResult.score,scenario.id).toBe(1); expect(badResult.score,scenario.id).toBe(0); expect(goodResult.checks.every(c=>c.detail)).toBe(true); expect(badResult.checks[0].detail).toBe(`missing ${scenario.expectedOutputs[0]}`);}
+  }));
+  it.each([true,false])('scores a solo agent writing shared/summary.md (write: %s)',async write=>temporary(async dir=>{
+    const services=[];
+    const spawnProcess=(_command,_args,options)=>{
+      const child=new EventEmitter(); child.stdout=new EventEmitter(); child.stderr=new EventEmitter(); child.kill=()=>child.emit('close',1);
+      queueMicrotask(async()=>{
+        try {
+          if(write && options.cwd.includes(`${path.sep}solo${path.sep}`)) await writeCannedOutput(path.join(options.cwd,'shared'),scenarioById('meeting-summary'));
+          child.emit('close',0);
+        } catch(error) { child.stderr.emit('data',String(error)); child.emit('close',1); }
+      });
+      return child;
+    };
+    const result=await runScenarios({selected:['meeting-summary'],agents:['codex'],root:path.join(dir,'workspace'),resultsDir:path.join(dir,'results'),
+      detector:async()=>[{id:'codex',kind:'cli',path:'codex',available:true}],serviceFactory:options=>{const service=new SwarmService({...options,spawnProcess}); services.push(service); return service;}});
+    const solo=result.rows.find(row=>row.mode==='best-of-n');
+    expect(solo.status).toBe('completed'); expect(solo.success).toBe(write?1:0);
+    expect(solo.checks.every(c=>c.detail)).toBe(true);
+    if(write) expect(services[0].snapshot()[0].artifacts.map(a=>a.path)).toEqual([expect.stringMatching(/solo\/codex\/shared\/summary\.md$/)]);
+    else expect(solo.checks[0].detail).toBe('missing shared/summary.md');
   }));
   it('routes focused summaries solo and split inputs or broad logs swarm with reasons',async()=>{
     const summary=await routeTask({goal:'Summarize this meeting.'}); expect(summary.mode).toBe('solo'); expect(summary.reason).toMatch(/focused/i);
@@ -146,7 +168,10 @@ describe('office scenarios',()=>{
     const swarmId=(await readdir(path.join(root,'swarm','swarms')))[0]; const soloId=(await readdir(path.join(root,'best-of-n','swarms')))[0];
     expect(await readFile(path.join(root,'swarm','swarms',swarmId,'private','codex','input','private_0.txt'),'utf8')).toContain('Ada');
     expect(await readFile(path.join(root,'swarm','swarms',swarmId,'private','claude','input','private_1.txt'),'utf8')).toContain('Cara');
+    expect(await readdir(path.join(root,'swarm','swarms',swarmId,'shared'))).toEqual(['roster.csv']);
     expect(await readdir(path.join(root,'best-of-n','swarms',soloId,'solo','codex','input'))).toEqual(['private_0.txt']);
     expect(await readdir(path.join(root,'best-of-n','swarms',soloId,'solo','claude','input'))).toEqual(['private_1.txt']);
+    expect(await readdir(path.join(root,'best-of-n','swarms',soloId,'solo','codex','shared'))).toEqual(['roster.csv']);
+    expect(await readdir(path.join(root,'best-of-n','swarms',soloId,'solo','claude','shared'))).toEqual(['roster.csv']);
   }));
 });

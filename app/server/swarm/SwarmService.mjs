@@ -16,7 +16,7 @@ async function filesIn(dir) {
   try { return (await scanArtifacts(dir, dir)).filter(file => !file.path.startsWith('eval/')); } catch { return []; }
 }
 export async function heuristicEvaluator({ swarmDir, soloDir, blackboard = [] }) {
-  const dir = soloDir ?? path.join(swarmDir, 'shared');
+  const dir = path.join(soloDir ?? swarmDir, 'shared');
   const files = await filesIn(dir);
   let hasFiles = false;
   for (const file of files) { try { if ((await fs.stat(path.join(dir, file.path))).size > 0) { hasFiles = true; break; } } catch {} }
@@ -98,20 +98,20 @@ export class SwarmService {
       await Promise.all(Array.from({ length: Math.min(swarm.concurrency, swarm.agents.length) }, async () => {
         while (next < swarm.agents.length && swarm.status !== 'cancelled' && !swarm.timedOut) {
           const id = swarm.agents[next++];
-          const soloDir = path.join(dir, 'solo', id); await fs.mkdir(soloDir, { recursive: true });
+          const soloDir = path.join(dir, 'solo', id), sharedDir = path.join(soloDir, 'shared'); await fs.mkdir(sharedDir, { recursive: true });
           await writeFixtures(soloDir, swarm.fixtures);
           await writeFixtures(soloDir, swarm.privateFixtures[swarm.agents.indexOf(id)] ?? []);
-          await this.run(swarm, detected.find(a => a.id === id), `${swarm.goal}\nRead input/ and write the requested deliverable in this directory.`, soloDir, 1);
-          const files = await filesIn(soloDir);
+          await this.run(swarm, detected.find(a => a.id === id), `${swarm.goal}\nRead input/ and write the requested deliverable in shared/.`, soloDir, 1);
+          const files = await filesIn(sharedDir);
           const evaluation = await this.evaluate({ goal: swarm.goal, swarmDir: dir, soloDir, blackboard: [], files, participantIds: [id] }, detected, dir);
-          results.push({ agentId: id, evaluation, soloDir, files });
+          results.push({ agentId: id, evaluation, soloDir, sharedDir, files });
         }
       }));
       if (swarm.status === 'cancelled') return;
       if (!results.length) { swarm.status = 'failed'; return; }
       swarm.status = 'evaluating';
       const best = results.sort((a, b) => b.evaluation.score - a.evaluation.score)[0];
-      swarm.winnerId = best.agentId; swarm.artifacts = await scanArtifacts(best.soloDir, path.dirname(path.dirname(dir)));
+      swarm.winnerId = best.agentId; swarm.artifacts = await scanArtifacts(best.sharedDir, path.dirname(path.dirname(dir)));
       await this.finish(swarm, best.evaluation);
       return;
     }
@@ -161,7 +161,7 @@ export class SwarmService {
     const agent = detected.find(a => a.id === 'codex' && !taskCapability(a)) ?? detected.find(a => !taskCapability(a));
     if (!agent) return heuristicEvaluator(context);
     const evalDir = path.join(dir, 'eval'); await fs.mkdir(evalDir, { recursive: true });
-    const prompt = `Evaluate the completed team goal. Inspect deliverables at ${context.soloDir ?? path.join(dir, 'shared')} and the blackboard excerpt below. Write ONLY a JSON file at ${path.join(evalDir, 'evaluation.json')} with keys score (0..1), contributions (object of participant ID to share, keyed only by these participant IDs: ${JSON.stringify(context.participantIds)}), lesson (short string), rationale (string). Goal: ${context.goal}\nFiles: ${JSON.stringify(context.files).slice(0, 6000)}\nBlackboard: ${JSON.stringify(context.blackboard).slice(-8000)}`;
+    const prompt = `Evaluate the completed team goal. Inspect deliverables at ${path.join(context.soloDir ?? dir, 'shared')} and the blackboard excerpt below. Write ONLY a JSON file at ${path.join(evalDir, 'evaluation.json')} with keys score (0..1), contributions (object of participant ID to share, keyed only by these participant IDs: ${JSON.stringify(context.participantIds)}), lesson (short string), rationale (string). Goal: ${context.goal}\nFiles: ${JSON.stringify(context.files).slice(0, 6000)}\nBlackboard: ${JSON.stringify(context.blackboard).slice(-8000)}`;
     let child; const children = this.children.get(path.basename(dir));
     try {
       const launch = launcher(agent, prompt, evalDir);
