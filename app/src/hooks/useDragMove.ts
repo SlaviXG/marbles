@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
-import { clickSlop, usePointerStore } from '../input';
+import { clickSlop, steady, usePointerStore } from '../input';
 
 // Pick a window up by its title bar and put it somewhere else. Works for the
 // mouse and for a pinch-and-move, because the camera cursor's synthetic pointer
@@ -35,13 +35,14 @@ export function useDragMove<T extends HTMLElement, H extends HTMLElement>(
       if (event.isTrusted && usePointerStore.getState().mode === 'hand' && usePointerStore.getState().status === 'tracking') return;
       const dx = event.clientX - start.x, dy = event.clientY - start.y;
       if (!moved && Math.hypot(dx, dy) < clickSlop(5)) return;
-      if (!moved) { moved = true; element.classList.add('window-dragging'); }
+      // The cursor must track the hand exactly while it carries something.
+      if (!moved) { moved = true; element.classList.add('window-dragging'); steady.drag(true); }
       const x = Math.max(KEEP - home.left - home.width, Math.min(innerWidth - KEEP - home.left, origin.x + dx));
       const y = Math.max(-home.top, Math.min(innerHeight - KEEP - home.top, origin.y + dy));
       offset.current = { x, y };
       element.style.translate = `${x}px ${y}px`;
     };
-    const up = () => { if (!active) return; active = false; element.classList.remove('window-dragging'); };
+    const up = () => { if (!active) return; active = false; element.classList.remove('window-dragging'); if (moved) steady.drag(false); };
     grip.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -50,6 +51,7 @@ export function useDragMove<T extends HTMLElement, H extends HTMLElement>(
       grip.removeEventListener('pointerdown', down);
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
       element.classList.remove('window-dragging');
+      if (active && moved) steady.drag(false);
     };
   }, [target, handle, resetKey]);
   return offset;

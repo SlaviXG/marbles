@@ -10,7 +10,7 @@ const bridge = fileURLToPath(new URL('./bridge.py', import.meta.url));
 const protocol = 'marbles-hermes-v1';
 const configError = message => Object.assign(new Error(message), { code: 'COORDINATOR_CONFIG' });
 
-export async function runHermes(payload, onTool, { apiKey = process.env.ANTHROPIC_API_KEY, spawnProcess = spawn, runtimeRoot = root, timeoutMs = 50_000 } = {}) {
+export async function runHermes(payload, onTool, { apiKey = process.env.ANTHROPIC_API_KEY, spawnProcess = spawn, runtimeRoot = root, timeoutMs = 70_000 } = {}) {
   if (!apiKey) throw configError('Add ANTHROPIC_API_KEY to the repo-root .env and restart the app server.');
   const python = path.join(runtimeRoot, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   try { await access(python); }

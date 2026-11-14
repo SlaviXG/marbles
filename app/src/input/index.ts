@@ -15,3 +15,19 @@ export const usePointerStore = Object.assign(
     useSyncExternalStore(pointerStore.subscribe, () => selector(pointerStore.getState())),
   { getState: pointerStore.getState },
 );
+
+// Reading surfaces ask for a steadier cursor (a wider deadzone against tremor).
+// A drag wants the opposite: the window must follow the hand exactly. Holds are
+// counted so overlapping surfaces compose, and a drag suspends them all.
+import { cameraPointer as camera } from "../../lib/hand-pointer/src";
+let steadyHolds = 0;
+let dragging = false;
+const applySteady = () => camera.setStabilize(steadyHolds > 0 && !dragging);
+export const steady = {
+  hold(): () => void {
+    steadyHolds++; applySteady();
+    let released = false;
+    return () => { if (released) return; released = true; steadyHolds--; applySteady(); };
+  },
+  drag(on: boolean) { dragging = on; applySteady(); },
+};

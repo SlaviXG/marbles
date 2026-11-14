@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DUCKED_VOLUME, isDucked, onDucking } from "../../voice/ducking";
 
 // A YouTube player that is operable BY THE VIRTUAL (camera) CURSOR as well as the
 // real one. The hard constraint: the virtual cursor works by dispatching
@@ -25,6 +26,8 @@ interface YTPlayer {
   getCurrentTime(): number;
   getDuration(): number;
   getPlayerState(): number;
+  getVolume(): number;
+  setVolume(volume: number): void;
   destroy(): void;
 }
 interface YTNamespace {
@@ -149,6 +152,22 @@ export default function YouTubePlayer({ id, autoplay = false }: { id: string; au
       pollRef.current = null;
     };
   }, [playing, duration]);
+
+  // Step back while Marbles is listening or speaking, then come back up.
+  useEffect(() => {
+    let before: number | null = null;
+    const apply = (ducked: boolean) => {
+      const player = playerRef.current;
+      if (!player?.setVolume) return;
+      try {
+        if (ducked && before === null) { before = player.getVolume(); player.setVolume(Math.min(before, DUCKED_VOLUME)); }
+        else if (!ducked && before !== null) { player.setVolume(before); before = null; }
+      } catch { /* the player is not ready yet */ }
+    };
+    if (playing && isDucked()) apply(true);
+    const stop = onDucking(apply);
+    return () => { stop(); apply(false); };
+  }, [playing]);
 
   // Tear the player down on unmount (closing the view) so playback stops.
   useEffect(() => {

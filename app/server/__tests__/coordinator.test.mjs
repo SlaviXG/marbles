@@ -18,7 +18,8 @@ it('hands reasoning and the tool loop to Hermes, then acknowledges a validated a
   expect(prompt).toContain('Make a demo plan'); expect(prompt).toContain('Five-minute demo');
   expect(metadata).toMatchObject({ source: 'voice', title: 'Write demo.md', routing: { reason: expect.stringContaining('Hermes plan') } });
   expect(runner.mock.calls[0][0].tools.map(tool => tool.name)).toContain('inspect_agent');
-  expect(runner.mock.calls[0][0].model).toBe('claude-sonnet-5-5');
+  expect(runner.mock.calls[0][0].model).toBe('claude-opus-5-5');
+  expect(runner.mock.calls[0][0].effort).toBe('medium');
   expect(result.reply.split(' ').length).toBeLessThanOrEqual(25);
 });
 it('lets Hermes inspect context and answer without starting a worker', async () => {

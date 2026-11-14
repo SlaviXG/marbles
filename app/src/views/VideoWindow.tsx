@@ -20,7 +20,7 @@ export default function VideoWindow() {
   }, [video]);
   if (!video) return null;
   const { closeVideo, resizeVideo } = useDisplay.getState();
-  return <section className={`video-window${large ? ' large' : ''}`} ref={frame} role="region" aria-label={`Video: ${video.title || video.query}`}>
+  return <section className={`video-window${large ? ' large' : ''}`} ref={frame} data-closable="video" role="region" aria-label={`Video: ${video.title || video.query}`}>
     <header className="video-window-bar" ref={bar}>
       <span className="video-window-grip" aria-hidden="true"><i /><i /><i /></span>
       <p title={video.title}>{video.title || video.query}</p>

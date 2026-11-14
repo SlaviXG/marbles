@@ -11,7 +11,7 @@ import { pickPreview } from "./preview";
 import PreviewFrame from "./preview/PreviewFrame";
 import AssetPreview from "./preview/AssetPreview";
 import FileGlyph, { fileExtension, fileTitle } from "./FileGlyph";
-import { cameraPointer, registerActionHandler, PRIORITY } from "../input";
+import { registerActionHandler, PRIORITY, steady } from "../input";
 import { useDragScroll } from "../hooks/useDragScroll";
 import { useDragMove } from "../hooks/useDragMove";
 
@@ -130,8 +130,8 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
   // still against hand tremor so reading is not disturbed (it otherwise slides
   // because inference slows under the open view's GPU/main-thread load).
   useEffect(() => {
-    cameraPointer.setStabilize(open);
-    return () => cameraPointer.setStabilize(false);
+    if (!open) return;
+    return steady.hold();
   }, [open]);
 
   // While a note is open it is the surface in front, so it claims both zoom and
@@ -224,6 +224,7 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
       {/* Keep details stable while the user rests or moves their hand away. */}
       <div
         className="immersive-frame"
+        data-closable="selection"
         ref={frameRef}
         role="region"
         aria-label="Selected item details"

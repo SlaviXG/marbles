@@ -23,7 +23,10 @@ describe("voice audio", () => {
   });
   it("bounds continuous speech and flushes the final unfinished turn", () => {
     const turns = new AudioTurns();
+    // A second of talking: words with the brief near-silences every voice has.
+    // (Sound with no gaps at all is treated as background, see audio.ts.)
     const speech = new Float32Array(SAMPLE_RATE).fill(0.1);
+    speech.fill(0.001, 12_000, 12_720);
     turns.push(new Float32Array(SAMPLE_RATE));
     for (let i = 0; i < 14; i++) expect(turns.push(speech).commit).toBe(false);
     expect(turns.push(speech).commit).toBe(true);

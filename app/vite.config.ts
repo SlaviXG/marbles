@@ -1,8 +1,9 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import express from 'express';
 import { fileURLToPath } from 'node:url';
-import { speechHandler } from './server/transport/speech.mjs';
+import { speechHandler, ttsInfo } from './server/transport/speech.mjs';
+import { loadEnv } from './server/env.mjs';
 
 // The client talks to the watcher/SSE backend through this proxy, so the
 // browser only ever sees same-origin /api requests.
@@ -13,14 +14,12 @@ export default defineConfig(({ mode }) => ({
       // Keep speech available during development without restarting the task
       // runner. This code and the key stay in Vite's Node process. The regular
       // backend exposes the same handler for production / non-Vite clients.
-      const root = fileURLToPath(new URL('..', import.meta.url));
-      const env = loadEnv(mode, root, '');
-      const apiKey = process.env.OPENAI_API_KEY || env.OPENAI_API_KEY;
-      const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_KEY;
-      const voiceId = process.env.ELEVENLABS_VOICE_ID || env.ELEVENLABS_VOICE_ID;
-      const modelId = process.env.ELEVENLABS_MODEL_ID || env.ELEVENLABS_MODEL_ID;
+      // Keys are read per request from the same env files the backend uses.
+      const files = loadEnv();
+      console.log(`[marbles] env: ${files.length ? files.join(', ') : 'no .env found (copy .env.example to .env in the repo root)'}`);
+      console.log(`[marbles] spoken replies: ${ttsInfo().provider}`);
       const app = express();
-      app.post('/', express.json({ limit: '8kb' }), speechHandler({ apiKey, elevenLabsApiKey, voiceId, modelId }));
+      app.post('/', express.json({ limit: '8kb' }), speechHandler());
       server.middlewares.use('/api/voice/speech', app);
     },
   }],

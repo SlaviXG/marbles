@@ -1,4 +1,5 @@
-export type VoiceRequest = { transcript: string; requestId: string; conversationId?: string; selectedId?: string | null };
+export type VoiceRequest = { transcript: string; requestId: string; conversationId?: string; selectedId?: string | null;
+  /** Said while the previous request was still being handled, oldest first. */ earlier?: string[] };
 export type VoicePlan = { plan: string[]; assumptions: string[] };
 export type VoiceMessage = {
   id: string; role: 'user' | 'assistant'; text: string; label?: string;

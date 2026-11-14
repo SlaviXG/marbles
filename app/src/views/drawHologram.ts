@@ -77,43 +77,6 @@ export function drawHolographicSpace(ctx: CanvasRenderingContext2D, motion: Spac
   ctx.restore();
 }
 
-/** A line of light from the centre to a teammate; pulses run outward while it works. */
-export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; scale: number; working: boolean; reduced: boolean; alpha: number; burst?: number }) {
-  const length = Math.hypot(x, y);
-  if (length < r * 2 + 50) return;
-  const ux = x / length, uy = y / length;
-  const from = 46, to = length - r * 1.45;
-  ctx.save(); ctx.globalAlpha *= motion.alpha;
-  const line = ctx.createLinearGradient(ux * from, uy * from, ux * to, uy * to);
-  line.addColorStop(0, 'oklch(80% .1 212 / 0)'); line.addColorStop(.5, `oklch(80% .1 212 / ${motion.working ? .45 : .2})`); line.addColorStop(1, `oklch(84% .1 212 / ${motion.working ? .6 : .32})`);
-  ctx.strokeStyle = line; ctx.lineWidth = Math.max(.4, .8 / motion.scale);
-  ctx.beginPath(); ctx.moveTo(ux * from, uy * from); ctx.lineTo(ux * to, uy * to); ctx.stroke();
-  const burst = motion.burst ?? 99;
-  if (!motion.reduced && burst >= 0 && burst < .9) {
-    const p = 1 - Math.pow(1 - burst / .9, 2);
-    const d = from + (to - from) * p;
-    const tail = Math.max(from, d - 70);
-    const streak = ctx.createLinearGradient(ux * tail, uy * tail, ux * d, uy * d);
-    streak.addColorStop(0, 'oklch(92% .09 205 / 0)'); streak.addColorStop(1, 'oklch(98% .04 205 / 1)');
-    ctx.strokeStyle = streak; ctx.lineWidth = Math.max(1.4, 2.6 / motion.scale); ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(ux * tail, uy * tail); ctx.lineTo(ux * d, uy * d); ctx.stroke();
-    ctx.fillStyle = 'oklch(88% .13 205 / .35)'; ctx.beginPath(); ctx.arc(ux * d, uy * d, 9, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ux * d, uy * d, 2.6, 0, TAU); ctx.fill();
-  }
-  if (motion.working && !motion.reduced) {
-    for (let i = 0; i < 3; i++) {
-      const p = (motion.time * .55 + i / 3) % 1;
-      const d = from + (to - from) * p;
-      const fade = Math.sin(p * Math.PI);
-      ctx.fillStyle = `oklch(95% .06 205 / ${fade})`;
-      ctx.beginPath(); ctx.arc(ux * d, uy * d, 1.7, 0, TAU); ctx.fill();
-      ctx.fillStyle = `oklch(85% .12 210 / ${fade * .25})`;
-      ctx.beginPath(); ctx.arc(ux * d, uy * d, 5, 0, TAU); ctx.fill();
-    }
-  }
-  ctx.restore();
-}
-
 /** Work waiting for a free agent: small sheets stacked at the centre, with a count. */
 export function drawQueue(ctx: CanvasRenderingContext2D, count: number, motion: { time: number; scale: number; reduced: boolean }) {
   const shown = Math.min(count, 4), w = 15, h = 19, gap = 5;

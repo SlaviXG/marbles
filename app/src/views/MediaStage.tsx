@@ -3,7 +3,7 @@ import { useDisplay, type Display, type Video } from '../state/display';
 
 type Stage = Exclude<Display, Video>;
 import { useVault } from '../state/store';
-import { cameraPointer, registerActionHandler, PRIORITY } from '../input';
+import { steady, registerActionHandler, PRIORITY } from '../input';
 import { useDragScroll } from '../hooks/useDragScroll';
 import { useDragMove } from '../hooks/useDragMove';
 
@@ -40,7 +40,7 @@ export default function MediaStage() {
   useEffect(() => { if (selectedId) useDisplay.getState().close(); }, [selectedId]);
   useEffect(() => {
     if (!display) return;
-    cameraPointer.setStabilize(true);
+    const release = steady.hold();
     title.current?.focus({ preventScroll: true });
     const key = (event: KeyboardEvent) => {
       const view = useDisplay.getState();
@@ -55,7 +55,7 @@ export default function MediaStage() {
       body.current.scrollTop -= action.dy;
       return true;
     }, PRIORITY.overlay);
-    return () => { cameraPointer.setStabilize(false); window.removeEventListener('keydown', key); unregister(); };
+    return () => { release(); window.removeEventListener('keydown', key); unregister(); };
   }, [display]);
   useEffect(() => { if (body.current) body.current.scrollTop = 0; }, [display, index]);
 
@@ -64,7 +64,7 @@ export default function MediaStage() {
   const shown = display.kind === 'images' && index != null ? display.images[index] : null;
   const settled = status === 'done';
   return <div className={`media-stage ${display.kind}${shown ? ' focused' : ''}`}>
-    <section className="presentation-screen media-screen" ref={screen} role="dialog" aria-label={`${label(display)}: ${heading(display)}`}>
+    <section className="presentation-screen media-screen" ref={screen} data-closable="media" role="dialog" aria-label={`${label(display)}: ${heading(display)}`}>
       <header className="presentation-header window-grip" ref={bar}>
         <Glyph kind={display.kind} />
         <div className="presentation-title">

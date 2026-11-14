@@ -3,7 +3,7 @@ import { artifactSelection, presentationLayout, PRESENTATION_ENTER_MS, PRESENTAT
 import { usePresentation, presentationAnchor, agentScreenPoint } from '../state/presentation';
 import { useAgents } from '../state/agents';
 import { useVault } from '../state/store';
-import { cameraPointer, registerActionHandler, PRIORITY } from '../input';
+import { steady, registerActionHandler, PRIORITY } from '../input';
 import { useDragScroll } from '../hooks/useDragScroll';
 import { useDragMove } from '../hooks/useDragMove';
 import { SpringValue } from '../motion/SpringValue';
@@ -94,8 +94,7 @@ export default function PresentationStage() {
   }, [active?.key, index]);
   useEffect(() => {
     if (!active) return;
-    cameraPointer.setStabilize(true);
-    return () => cameraPointer.setStabilize(false);
+    return steady.hold();
   }, [!!active]);
   useEffect(() => {
     if (!active || phase === 'returning') return;
@@ -179,7 +178,7 @@ export default function PresentationStage() {
       <path ref={tether} />
       <circle ref={emitter} r="4" />
     </svg>
-    <section className="presentation-screen" ref={frame} role="region" aria-label={`${sender} presenting ${artifact.name}`} aria-hidden={returning}
+    <section className="presentation-screen" ref={frame} data-closable="selection" role="region" aria-label={`${sender} presenting ${artifact.name}`} aria-hidden={returning}
       style={{ left: layout.panel.left, top: layout.panel.top, width: layout.panel.width, height: layout.panel.height }}>
       <header className="presentation-header window-grip" ref={bar}>
         <FileGlyph name={artifact.name} size={38} />
