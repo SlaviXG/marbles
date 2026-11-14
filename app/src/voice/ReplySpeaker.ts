@@ -1,10 +1,15 @@
+import { wakeMatch } from './wakePhrase';
+
 export function spokenText(text: string): string {
-  const plain = text.replace(/```[\s\S]*?```/g, ' Code is in the message. ')
+  let plain = text.replace(/```[\s\S]*?```/g, ' Code is in the message. ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, 'link in the message')
     .replace(/[*_`#]/g, '').replace(/\bhey[\s,.!?:;-]+marbles\b/gi, 'the wake phrase')
     .replace(/\s+/g, ' ').trim();
+  // Never speak even a fuzzy wake candidate back into the detector.
+  let wake;
+  while ((wake = wakeMatch(plain))) plain = `${plain.slice(0, wake.start)}the wake phrase${plain.slice(wake.end)}`;
   if (plain.length <= 700) return plain;
   const end = plain.slice(0, 620).lastIndexOf('. ');
   return `${plain.slice(0, end > 250 ? end + 1 : 620)} Details are in the message.`;
