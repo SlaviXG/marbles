@@ -141,6 +141,15 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
       res.sendFile(file);
     } catch { res.status(400).json({ error: "Invalid artifact path" }); }
   });
+  // A path-based reader keeps generated HTML, styles and images in the same
+  // preview. Resolve every request through the existing workspace boundary.
+  app.get('/api/artifacts/view/*', async (req, res) => {
+    try {
+      const file = await resolveArtifact(taskService.root, req.params[0]);
+      res.set('Content-Security-Policy', "script-src 'none'; object-src 'none'; frame-ancestors 'self'");
+      res.sendFile(file);
+    } catch { res.status(400).json({ error: 'Invalid artifact path' }); }
+  });
   app.post("/api/artifacts/open", async (req, res) => {
     try {
       const file = await resolveArtifact(taskService.root, req.body?.path);

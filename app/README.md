@@ -1,7 +1,9 @@
 # Marbles
 
-Live visualization of the Obsidian vault. Edit a note in Obsidian, the UI
-updates automatically.
+Marbles is a voice-directed holographic canvas for local coding agents. Hermes
+plans and routes requests; Codex, Claude Code, and Cursor carry out work solo or
+as a team. ElevenLabs speaks replies when configured, with OpenAI as fallback.
+The server can also watch an Obsidian vault for coordinator context.
 
 ## How it works
 
@@ -36,10 +38,11 @@ To use a different knowledge base (Notion, SQLite, an API), implement
 
 ## Client
 
-Vite + React. `useVaultStream` feeds SSE into a Zustand store. A force-directed
-graph (notes -> sections -> URLs, plus `[[wikilinks]]`) with manual hit-testing.
-Click a node to open a detail panel; click the background to close. `detail.ts`
-resolves a node id to renderable detail via a small resolver chain.
+Vite + React. `useVaultStream` feeds vault SSE into a Zustand store, while agent,
+task, and swarm polling supplies the visible canvas. The graph also supports
+notes, sections, URLs, and `[[wikilinks]]` when vault nodes are enabled. Point
+and pinch (or click) a core, task, file, or team node to open its details. Use
+**Close details**, Escape, or a short press on empty canvas to dismiss.
 
 ## Run
 
@@ -57,23 +60,51 @@ Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 ## Voice tasks
 
 Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
-`.env`, then restart `npm run dev`. Use Node.js 20+ and open
-`http://localhost:5173` in a browser with AudioWorklet support. The app requests
-microphone permission and loads a local wake model automatically. Say **Marbles**, then describe your task. The marble returns to wake mode after a task
-is assigned or 20 seconds without speech. Use **Turn mic off** to stop; click the
-marble to enable it again. Browsers that require an initial audio gesture show
-**Enable microphone** once before hands-free listening can begin.
+`.env`, then restart `npm run dev`. Use Node.js 22.13+ and open
+`http://localhost:5173` in a browser with AudioWorklet support. The single canvas
+shows holographic agent cores with readable names, availability and the latest
+task state. There are no navigation tabs or typed task composer.
+Green task nodes link to their assigned agent; blue file objects show results.
+Solo and swarm route badges appear on routed task and team nodes, with the
+router's reason in their detail surface. Team nodes link to participating agents
+and recent blackboard posts. Agent details show unavailable CLI reasons and an
+expandable recent log.
 
-The marble floats and glows with microphone energy. Live speech and replies
-appear as a conversation at the bottom left, with at most three recent bubbles.
-Finished messages fade after 20 seconds; hovering or focusing the conversation
-pauses expiry. Live transcription and pending handoffs stay visible. Completion
-messages include the agent reply and a link to full task details.
+The single canvas is a restrained holographic space: dark blue surfaces, cyan
+agent cores, a quiet projection plane and readable labels. Agent motion follows
+real task state: breathing halos while waiting, rotating segmented rings while
+working, a short completion pulse and checkmark when finished, and amber warning
+glyphs after failure. Reduced motion keeps static glyphs. Positions stay fixed
+for hand targeting, and hidden pages stop requesting animation repaints.
 
-The graph reserves green nodes for key deliverables: Markdown, text documents,
-Word/PDF files, spreadsheets, slides, and images. Up to 18 recent files connect
-directly to their producing agents. Task history and other files stay accessible
-from the agent/task panels; dependency and build directories are omitted.
+Touch the **glowing orb** to enable voice and hand control. The browser requests
+microphone and camera access, and the local wake model loads. Say **Marbles**,
+then describe your task. Voice returns to wake mode after assignment or 20
+seconds without speech. Touch the orb again to pause both microphone and camera.
+There are no navigation tabs, typed composer or persistent button bars.
+Mouse and keyboard remain available as accessibility fallbacks.
+
+A gesture recognition widget stays visible on the canvas. It shows camera
+status before activation, live hand outlines after tracking starts, and feedback
+for pointing, pinching, two-hand zoom and mouse takeover. Camera errors are
+visible here. The orb remains the single start/pause control for voice and hands.
+
+Live speech and replies appear at the bottom left, with at most three recent
+bubbles. They stay until newer messages replace them, rather than fading while
+someone is reading. Completion messages include the agent reply and a link to
+full task details. Agent/task details stay open when the pointer moves away;
+technical activity and diagnostics are expandable.
+
+Completed deliverables appear beside their producing agent as holographic
+file objects. Documents, spreadsheets, slides and images have distinct glyphs;
+multiple files form one stack. Point and pinch a stack to browse its files, then
+select a file to preview it inside the canvas. PDFs render as scrollable pages; images, audio and video use embedded viewers. HTML uses a sandboxed in-place view with relative styles/images. CSV/TSV and XLSX display readable tables, DOCX/ODT display document text, and PPTX/ODP display slide content. Office content previews do not reproduce every native layout or chart. Binary files receive an in-place byte preview rather than opening an external tab.
+Dependency/build output stays out of the canvas. Office previews cap tables at 2,000 rows and bound archive expansion; PDFs render pages as they approach the viewport.
+
+After waking Marbles, **show me report.pdf** opens a matching known filename
+locally, and **close the preview** returns to the canvas. These viewing commands
+never launch another agent. Duplicate filenames require selecting the intended
+file; unknown targets follow the existing task interpretation path.
 
 Standby wake recognition uses quantized `Xenova/whisper-tiny.en` in a browser
 worker via Transformers.js (Apache-2.0 model). A setup script installs the pinned
@@ -124,10 +155,10 @@ fails before audio starts, the server automatically uses OpenAI
 The **OpenAI fallback voice** picker selects the voice used only when OpenAI
 handles a spoken reply; it does not change the ElevenLabs voice. The default
 OpenAI voice is Marin. `GET /api/voice/tts-info` reports the configured provider,
-ElevenLabs voice ID, and model without returning API keys. The voice dock shows
-the configured speech provider.
-**AI voice on/muted** toggles automatic playback;
-**Stop reply** interrupts it; **Read aloud** replays a message. Text stays visible
+ElevenLabs voice ID, and model without returning API keys. A small voice-dock label
+shows the configured provider. **Voice settings** contains reply muting, the OpenAI
+fallback voice picker, and **Stop reply** while speech is playing. The wake word
+also interrupts playback; **Read aloud** replays a message. Text stays visible
 if audio fails or the browser blocks playback. Code blocks and URLs are simplified
 for speech and long replies are shortened. Up to three replies queue, with three
 clips cached in memory. The voice is AI-generated. Text-to-speech incurs usage
@@ -229,6 +260,20 @@ and [Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-
 
 Richer parsing (remark AST, frontmatter), search/focus, graph layout polish.
 
+## Floating result presentations
+
+When a live task or swarm completes, its lead agent moves beside a floating
+screen and presents the generated files in place. If files are discovered after
+the completion status, the presentation waits for them. Old completed history
+does not replay on page load.
+
+Use the screen’s arrows or voice to open another known file. Close with the
+corner control, Escape, or **Marbles, close it**. The screen folds back toward
+the agent before the agent glides to its home slot. Files remain on the canvas
+and can be reopened. Simultaneous completions queue and never replace an active
+presentation or an unrelated detail surface being read. Gesture pan and zoom
+apply to the open reader; motion preferences disable animated transitions.
+
 ## Scenarios
 
 The office scenario harness compares independent solo attempts with a shared
@@ -254,7 +299,7 @@ returns the cheap solo or swarm decision; `POST /api/tasks/auto` applies it.
 
 ## Swarm mode
 
-Use **Start swarm** in the canvas or ask by voice for agents to work together. A
+Ask by voice for agents to work together, for example: “Marbles, work as a team to prepare this report.” A
 swarm runs 1–4 supported CLI agents in one workspace under
 `MARBLES_WORKSPACE_DIR/swarms/<id>/`. They receive the same prompt, coordinate
 through a server merged blackboard, and place joint deliverables in `shared/`.
