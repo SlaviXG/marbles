@@ -25,6 +25,10 @@ export interface PointerParams {
   // The only press gesture: drag, scroll, click, and (with both hands) zoom.
   pinchOn: number;
   pinchOff: number;
+  // Only use a hand held up with its palm facing the camera; one seen from the
+  // back, turned sideways, not upright or tipped toward the lens is ignored
+  // (see palm.ts). Turn off to accept a hand in any orientation.
+  requirePalm: boolean;
 }
 
 // Defaults seeded from the desk-distance prototype (CPU, ~83ms infer, ~11px
@@ -44,6 +48,7 @@ export const DEFAULT_PARAMS: PointerParams = {
   // stops a pinch flickering at the threshold; do not close it further.
   pinchOn: 0.04,
   pinchOff: 0.07,
+  requirePalm: true,
 };
 
 const KEY = "marbles.pointer.params";

@@ -42,6 +42,21 @@ export {
 export { VirtualPointer } from "./virtualPointer";
 
 export {
+  handPose,
+  poseUsable,
+  palmFacing,
+  fingersUp,
+  palmLength,
+  PALM_ON,
+  PALM_OFF,
+  UP_ON,
+  UP_OFF,
+  LEN_ON,
+  LEN_OFF,
+  type HandPose,
+} from "./palm";
+
+export {
   dispatchAction,
   registerActionHandler,
   PRIORITY,

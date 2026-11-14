@@ -2,6 +2,9 @@ import { useEffect, useRef } from "react";
 import { subscribeFrame } from "../motion/ticker";
 import {
   handDebug,
+  LEN_OFF,
+  PALM_OFF,
+  UP_OFF,
   loadParams,
   subscribeParams,
   usePointerStore,
@@ -82,8 +85,18 @@ export default function HandDebug() {
         const px = (i: number) => (1 - pts[i * 2]) * W;
         const py = (i: number) => pts[i * 2 + 1] * H;
 
-        const accent = h.primary ? "rgba(45, 212, 191, 1)" : "rgba(140, 160, 210, 0.75)";
-        ctx.strokeStyle = h.primary ? "rgba(45, 212, 191, 0.75)" : "rgba(140, 160, 210, 0.45)";
+        // A hand that failed the palm gate (seen from the back) is drawn dim
+        // red: tracked, but not used as input.
+        const accent = !h.active
+          ? "rgba(248, 113, 113, 0.75)"
+          : h.primary
+            ? "rgba(45, 212, 191, 1)"
+            : "rgba(140, 160, 210, 0.75)";
+        ctx.strokeStyle = !h.active
+          ? "rgba(248, 113, 113, 0.45)"
+          : h.primary
+            ? "rgba(45, 212, 191, 0.75)"
+            : "rgba(140, 160, 210, 0.45)";
         ctx.lineWidth = h.primary ? 1.5 : 1;
         ctx.beginPath();
         for (const [a, b] of BONES) {
@@ -139,6 +152,22 @@ export default function HandDebug() {
         const busier = art > handDebug.articulation[h.hand === "L" ? "R" : "L"];
         ctx.fillStyle = busier ? "rgba(210, 169, 63, 1)" : "rgba(139, 148, 158, 0.7)";
         ctx.fillText(`art ${art.toFixed(1)}`, 74, row);
+        ctx.fillStyle = h.active ? "rgba(45, 212, 191, 1)" : "rgba(248, 113, 113, 1)";
+        ctx.fillText(h.active ? "used" : "ignored", 124, row);
+
+        // Pose gate, on its own row: palm facing, fingers up, palm length (see
+        // palm.ts). A value below its OFF threshold is what is keeping the
+        // hand out, and shows red.
+        const poseRow = H - 6 - readouts * 11;
+        readouts++;
+        const ok = "rgba(139, 148, 158, 0.9)";
+        const bad = "rgba(248, 113, 113, 1)";
+        ctx.fillStyle = h.pose.palm > PALM_OFF ? ok : bad;
+        ctx.fillText(`palm ${h.pose.palm.toFixed(2)}`, 22, poseRow);
+        ctx.fillStyle = h.pose.up > UP_OFF ? ok : bad;
+        ctx.fillText(`up ${h.pose.up.toFixed(2)}`, 78, poseRow);
+        ctx.fillStyle = h.pose.len > LEN_OFF ? ok : bad;
+        ctx.fillText(`len ${h.pose.len.toFixed(2)}`, 124, poseRow);
       }
 
       if (handDebug.hands.length === 0) {
