@@ -37,7 +37,7 @@ npm run client     # UI only, http://localhost:5173
 
 - **Graph:** click a node to open its detail panel, click another node to switch, click the background to close. `[TEST] Beta` and `[TEST] Delta` share a URL node, which should list both.
 - **Your own notes:** click **open folder** (bottom right, above the hand button) and pick any folder of `.md` files. Edit a file and the graph updates within a couple of seconds.
-- **Hand cursor:** click the hand button (bottom right) and allow the camera. Point with your index finger, pinch to click, pinch and move to drag, pinch with both hands to zoom or pan. **R/L** picks the primary hand; the skeleton button shows tracked landmarks. Moving the mouse takes the cursor back.
+- **Hand cursor:** click the hand button (bottom right) and allow the camera. Point with your index finger, pinch to click, pinch and move to drag, pinch with both hands to zoom or pan. **R/L** picks the primary hand; the skeleton button shows tracked landmarks. Moving the mouse takes the cursor back. A hand only counts while it is held up with the palm toward the camera; an ignored hand is drawn red in the skeleton view. How to tune this is in [`app/lib/hand-pointer/README.md`](app/lib/hand-pointer/README.md#which-hands-count).
 - **Hand library alone:** `cd app/lib/hand-pointer && npm install && npm run demo`.
 - **Unit tests:** `npm test` (and `npm run typecheck`) in `app/`.
 

@@ -101,9 +101,9 @@ export function handPose(pts: number[], hand: "L" | "R", aspect = 1): HandPose {
 //
 // Palm: a hand turned sideways is rejected along with one seen from the back.
 // Near edge-on the fingers overlap in the image and the landmarks are
-// unreliable. The score falls roughly with the cosine of how far the hand has
-// turned, so with a flat palm at about 0.6, 0.4 is about 55 degrees away from
-// facing the camera and 0.3 about 65.
+// unreliable. The score falls as the hand turns: with a flat palm at about 0.6,
+// 0.4 is about 55 degrees away from facing the camera and 0.3 about 65 (the
+// conversion is in the README, under "Estimating the thresholds").
 export const PALM_ON = 0.4;
 export const PALM_OFF = 0.3;
 // Upright: fingers within 60 degrees of straight up to start, 70 to stop. A
