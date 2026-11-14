@@ -63,7 +63,7 @@ marble once to enable the microphone, stay quiet briefly for calibration, then
 describe a task. Click it again or use **Turn mic off** to stop.
 
 The marble floats and glows with microphone energy. Live speech and replies
-appear as a conversation on the right, with at most three recent bubbles.
+appear as a conversation at the bottom left, with at most three recent bubbles.
 Finished messages fade after 20 seconds; hovering or focusing the conversation
 pauses expiry. Live transcription and pending handoffs stay visible. Completion
 messages include the agent reply and a link to full task details.
