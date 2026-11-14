@@ -15,6 +15,7 @@ import GestureWidget from "./views/GestureWidget";
 import MediaStage from "./views/MediaStage";
 import GestureDismiss from "./views/GestureDismiss";
 import { attentionTracker } from "./attention/AttentionTracker";
+import { disableTabCapture, enableTabCapture } from "./state/screen";
 import VideoWindow from "./views/VideoWindow";
 import { useDisplay } from "./state/display";
 import { REDUCED_MOTION, useHud } from "./state/hud";
@@ -68,7 +69,7 @@ export default function App() {
       <span className={`canvas-connection${connected ? ' connected' : ''}`} role="status"><span aria-hidden="true" />{connected ? 'Online' : 'Reconnecting'}<Clock /></span>
     </header>
     {!count && !booting && <p className="canvas-empty">Looking for Codex, Claude Code or Cursor on this computer.</p>}
-    <VoicePanel onActivate={() => { void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); }} />
+    <VoicePanel onActivate={() => { void enableTabCapture(); void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); disableTabCapture(); }} />
     <DetailPanel disabled={presenting} />
     <PresentationStage />
     <MediaStage />

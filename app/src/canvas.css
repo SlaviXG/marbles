@@ -366,6 +366,7 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 .canvas-app .video-window-bar button { flex: none; display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 50%; transition: color .2s, background .2s; }
 .canvas-app .video-window-bar button:hover { color: var(--bright); background: oklch(60% .1 212 / .2); }
 .video-window-bar button span { font-size: 1.4rem; font-weight: 300; line-height: 1; }
+.canvas-app .video-window-note { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; margin: 0; padding: 20px; max-width: none; text-align: center; color: var(--text); font-size: .875rem; line-height: 1.5; background: oklch(12% .03 242 / .92); }
 .video-window .preview-frame { margin: 0; border-radius: 0 0 2px 2px; animation: none; }
 @media (max-width: 600px) { .video-window { left: 20px; bottom: 210px; width: calc(100vw - 40px); } }
 

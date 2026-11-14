@@ -64,8 +64,10 @@ export class DisplayTools {
     if (name === 'open_item') return this.open(input);
     if (name === 'show_images') return { kind: 'images', query: String(input.query ?? '').trim(), images: await this.images(input.query) };
     if (name === 'play_video') {
-      const [video] = await this.videos(input.query);
-      return { kind: 'video', query: String(input.query ?? '').trim(), ...video };
+      // Whether a video may be embedded is only known for certain when a player
+      // tries it, so the app is given the runners-up to fall through to.
+      const [video, ...others] = await this.videos(input.query);
+      return { kind: 'video', query: String(input.query ?? '').trim(), ...video, alternates: others.slice(0, 5) };
     }
     if (name === 'draft_email') {
       if (typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 200) throw new Error('Give the email a subject.');

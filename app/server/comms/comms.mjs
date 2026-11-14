@@ -72,3 +72,32 @@ export function placeCall({ number } = {}, { open = (target) => execFile('open',
   open(link);
   return { started: true };
 }
+
+// ---- Sending through an agent's own Gmail connector ----
+// Hermes only drafts. Once the user confirms, a worker agent (Claude or Codex)
+// sends the message with the Gmail connector signed in to that agent, so mail
+// goes out from the user's real account with no keys held by Marbles.
+export const GMAIL_TOOLS = ['mcp__claude_ai_Gmail'];
+export function emailTaskPrompt({ to, subject, body }) {
+  return [
+    'Send one email for the user with your Gmail connector (your Gmail tools). The user has already read and approved it.',
+    'Send it exactly as written: do not change, shorten, translate or add to the recipient, subject or body. Send it once.',
+    '', `To: ${to}`, `Subject: ${subject}`, 'Body (between the markers, markers not included):', '<<<BODY', body, 'BODY>>>', '',
+    'If you have no Gmail tool, or it is not signed in, or sending fails: do NOT use any other way to send (no scripts, no mail apps, no web forms, no drafts left behind). Stop.',
+    'Finish with exactly one final line and nothing after it:',
+    'EMAIL_SENT  (only if Gmail confirmed the message was sent)',
+    'NO_GMAIL: <short reason>  (if you have no usable Gmail tool)',
+    'EMAIL_FAILED: <short reason>  (if Gmail refused or errored)',
+  ].join('\n');
+}
+/** What happened to an email task, read from the agent's own last word. */
+export function emailOutcome(task) {
+  if (!task) return { status: 'failed', reason: 'The email task was not found.' };
+  if (['queued', 'running', 'cancelling'].includes(task.status)) return { status: 'sending', agentId: task.agentId };
+  const lines = String(task.stdout ?? '').trim().split(/\r?\n/).reverse();
+  const verdict = lines.find(line => /\b(EMAIL_SENT|NO_GMAIL|EMAIL_FAILED)\b/.test(line)) ?? '';
+  const reason = verdict.replace(/^.*?(?:NO_GMAIL|EMAIL_FAILED):?\s*/, '').replace(/[*_`]/g, '').trim().slice(0, 200);
+  if (task.status === 'completed' && /\bEMAIL_SENT\b/.test(verdict) && !/NO_GMAIL|EMAIL_FAILED/.test(verdict)) return { status: 'sent', agentId: task.agentId };
+  if (/NO_GMAIL/.test(verdict)) return { status: 'unavailable', agentId: task.agentId, reason: reason || 'No Gmail connector is signed in for this agent.' };
+  return { status: 'failed', agentId: task.agentId, reason: reason || (task.status === 'cancelled' ? 'Cancelled.' : 'The agent did not confirm that the email was sent.') };
+}

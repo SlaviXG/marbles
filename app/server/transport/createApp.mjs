@@ -8,7 +8,9 @@ import { VoiceCommands } from "../agents/voiceCommands.mjs";
 import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
 import { searchImages, searchYouTube } from "../media/webMedia.mjs";
-import { sendEmail, placeCall } from "../comms/comms.mjs";
+import { sendEmail, placeCall, isEmail, emailTaskPrompt, emailOutcome, GMAIL_TOOLS } from "../comms/comms.mjs";
+import { liveEnv } from "../env.mjs";
+import { Screen } from "../agents/screen.mjs";
 import { speechHandler, ttsInfo } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
 import { randomUUID } from 'node:crypto';
@@ -18,7 +20,7 @@ import { scenarios, scenarioById } from '../scenarios/scenarios.mjs';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall } } = {}) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall }, screen = new Screen() } = {}) {
   taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
   swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
   taskService.externalBusy = id => swarmService.isBusy(id);
@@ -29,7 +31,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     const latest = [task && { at: task.createdAt, stdout: task.stdout }, runs[0] && { at: runs[0].startedAt, stdout: runs[0].stdout }].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     return agentLog(id, undefined, latest?.stdout);
   };
-  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, screen, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
     const notes = service.snapshot().notes ?? [];
     const note = notes.find(note => note.id === selectedId);
     const task = selectedId?.startsWith('task:') ? taskService.snapshot().find(task => task.id === selectedId.slice(5)) : null;
@@ -54,6 +56,13 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   const app = express();
   const scenarioRuns = new Map();
   const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
+  // The newest screenshot of the interface, for look_at_screen. Registered before
+  // the small default body limit; kept in memory, never written to disk.
+  app.post('/api/screen', express.json({ limit: '2mb' }), (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Screenshots require a local app origin.' });
+    try { res.json(screen.remember(req.body?.image)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
   app.use(express.json({ limit: "32kb" }));
   app.post('/api/voice/speech', speechHandler());
   app.get('/api/voice/tts-info', (_req, res) => res.json(ttsInfo()));
@@ -137,9 +146,20 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   });
   app.post('/api/comms/email', async (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Email requires a local app origin.' });
-    try { res.json(await comms.sendEmail(req.body)); }
-    catch (error) { res.status(400).json({ error: error.message }); }
+    try {
+      const { to, subject, body, via } = req.body ?? {};
+      // Default: a worker agent sends it with its own Gmail connector. Mail.app
+      // is the explicit fallback (the card offers it when no connector exists).
+      if (via === 'mail' || liveEnv('MARBLES_EMAIL_VIA') === 'mail') return res.json(await comms.sendEmail({ to, subject, body }));
+      if (!isEmail(to) || typeof subject !== 'string' || !subject.trim() || subject.length > 200 || typeof body !== 'string' || !body.trim() || body.length > 8000) throw new Error('A valid address, subject and message are required.');
+      const agents = agentRegistry.snapshot().filter(agent => agent.available !== false && !taskCapability(agent));
+      const preferred = agents.find(agent => agent.id === 'claude') ?? agents.find(agent => agent.id === 'codex');
+      const task = await taskService.startOrQueue(emailTaskPrompt({ to: to.trim(), subject: subject.trim(), body }),
+        { source: 'email', title: `Send email to ${to.trim()}`, allowTools: GMAIL_TOOLS }, preferred?.id ?? 'auto');
+      res.status(202).json({ sent: false, taskId: task.id, agentId: task.agentId });
+    } catch (error) { res.status(error.code === 'NO_AGENTS' ? 503 : 400).json({ error: error.message }); }
   });
+  app.get('/api/comms/email/:id', (req, res) => res.json(emailOutcome(taskService.snapshot().find(task => task.id === req.params.id && task.source === 'email'))));
   app.post('/api/comms/call', (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Calls require a local app origin.' });
     try { res.json(comms.placeCall(req.body)); }

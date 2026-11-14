@@ -1,6 +1,7 @@
 import { taskCapability } from './taskService.mjs';
 import { CoordinatorTools, INSPECTION_TOOLS } from './CoordinatorTools.mjs';
 import { DisplayTools, DISPLAY_TOOL_NAMES } from './DisplayTools.mjs';
+import { Screen } from './screen.mjs';
 import { redactSecrets } from './logs.mjs';
 import { routeTask } from '../scenarios/router.mjs';
 import { runHermes } from '../hermes/HermesRunner.mjs';
@@ -16,10 +17,11 @@ export const coordinatorEffort = () => ['low', 'medium', 'high'].includes(liveEn
 // The host supplies app context and executes validated tools. Upstream Hermes
 // AIAgent, in the Python process, owns every model call and the agent loop.
 export class HermesCoordinator {
-  constructor({ taskService, swarmService, contextProvider = () => ({}), noteProvider, readAgentLog, apiKey, model, runner = runHermes, display } = {}) {
+  constructor({ taskService, swarmService, contextProvider = () => ({}), noteProvider, readAgentLog, apiKey, model, runner = runHermes, display, screen } = {}) {
     Object.assign(this, { taskService, swarmService, contextProvider, apiKey, model, runner });
     this.inspection = new CoordinatorTools({ taskService, swarmService, noteProvider, readAgentLog });
     this.display = display ?? new DisplayTools({ taskService, swarmService, noteProvider });
+    this.screen = screen ?? new Screen();
   }
   async context(selectedId) {
     const agents = await this.taskService.agentDetector();
@@ -31,7 +33,7 @@ export class HermesCoordinator {
       ...await this.contextProvider(selectedId),
     };
   }
-  async run({ transcript, history = [], selectedId, readOnly = false, statusContext, earlier = [], memory = '' } = {}) {
+  async run({ transcript, history = [], selectedId, readOnly = false, statusContext, earlier = [], memory = '', screen } = {}) {
     let context = await this.context(selectedId);
     const tools = readOnly ? COORDINATOR_TOOLS.filter(tool => !['delegate_work', 'delegate_many', 'cancel_work'].includes(tool.name)) : COORDINATOR_TOOLS;
     const observations = [];
@@ -59,6 +61,7 @@ export class HermesCoordinator {
     };
     const execute = async (name, input) => {
       if (!tools.some(tool => tool.name === name)) throw new Error('Unsupported coordinator tool.');
+      if (name === 'look_at_screen') return { result: redactSecrets(JSON.stringify(await this.screen.look(input?.question, screen))) };
       if (name === 'inspect_context') { context = await this.context(selectedId); return { result: redactSecrets(JSON.stringify(context)) }; }
       if (name === 'respond') {
         if (!['reply', 'clarify', 'ignore'].includes(input?.decision) || typeof input.reply !== 'string' || input.reply.length > 240 || (input.decision !== 'ignore' && !input.reply.trim())) throw new Error('Invalid coordinator reply.');
@@ -107,7 +110,7 @@ export class HermesCoordinator {
     try {
       result = await this.runner({ model: this.model ?? coordinatorModel(), system: COORDINATOR_SYSTEM,
         query: redactSecrets(JSON.stringify({ request: transcript,
-          ...(earlier.length ? { earlierRequests: earlier } : {}), ...(memory ? { memory } : {}), context, statusContext,
+          ...(earlier.length ? { earlierRequests: earlier } : {}), ...(memory ? { memory } : {}), context: screen ? { ...context, screen } : context, statusContext,
           ...(readOnly ? { instruction: 'Status/log question: inspect and answer only. Do not start or cancel work.' } : {}) })),
         history: history.map(item => ({ ...item, content: redactSecrets(item.content) })), tools, maxTokens: 6000, effort: coordinatorEffort() }, onTool, { apiKey: this.apiKey ?? liveEnv('ANTHROPIC_API_KEY') });
     } catch (error) {

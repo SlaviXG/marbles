@@ -6,11 +6,13 @@ import path from 'node:path';
 
 export const workspaceRoot = () => path.resolve(process.env.MARBLES_WORKSPACE_DIR || path.join(os.homedir(), 'marbles-workspace'));
 export const taskCapability = (agent) => agent.available === false ? agent.reason || 'Agent unavailable' : agent.kind !== 'cli' ? agent.id === 'cursor' ? 'Cursor CLI not installed. Install with: curl https://cursor.com/install -fsS | bash, then run `cursor-agent login`.' : 'Desktop app has no non-interactive CLI' : !['codex', 'claude', 'cursor'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : null;
-export function launcher(agent, prompt, dir) {
+export function launcher(agent, prompt, dir, { allowTools = [] } = {}) {
   if (taskCapability(agent)) throw new Error(taskCapability(agent));
   if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
   if (agent.id === 'cursor') return { command: agent.path, args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
-  return { command: agent.path, args: ['-p', prompt, '--permission-mode', 'acceptEdits'], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  // A task may be allowed specific connector tools (for example Gmail) that a
+  // headless run would otherwise refuse to call.
+  return { command: agent.path, args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...(allowTools.length ? ['--allowedTools', ...allowTools] : [])], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
 }
 const tail = (s, chunk) => (s + chunk).slice(-12000);
 const fileType = (name) => {
@@ -104,7 +106,8 @@ export class TaskService {
     if (this.pending.length >= 20) throw Object.assign(new Error('The queue is full. Wait for some work to finish.'), { code: 'AGENT_BUSY' });
     const now = new Date().toISOString();
     const task = { id: randomUUID(), agentId: wanted === 'auto' ? '' : wanted, prompt: prompt.trim(), status: 'queued', createdAt: now, updatedAt: now, stdout: '', stderr: '', artifacts: [],
-      source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
+      source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing,
+      ...(metadata.allowTools ? { allowTools: metadata.allowTools } : {}) };
     this.tasks.push(task);
     this.pending.push({ task, agentId: wanted });
     this.watchQueue();
@@ -161,7 +164,8 @@ export class TaskService {
       // A queued record keeps its identity (and its place on the canvas) when it starts.
       if (queued) { const now = new Date().toISOString(); Object.assign(queued, { agentId, status: 'running', updatedAt: now, startedAt: now }); }
       else this.tasks.push(task);
-      const launch = launcher(agent, task.prompt, dir);
+      if (metadata.allowTools) task.allowTools = metadata.allowTools;
+      const launch = launcher(agent, task.prompt, dir, { allowTools: task.allowTools });
       let child;
       try { child = this.spawnProcess(launch.command, launch.args, launch.options); }
       catch (e) { task.status = 'failed'; task.stderr = String(e.message).slice(0, 1000); return task; }

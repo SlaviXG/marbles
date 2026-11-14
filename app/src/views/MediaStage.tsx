@@ -28,6 +28,7 @@ export default function MediaStage() {
   const index = useDisplay(s => s.index);
   const status = useDisplay(s => s.status);
   const note = useDisplay(s => s.note);
+  const mailFallback = useDisplay(s => s.mailFallback);
   const selectedId = useVault(s => s.selectedId);
   const body = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
@@ -102,7 +103,8 @@ export default function MediaStage() {
         {!shown && <>
           <p className={`media-status ${status}`} role="status">{note || (display.kind === 'email' ? 'Say “send it”, or pinch Send' : 'Say “call”, or pinch Call')}</p>
           {!settled && <button className="holo-chip" onClick={close}>{display.kind === 'email' ? 'Discard' : 'Cancel'}</button>}
-          {!settled && <button className="holo-chip on" disabled={status === 'working'} onClick={() => void confirm()}>{display.kind === 'email' ? 'Send' : 'Call'}</button>}
+          {mailFallback && <button className="holo-chip" onClick={() => void confirm('mail')}>Send with Mail</button>}
+          {!settled && <button className="holo-chip on" disabled={status === 'working'} onClick={() => void confirm()}>{display.kind === 'email' ? (status === 'failed' ? 'Try again' : 'Send') : 'Call'}</button>}
           {settled && <button className="holo-chip on" onClick={close}>Done</button>}
         </>}
       </footer>}

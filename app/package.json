@@ -21,6 +21,7 @@
     "scenarios": "node scripts/run-scenarios.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@huggingface/transformers": "^3.8.1",
     "@mediapipe/tasks-vision": "^0.10.14",
     "chokidar": "^3.6.0",

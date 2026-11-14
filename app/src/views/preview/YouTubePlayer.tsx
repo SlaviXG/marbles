@@ -39,6 +39,7 @@ interface YTNamespace {
       events?: {
         onReady?: (e: { target: YTPlayer }) => void;
         onStateChange?: (e: { data: number }) => void;
+        onError?: (e: { data: number }) => void;
       };
     },
   ) => YTPlayer;
@@ -76,7 +77,10 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export default function YouTubePlayer({ id, autoplay = false }: { id: string; autoplay?: boolean }) {
+export default function YouTubePlayer({ id, autoplay = false, onError, onPlaying }: { id: string; autoplay?: boolean;
+  /** YouTube refused to play it here (101 / 150: embedding disabled; 100: gone; 153: configuration). */ onError?: (code: number) => void; onPlaying?: () => void }) {
+  const report = useRef({ onError, onPlaying });
+  report.current = { onError, onPlaying };
   // Deferred: the iframe/player only mounts once the poster is clicked.
   const [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -106,11 +110,18 @@ export default function YouTubePlayer({ id, autoplay = false }: { id: string; au
     startedRef.current = true;
     setLoaded(true);
     setControls(true);
-    loadYouTubeApi().then((YT) => {
+    loadYouTubeApi().then(async (YT) => {
+      // The mount point is rendered by the state change above. When the API is
+      // already loaded this runs before React has drawn it, so wait for it
+      // (briefly) instead of giving up with no player.
+      for (let tries = 0; !hostRef.current && tries < 30 && startedRef.current; tries++) await new Promise((resolve) => requestAnimationFrame(resolve));
       const host = hostRef.current;
-      if (!host) return;
+      if (!host || !startedRef.current) return;
       const inner = document.createElement("div");
       host.appendChild(inner);
+      // One report per player: YouTube can signal the same refusal more than once.
+      let refused = false;
+      const refuse = (code: number) => { if (!refused) { refused = true; report.current.onError?.(code); } };
       playerRef.current = new YT.Player(inner, {
         videoId: id,
         playerVars: {
@@ -120,13 +131,18 @@ export default function YouTubePlayer({ id, autoplay = false }: { id: string; au
           rel: 0,
           playsinline: 1,
           enablejsapi: 1,
+          origin: location.origin, // YouTube refuses some embeds that do not say who is embedding
         },
         events: {
           onReady: (e) => {
+            // Some refusals arrive only as "not playable" on the video's own data.
+            if ((e.target as { getVideoData?: () => { isPlayable?: boolean } }).getVideoData?.()?.isPlayable === false) refuse(150);
             setDuration(e.target.getDuration());
           },
+          onError: (e) => refuse(e.data),
           onStateChange: (e) => {
             setPlaying(e.data === YT.PlayerState.PLAYING);
+            if (e.data === YT.PlayerState.PLAYING) report.current.onPlaying?.();
             if (playerRef.current) setDuration(playerRef.current.getDuration() || 0);
           },
         },
@@ -179,6 +195,10 @@ export default function YouTubePlayer({ id, autoplay = false }: { id: string; au
         /* already gone */
       }
       playerRef.current = null;
+      // Allow a fresh start if this same component is mounted again (React's
+      // development double-mount would otherwise leave it with no player).
+      startedRef.current = false;
+      hostRef.current?.replaceChildren();
     };
   }, []);
 

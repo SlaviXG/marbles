@@ -10,6 +10,7 @@ import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
 import { mediaCommand } from '../voice/mediaCommand';
 import { setDucked } from '../voice/ducking';
+import { describeScreen, shareScreen } from '../state/screen';
 import { useAttention } from '../attention/AttentionTracker';
 import { useDisplay, type Display } from '../state/display';
 import { usePresentation } from '../state/presentation';
@@ -152,6 +153,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           const text = transcriptText(draft.current);
           if (text) message({ id: draftId.current, role: 'user', text });
           message({ id: 'microphone-error', role: 'assistant', text: detail ?? 'Microphone error.' });
+          useDisplay.getState().report(`Voice stopped: ${detail ?? 'microphone error'}`);
         }
       },
       transcript: (event) => {
@@ -207,9 +209,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       const reply = replyFirst;
       reply('Planning…', { pending: true });
       try {
+        // Marbles knows what is on screen: a short description goes with the
+        // request, and a picture is left with the local server in case it must look.
+        await shareScreen();
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request), signal: AbortSignal.timeout(150_000),
+          body: JSON.stringify({ ...request, screen: describeScreen() }), signal: AbortSignal.timeout(150_000),
         });
         const first = await response.json();
         if (!response.ok) throw new Error(first.error || 'Could not delegate the task.');
@@ -246,6 +251,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       } catch (error) {
         if (!mounted.current) return;
         reply(error instanceof Error ? error.message : 'Could not delegate the task.', { retry: request });
+        useDisplay.getState().report(`A request failed: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     })();
   }

@@ -19,13 +19,14 @@ const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,100}$/.t
 
 // The harness owns bounded conversation memory and idempotent request receipts.
 export class VoiceCommands {
-  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog }) }) {
+  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, screen, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog, screen }) }) {
     Object.assign(this, { taskService, swarmService, coordinator, agentRegistry, readLog, summarizeStatus: summarize });
     this.requests = new Map(); this.conversations = new Map(); this.summaries = new Map(); this.inflight = 0;
   }
-  dispatch({ transcript, requestId, conversationId = 'default-chat', selectedId, earlier = [] } = {}) {
+  dispatch({ transcript, requestId, conversationId = 'default-chat', selectedId, earlier = [], screen } = {}) {
     if (typeof transcript !== 'string' || !transcript.trim() || transcript.length > 6000 || !validId(requestId) || !validId(conversationId) ||
         (selectedId != null && (typeof selectedId !== 'string' || selectedId.length > 1000)) ||
+        (screen != null && (typeof screen !== 'object' || JSON.stringify(screen).length > 4000)) ||
         !Array.isArray(earlier) || earlier.length > 6 || earlier.some(item => typeof item !== 'string' || !item.trim() || item.length > 3000)) {
       throw new Error('Supply a transcript under 6,000 characters and valid request/conversation IDs.');
     }
@@ -57,7 +58,7 @@ export class VoiceCommands {
       const result = readOnly && this.summarizeStatus
         ? { state: classified.intent, reply: conciseReply(await this.summarizeStatus(context, { question: transcript })) }
         : await this.coordinator.run({ transcript: transcript.trim(), history: conversation.history, selectedId, readOnly, statusContext: context,
-          earlier: earlier.map(item => item.trim()), memory: conversation.memory });
+          earlier: earlier.map(item => item.trim()), memory: conversation.memory, screen });
       if (readOnly) {
         if (result.state === 'reply') result.state = classified.intent;
         result.context = { agents: context.agents, tasks: context.tasks, swarms: context.swarms };
@@ -74,7 +75,7 @@ export class VoiceCommands {
       // earlier ones have not been acted on yet. Give them their own turn now.
       if (earlier.length && !readOnly && !['assigned', 'swarm'].includes(result.state)) {
         try {
-          const followUp = await this.coordinator.run({ transcript: earlier.map(item => item.trim()).join('\n'), history: conversation.history.slice(-HISTORY_TURNS), selectedId, memory: conversation.memory,
+          const followUp = await this.coordinator.run({ transcript: earlier.map(item => item.trim()).join('\n'), history: conversation.history.slice(-HISTORY_TURNS), selectedId, memory: conversation.memory, screen,
             statusContext: { note: 'These were said before the request you just handled and are still waiting. Handle each one now; do not repeat what you already did.' } });
           if (followUp.state !== 'ignore') { result.followUp = followUp; record('(continuing with what I asked earlier)', followUp); }
         } catch { /* The newest request is settled; an earlier one failing must not undo it. */ }

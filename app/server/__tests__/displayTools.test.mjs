@@ -188,3 +188,58 @@ it('puts the newest request first, still handles what was said earlier, and reme
   expect(run.mock.calls.at(-1)[0].memory).toBeDefined();
   expect(() => commands.dispatch({ transcript: 'x', earlier: ['a', 'b', 'c', 'd', 'e', 'f', 'g'], requestId: 'request-0099', conversationId: 'conversation-1' })).toThrow();
 });
+
+// ---- seeing the screen, embeddable video fallbacks, email through an agent ----
+import { Screen } from '../agents/screen.mjs';
+import { emailOutcome, emailTaskPrompt } from '../comms/comms.mjs';
+import { launcher } from '../agents/taskService.mjs';
+
+it('reads a screenshot with a small model only when asked, and returns words, not pixels', async () => {
+  const create = vi.fn(async () => ({ stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'A video window says it cannot be played here.' }] }));
+  const screen = new Screen({ client: { messages: { create } } });
+  expect(await screen.look('What is on screen?', {})).toMatchObject({ seen: false });
+  expect(create).not.toHaveBeenCalled();
+  expect(() => screen.remember('data:text/html;base64,AAAA')).toThrow();
+  screen.remember('data:image/jpeg;base64,AAAA');
+  const seen = await screen.look('Why is the video not playing?', { video: { problem: 'not embeddable' } });
+  expect(seen).toMatchObject({ seen: true, description: 'A video window says it cannot be played here.' });
+  const request = create.mock.calls[0][0];
+  expect(request.model).toBe('claude-haiku-5-5'); expect(request.output_config).toEqual({ effort: 'low' });
+  expect(request.messages[0].content[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAAA' } });
+  expect(request.messages[0].content[1].text).toContain('not embeddable');
+  await expect(screen.look('', {})).rejects.toThrow();
+});
+
+it('lets Hermes look at the screen without ending its turn', async () => {
+  const look = vi.fn(async () => ({ seen: true, description: 'An email draft is open.' }));
+  const runner = vi.fn(async (payload, call) => {
+    expect(JSON.parse(payload.query).context.screen).toEqual({ open: { kind: 'email draft' } });
+    const seen = await call('look_at_screen', { question: 'What is open?' });
+    expect(seen.terminal).toBeUndefined(); expect(seen.result).toContain('email draft');
+    await call('respond', { decision: 'reply', reply: 'You have an email draft open.' });
+    return { runtime: { runtime: 'Hermes' } };
+  });
+  const coordinator = new HermesCoordinator({ taskService, apiKey: 'k', runner, screen: { look } });
+  expect((await coordinator.run({ transcript: 'What am I looking at?', screen: { open: { kind: 'email draft' } } })).reply).toBe('You have an email draft open.');
+  expect(look).toHaveBeenCalledWith('What is open?', { open: { kind: 'email draft' } });
+});
+
+it('hands the player runners-up for a video that may refuse to embed', async () => {
+  const videos = async () => Array.from({ length: 8 }, (_, n) => ({ videoId: `video${n}`.padEnd(11, 'x'), title: `Video ${n}`, channel: 'C', duration: '1:00' }));
+  const shown = await tools({ videos }).call('play_video', { query: 'highlights', reply: 'Playing.' });
+  expect(shown.videoId).toBe('video0xxxxx'); expect(shown.alternates).toHaveLength(5); expect(shown.alternates[0].title).toBe('Video 1');
+});
+
+it('sends email through an agent’s Gmail connector and believes only its explicit verdict', () => {
+  const prompt = emailTaskPrompt({ to: 'sam@example.com', subject: 'Friday', body: 'See you at 3.' });
+  expect(prompt).toContain('To: sam@example.com'); expect(prompt).toContain('See you at 3.'); expect(prompt).toMatch(/do NOT use any other way/);
+  expect(emailOutcome({ status: 'running', agentId: 'claude' })).toEqual({ status: 'sending', agentId: 'claude' });
+  expect(emailOutcome({ status: 'completed', agentId: 'claude', stdout: 'Sent it.\nEMAIL_SENT' })).toEqual({ status: 'sent', agentId: 'claude' });
+  expect(emailOutcome({ status: 'completed', agentId: 'claude', stdout: 'I have no Gmail tools.\nNO_GMAIL: no Gmail connector in this session' })).toMatchObject({ status: 'unavailable', reason: 'no Gmail connector in this session' });
+  expect(emailOutcome({ status: 'completed', agentId: 'codex', stdout: 'Done, I think.' })).toMatchObject({ status: 'failed' });
+  expect(emailOutcome({ status: 'failed', agentId: 'codex', stdout: 'EMAIL_SENT' })).toMatchObject({ status: 'failed' });
+  expect(emailOutcome(undefined)).toMatchObject({ status: 'failed' });
+  const claude = launcher({ id: 'claude', kind: 'cli', command: 'claude', path: '/bin/claude', available: true }, 'x', '/tmp', { allowTools: ['mcp__claude_ai_Gmail'] });
+  expect(claude.args.slice(-2)).toEqual(['--allowedTools', 'mcp__claude_ai_Gmail']);
+  expect(launcher({ id: 'claude', kind: 'cli', command: 'claude', path: '/bin/claude', available: true }, 'x', '/tmp').args).not.toContain('--allowedTools');
+});
