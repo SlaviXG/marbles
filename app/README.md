@@ -107,13 +107,9 @@ and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
 is sent to OpenAI. Initial command audio is buffered and paced, with a bounded
 backlog and visible errors if the connection cannot keep up.
 
-Final replies are read with OpenAI `gpt-4o-mini-tts` through
-`POST /api/voice/speech`. Choose any of the 13 built-in voices in the **Voice**
-menu below the marble, then use **Preview** to hear a short sample (this enables
-AI voice replies). Coral is the default; your choice is saved in this browser.
-Changing voices stops the current reply and uses the new voice for future replies
-and **Read aloud**. The server validates voice names, and cached clips are kept
-separate by voice. See the [OpenAI voice options](https://developers.openai.com/api/docs/guides/text-to-speech#voice-options).
+Final replies are read with OpenAI `gpt-4o-mini-tts`, Marin voice, through
+`POST /api/voice/speech`. Marin is used for automatic replies and **Read aloud**;
+previously saved browser voice choices are ignored. There is no voice picker.
 **AI voice on/muted** toggles automatic playback;
 **Stop reply** interrupts it; **Read aloud** replays a message. Text stays visible
 if audio fails or the browser blocks playback. Code blocks and URLs are simplified

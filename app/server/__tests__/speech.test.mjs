@@ -23,7 +23,7 @@ describe('speech synthesis', () => {
     expect(res.data.toString()).toBe('audio');
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(fetchApi.mock.calls[0][1].headers.Authorization).toBe('Bearer test-key');
-    expect(JSON.parse(fetchApi.mock.calls[0][1].body)).toMatchObject({ model: 'gpt-4o-mini-tts', voice: 'coral', input: 'Done.', response_format: 'mp3' });
+    expect(JSON.parse(fetchApi.mock.calls[0][1].body)).toMatchObject({ model: 'gpt-4o-mini-tts', voice: 'marin', input: 'Done.', response_format: 'mp3' });
   });
   it.each(SPEECH_VOICES)('passes the selected %s voice upstream', async voice => {
     const fetchApi = vi.fn(async () => ({ ok: true, body: [Buffer.from('audio')] }));

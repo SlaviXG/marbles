@@ -68,9 +68,9 @@ it('switches voice immediately and keeps cached speech separate for each voice',
   speaker.enqueue('reply', 'Done');
   await vi.waitFor(() => expect(clips).toHaveLength(2));
   expect(fetchApi.mock.calls.map(call => JSON.parse((call as any)[1].body))).toEqual([
-    { text: 'Done', voice: 'coral' }, { text: 'Done', voice: 'cedar' },
+    { text: 'Done', voice: 'marin' }, { text: 'Done', voice: 'cedar' },
   ]);
-  speaker.setVoice('coral');
+  speaker.setVoice('marin');
   speaker.enqueue('replay', 'Done');
   await vi.waitFor(() => expect(clips).toHaveLength(3));
   expect(fetchApi).toHaveBeenCalledTimes(2);
@@ -83,7 +83,7 @@ it('ignores an old synthesis response after switching voices', async () => {
   fetchApi.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
   speaker.enqueue('reply', 'Done');
   const oldSignal = (fetchApi.mock.calls[0] as any)[1].signal;
-  speaker.setVoice('marin');
+  speaker.setVoice('cedar');
   expect(oldSignal.aborted).toBe(true);
   speaker.enqueue('reply', 'Done');
   await vi.waitFor(() => expect(clips).toHaveLength(1));
