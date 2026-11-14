@@ -1,11 +1,204 @@
 import express from "express";
+import { detectAgents } from "../agents/detectAgents.mjs";
+import { TaskService, resolveArtifact } from "../agents/taskService.mjs";
+import { agentLog } from "../agents/logs.mjs";
+import { AgentRegistry } from "../agents/AgentRegistry.mjs";
+import { spawn } from "node:child_process";
+import { VoiceCommands } from "../agents/voiceCommands.mjs";
+import { taskCapability } from "../agents/taskService.mjs";
+import { localVoiceOrigin } from "./voice.mjs";
+import { searchImages, searchYouTube } from "../media/webMedia.mjs";
+import { sendEmail, placeCall, isEmail, emailTaskPrompt, emailOutcome, GMAIL_TOOLS } from "../comms/comms.mjs";
+import { liveEnv } from "../env.mjs";
+import { Screen } from "../agents/screen.mjs";
+import { speechHandler, ttsInfo } from "./speech.mjs";
+import { SwarmService } from "../swarm/SwarmService.mjs";
+import { randomUUID } from 'node:crypto';
+import { routeTask } from '../scenarios/router.mjs';
+import { runScenarios } from '../scenarios/runScenario.mjs';
+import { scenarios, scenarioById } from '../scenarios/scenarios.mjs';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall }, screen = new Screen() } = {}) {
+  taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
+  swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
+  taskService.externalBusy = id => swarmService.isBusy(id);
+  const readLog = id => {
+    if (id !== 'cursor') return agentLog(id);
+    const task = taskService.snapshot().find(task => task.agentId === id);
+    const runs = swarmService.snapshot().flatMap(swarm => swarm.runs ?? []).filter(run => run.agentId === id).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    const latest = [task && { at: task.createdAt, stdout: task.stdout }, runs[0] && { at: runs[0].startedAt, stdout: runs[0].stdout }].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    return agentLog(id, undefined, latest?.stdout);
+  };
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, screen, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
+    const notes = service.snapshot().notes ?? [];
+    const note = notes.find(note => note.id === selectedId);
+    const task = selectedId?.startsWith('task:') ? taskService.snapshot().find(task => task.id === selectedId.slice(5)) : null;
+    const swarm = selectedId?.startsWith('swarm:') ? swarmService.get(selectedId.slice(6)) : null;
+    const agent = selectedId?.startsWith('agent:') ? agentRegistry.snapshot().find(agent => agent.id === selectedId.slice(6)) : null;
+    let artifact;
+    if (selectedId?.startsWith('artifact:')) {
+      try {
+        const relative = decodeURIComponent(selectedId.split(':').slice(2).join(':'));
+        const found = [...taskService.snapshot(), ...(swarmService.snapshot?.() ?? [])].flatMap(item => item.artifacts ?? []).find(item => item.path === relative);
+        if (found) artifact = { ...found, absolutePath: await resolveArtifact(taskService.root, found.path) };
+      } catch { /* An expired/missing selection is not a usable source. */ }
+    }
+    return {
+      notes: notes.slice(0, 12).map(note => ({ id: note.id, title: note.title, path: note.path })),
+      selected: note ? { title: note.title, path: note.path, excerpt: note.sections.map(section => section.content).join('\n').slice(0, 1500) }
+        : task ? { id: task.id, title: task.title, status: task.status, objective: task.intent?.objective, artifacts: task.artifacts.slice(0, 5) }
+        : swarm ? { id: swarm.id, kind: 'swarm', status: swarm.status, agents: swarm.agents, artifacts: swarm.artifacts.slice(0, 5) }
+        : agent ? { id: agent.id, kind: 'agent', status: taskService.isBusy(agent.id) ? 'busy' : 'idle' } : artifact ?? null,
+    };
+  } });
   const app = express();
+  const scenarioRuns = new Map();
+  const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
+  // The newest screenshot of the interface, for look_at_screen. Registered before
+  // the small default body limit; kept in memory, never written to disk.
+  app.post('/api/screen', express.json({ limit: '2mb' }), (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Screenshots require a local app origin.' });
+    try { res.json(screen.remember(req.body?.image)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.use(express.json({ limit: "32kb" }));
+  app.post('/api/voice/speech', speechHandler());
+  app.get('/api/voice/tts-info', (_req, res) => res.json(ttsInfo()));
 
   app.get("/api/vault", (_req, res) => res.json(service.snapshot()));
+  app.get("/api/agents", (_req, res) => res.json(agentRegistry.snapshot().map(publicAgent)));
+  app.get("/api/agents/stream", (req, res) => {
+    res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.flushHeaders();
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const unsubscribe = agentRegistry.onChange(({ type, agent, id }) => send(type, agent ? publicAgent(agent) : { id }));
+    send("snapshot", agentRegistry.snapshot().map(publicAgent));
+    req.on("close", unsubscribe);
+  });
+  app.get("/api/tasks", (_req, res) => res.json(taskService.snapshot()));
+  app.get('/api/swarm/tasks', (_req, res) => res.json(swarmService.snapshot()));
+  app.post('/api/route', async (req,res) => {
+    try { res.json(await routeTask({goal:req.body?.goal})); } catch(e) { res.status(400).json({error:e.message}); }
+  });
+  app.post('/api/tasks/auto', async (req,res) => {
+    try {
+      const routing=await routeTask({goal:req.body?.goal});
+      if (routing.mode==='solo') res.status(202).json({routing,task:await taskService.startIdle(req.body.goal,{routing})});
+      else res.status(202).json({routing,swarm:await swarmService.start({goal:req.body.goal,mode:'swarm',routing})});
+    } catch(e) { res.status(e.code==='AGENT_BUSY'?409:e.code==='NO_AGENTS'?503:400).json({error:e.message}); }
+  });
+  app.post('/api/scenarios/run', (req,res) => {
+    const {scenarios: ids,agents,dryRun}=req.body??{};
+    if (ids!==undefined && (!Array.isArray(ids)||!ids.length||ids.some(id=>!scenarioById(id)))) return res.status(400).json({error:'Unknown or empty scenario selection'});
+    if (typeof dryRun!=='boolean' && dryRun!==undefined) return res.status(400).json({error:'dryRun must be boolean'});
+    const id=randomUUID(), state={id,status:'running',completed:0,total:(ids?.length??scenarios.length)*2}; scenarioRuns.set(id,state);
+    void runScenarios({selected:ids,agents,dryRun:dryRun??false,root:taskService.root,onProgress:p=>Object.assign(state,p)}).then(result=>Object.assign(state,{status:'completed',completed:state.total,result})).catch(error=>Object.assign(state,{status:'failed',error:error.message}));
+    res.status(202).json({id});
+  });
+  app.get('/api/scenarios/runs/:id',(req,res)=>{ const run=scenarioRuns.get(req.params.id); if (!run) return res.status(404).json({error:'Run not found'}); res.json(run); });
+  app.post('/api/swarm/tasks', async (req, res) => {
+    try { const {goal,agents,mode,maxTurns,concurrency,size}=req.body??{}; res.status(202).json({ swarm: await swarmService.start({goal,agents,mode,maxTurns,concurrency,size}) }); }
+    catch (e) { res.status(e.code === 'AGENT_BUSY' ? 409 : e.code === 'NO_AGENTS' ? 503 : 400).json({ error: e.message }); }
+  });
+  app.get('/api/swarm/stats', (_req, res) => res.json(swarmService.statsSnapshot()));
+  app.get('/api/swarm/tasks/:id', async (req, res) => {
+    const swarm = swarmService.detail ? await swarmService.detail(req.params.id) : swarmService.get(req.params.id);
+    if (!swarm) return res.status(404).json({ error: 'Swarm not found' });
+    res.json(swarm);
+  });
+  app.post('/api/swarm/tasks/:id/cancel', (req, res) => {
+    const swarm = swarmService.cancel(req.params.id);
+    if (!swarm) return res.status(404).json({ error: 'Swarm not found' });
+    res.json({ swarm });
+  });
+  app.post("/api/voice/tasks", async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Voice commands require a local app origin.' });
+    try {
+      const result = await voiceCommands.dispatch(req.body);
+      res.status(['assigned', 'swarm'].includes(result.state) ? 202 : 200).json(result);
+    } catch (error) {
+      const status = error.code === 'AGENT_BUSY' ? 409 : ['NO_AGENTS', 'COORDINATOR_CONFIG', 'COORDINATOR_UNAVAILABLE'].includes(error.code) ? 503 : 400;
+      res.status(status).json({ error: error.name === 'TimeoutError' ? 'Task interpretation timed out. Please retry.' : error.message });
+    }
+  });
+  app.post('/api/assistant/ask', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Assistant questions require a local app origin.' });
+    const question = req.body?.question;
+    if (typeof question !== 'string' || !question.trim() || question.length > 6000) return res.status(400).json({ error: 'Supply a question under 6,000 characters.' });
+    try { res.json(await voiceCommands.dispatch({ transcript: question, requestId: randomUUID() })); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/voice/result', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Voice results require a local app origin.' });
+    try { res.json(await voiceCommands.summarize(req.body)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  // Web media for the in-app viewer, and the two actions a user confirms on a card.
+  app.get('/api/media/images', async (req, res) => {
+    try { res.json({ images: await searchImages(req.query.q) }); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.get('/api/media/youtube', async (req, res) => {
+    try { res.json({ videos: await searchYouTube(req.query.q) }); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/comms/email', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Email requires a local app origin.' });
+    try {
+      const { to, subject, body, via } = req.body ?? {};
+      // Default: a worker agent sends it with its own Gmail connector. Mail.app
+      // is the explicit fallback (the card offers it when no connector exists).
+      if (via === 'mail' || liveEnv('MARBLES_EMAIL_VIA') === 'mail') return res.json(await comms.sendEmail({ to, subject, body }));
+      if (!isEmail(to) || typeof subject !== 'string' || !subject.trim() || subject.length > 200 || typeof body !== 'string' || !body.trim() || body.length > 8000) throw new Error('A valid address, subject and message are required.');
+      const agents = agentRegistry.snapshot().filter(agent => agent.available !== false && !taskCapability(agent));
+      const preferred = agents.find(agent => agent.id === 'claude') ?? agents.find(agent => agent.id === 'codex');
+      const task = await taskService.startOrQueue(emailTaskPrompt({ to: to.trim(), subject: subject.trim(), body }),
+        { source: 'email', title: `Send email to ${to.trim()}`, allowTools: GMAIL_TOOLS }, preferred?.id ?? 'auto');
+      res.status(202).json({ sent: false, taskId: task.id, agentId: task.agentId });
+    } catch (error) { res.status(error.code === 'NO_AGENTS' ? 503 : 400).json({ error: error.message }); }
+  });
+  app.get('/api/comms/email/:id', (req, res) => res.json(emailOutcome(taskService.snapshot().find(task => task.id === req.params.id && task.source === 'email'))));
+  app.post('/api/comms/call', (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Calls require a local app origin.' });
+    try { res.json(comms.placeCall(req.body)); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post("/api/agents/:id/tasks", async (req, res) => {
+    try { res.status(202).json(await taskService.start(req.params.id, req.body?.prompt)); }
+    catch (error) { res.status(error.code === 'AGENT_BUSY' ? 409 : error.message === "Agent not found" ? 404 : 400).json({ error: error.message }); }
+  });
+  app.get("/api/agents/:id/log", async (req, res) => {
+    try {
+      const agent = agentRegistry.snapshot().find(a => a.id === req.params.id);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+      res.json(await readLog(agent.id));
+    } catch { res.status(500).json({ error: "Could not read agent log" }); }
+  });
+  app.get("/api/artifacts/file", async (req, res) => {
+    try {
+      const file = await resolveArtifact(taskService.root, req.query.path);
+      res.sendFile(file);
+    } catch { res.status(400).json({ error: "Invalid artifact path" }); }
+  });
+  // A path-based reader keeps generated HTML, styles and images in the same
+  // preview. Resolve every request through the existing workspace boundary.
+  app.get('/api/artifacts/view/*', async (req, res) => {
+    try {
+      const file = await resolveArtifact(taskService.root, req.params[0]);
+      res.set('Content-Security-Policy', "script-src 'none'; object-src 'none'; frame-ancestors 'self'");
+      res.sendFile(file);
+    } catch { res.status(400).json({ error: 'Invalid artifact path' }); }
+  });
+  app.post("/api/artifacts/open", async (req, res) => {
+    try {
+      const file = await resolveArtifact(taskService.root, req.body?.path);
+      const child = spawn("open", [file], { shell: false, stdio: "ignore" });
+      child.on("error", () => {});
+      res.json({ ok: true });
+    } catch { res.status(400).json({ error: "Invalid artifact path" }); }
+  });
 
   app.get("/api/stream", (req, res) => {
     res.set({

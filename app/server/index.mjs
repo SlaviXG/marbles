@@ -6,6 +6,11 @@ import { ChokidarWatcher } from "./watch/FileWatcher.mjs";
 import { ObsidianVaultSource } from "./source/ObsidianVaultSource.mjs";
 import { VaultService } from "./VaultService.mjs";
 import { createApp } from "./transport/createApp.mjs";
+import { createAgentDetector } from "./agents/detectAgents.mjs";
+import { AgentRegistry } from "./agents/AgentRegistry.mjs";
+import { attachVoice } from "./transport/voice.mjs";
+import { TaskService } from "./agents/taskService.mjs";
+import { SwarmService } from "./swarm/SwarmService.mjs";
 
 // Composition root: build the object graph and wire the layers together.
 async function main() {
@@ -32,9 +37,16 @@ async function main() {
 
   console.log(`Parsed ${service.snapshot().notes.length} note(s) from ${config.vaultDir}`);
 
-  createApp(service).listen(config.port, () =>
+  const registry = new AgentRegistry({ detector: createAgentDetector({ cacheTtlMs: 0, readVersions: false }) });
+  await registry.refresh();
+  registry.start();
+  const agentDetector = () => registry.snapshot();
+  const taskService = new TaskService({ agentDetector });
+  const swarmService = new SwarmService({ agentDetector, root: taskService.root, taskService });
+  const server = createApp(service, { agentRegistry: registry, taskService, swarmService }).listen(config.port, "127.0.0.1", () =>
     console.log(`vault-viz server: http://localhost:${config.port}`),
   );
+  attachVoice(server);
 }
 
 main();

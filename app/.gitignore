@@ -1,3 +1,7 @@
 node_modules
 dist
 *.local
+public/models/
+public/wake-runtime/
+scenario-results/*.jsonl
+.hermes-runtime/

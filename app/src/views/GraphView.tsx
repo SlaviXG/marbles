@@ -1,14 +1,21 @@
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawQueue } from "./drawHologram";
+import { HUD_FONT, voiceSignal } from "../state/hud";
+import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
+import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
+import { drawAsset } from "./drawAsset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide } from "d3-force-3d";
 import { useVault } from "../state/store";
-import { buildGraph, type GNode } from "../core/graph";
+import { useAgents } from "../state/agents";
+import { composeGraph, type GNode } from "../core/graph";
 import { ZOOM_MAX, fieldOf, minZoom } from "../core/field";
 import { springProgress, springForSettleMs, LAYOUT, type SpringToken } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
 import {
   clickSlop,
+  steady,
   dispatchAction,
   registerActionHandler,
   setMagnetProvider,
@@ -17,6 +24,22 @@ import {
   type MagnetTarget,
 } from "../input";
 
+function agentStatusLabel(node: GNode) {
+  const state = usePresentation.getState();
+  if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning to team' : 'Presenting result';
+  return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Not available' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Ready to help';
+}
+
+// The short status word projected under each teammate.
+function hudStatus(node: GNode) {
+  const state = usePresentation.getState();
+  if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning' : 'Presenting';
+  return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Offline' : node.activity === 'done' ? 'Result ready' : node.activity === 'failed' ? 'Needs attention' : 'Standing by';
+}
+
+// The scene sits a little above centre, leaving the floor to the voice core.
+const SCENE_Y = 58;
+
 // Premium entrance: critically damped, no overshoot (matches the marble feel).
 const APPEAR: SpringToken = "calm";
 
@@ -24,15 +47,20 @@ const COLORS: Record<GNode["type"], string> = {
   note: "#e8e8ea",
   section: "#2dd4bf",
   url: "#6b7280",
+  agent: "#ffffff",
+  task: "#8b949e",
+  artifact: "#39d98a",
+  swarm: "#a78bfa",
+  post: "#8b5cf6",
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 24, task: 10, artifact: 15, swarm: 20, post: 7 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 20, task: 6, artifact: 9, swarm: 14, post: 3 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -63,8 +91,11 @@ const HOVER_RING_MS = 300;
 const REDUCED_MOTION =
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export default function GraphView() {
+export default function GraphView({ ambientMotion = true }: { ambientMotion?: boolean }) {
   const notes = useVault((s) => s.notes);
+  const agents = useAgents((s) => s.agents);
+  const tasks = useAgents((s) => s.tasks);
+  const swarms = useAgents((s) => s.swarms);
   const selectedId = useVault((s) => s.selectedId);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
@@ -78,7 +109,19 @@ export default function GraphView() {
   const nodeCache = useRef(new Map<string, any>());
   // When each node first appeared, for the fade/grow-in animation.
   const bornAt = useRef(new Map<string, number>());
-  const [size, setSize] = useState({ w: 800, h: 600 });
+  const nodeMotions = useRef(new Map<string, { x: SpringValue; y: SpringValue }>());
+  const presentation = usePresentation(s => s.active);
+  const presentationPhase = usePresentation(s => s.phase);
+  const activityAt = useRef(new Map<string, { key: string; at: number }>());
+  const stepAt = useRef(new Map<string, { text: string; at: number }>());
+  // Where the user has put things: offsets from each item's assigned place.
+  const moved = useRef(new Map<string, { x: number; y: number }>());
+  const parentOf = useRef(new Map<string, string>());
+  const carry = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moving: boolean } | null>(null);
+  const queuedCount = useRef(0);
+  const sceneEnergy = useRef(0);
+  const sceneLevel = useRef(0);
+  const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [hovered, setHovered] = useState<string | null>(null);
 
   // Spring-animated selection/hover rings, advanced by the one shared ticker.
@@ -137,13 +180,26 @@ export default function GraphView() {
     const fg = fgRef.current;
     const el = wrapRef.current;
     if (!fg || !el || camInit.current) return;
-    const c = fg.screen2GraphCoords(el.clientWidth / 2, el.clientHeight / 2);
-    centerX.current.jump(c.x);
-    centerY.current.jump(c.y);
-    kRef.current = fg.zoom() || 1;
+    // The pinned agent ring is centered on the origin. Frame it before the
+    // first interaction, including when discovery has not returned yet.
+    const zoom = Math.min(1.25, Math.max(.5, Math.min(el.clientWidth / 1100, (el.clientHeight - 280) / 600)));
+    centerX.current.jump(0);
+    centerY.current.jump(SCENE_Y);
+    fg.zoom(zoom);
+    fg.centerAt(0, SCENE_Y);
+    kRef.current = zoom;
     zoomDispLog.current = Math.log(kRef.current);
     camInit.current = true;
   }, []);
+
+  // Reframe after the canvas receives its real dimensions. This also avoids
+  // clipping teammates when a projector or window changes aspect ratio.
+  useEffect(() => {
+    camInit.current = false;
+    ensureViewInit();
+    fgRef.current?.resumeAnimation?.();
+    fgRef.current?.d3ReheatSimulation?.();
+  }, [size.w, size.h, ensureViewInit]);
 
   const startTicking = useCallback(() => {
     if (ticking.current) return;
@@ -241,9 +297,6 @@ export default function GraphView() {
       // so a long pinch and a single notch both stay smooth.
       zoomTau.current = a.pinch ? ZOOM_TAU_GESTURE : ZOOM_TAU_FINE;
       const sensitivity = a.pinch ? 0.01 : 0.0015;
-      // Zoom-out stops where the whole field fits the view (core/field.ts),
-      // instead of at a fixed scale that left a big graph cut off and let a
-      // small one shrink to dots.
       const field = fieldOf(nodesRef.current);
       const min = Math.log(minZoom(field, el.clientWidth, el.clientHeight));
       const max = Math.log(ZOOM_MAX);
@@ -277,14 +330,27 @@ export default function GraphView() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
 
+  // Put a pinned item at its assigned place plus wherever it has been dragged.
+  // Agents ease to their new home on the same spring that docks them.
+  const place = useCallback((node: any) => {
+    const own = moved.current.get(node.id), parent = moved.current.get(parentOf.current.get(node.id) ?? '');
+    node.homeX = node.baseX + (own?.x ?? 0) + (parent?.x ?? 0);
+    node.homeY = node.baseY + (own?.y ?? 0) + (parent?.y ?? 0);
+    if (!nodeMotions.current.has(node.id)) { node.x = node.fx = node.homeX; node.y = node.fy = node.homeY; }
+  }, []);
+
   const data = useMemo(() => {
-    const built = buildGraph(notes);
+    const built = composeGraph(notes, agents, tasks, false, swarms);
+    queuedCount.current = tasks.filter(task => task.status === 'queued').length;
+    // Files and tasks travel with the teammate they belong to.
+    parentOf.current = new Map(built.links.filter(link => String(link.source).startsWith('agent:') || String(link.source).startsWith('swarm:')).map(link => [String(link.target), String(link.source)]));
     const cache = nodeCache.current;
     const liveIds = new Set(built.nodes.map((n) => n.id));
     for (const id of [...cache.keys()]) {
       if (!liveIds.has(id)) {
         cache.delete(id);
         bornAt.current.delete(id);
+        nodeMotions.current.delete(id);
       }
     }
 
@@ -293,27 +359,29 @@ export default function GraphView() {
       if (prev) {
         prev.label = n.label; // a renamed heading updates in place, no restructure
         prev.type = n.type;
-        return prev; // keep x/y/vx/vy
+        prev.artifactType = n.artifactType;
+        prev.available = n.available;
+        prev.status = n.status;
+        prev.progress = n.progress;
+        prev.activity = n.activity;
+        prev.badge = n.badge;
+        prev.activityKey = n.activityKey;
+        prev.artifactCount = n.artifactCount;
+        prev.artifactReady = n.artifactReady;
+        prev.startedAt = n.startedAt;
+        prev.step = n.step;
+        if (n.fx != null) { prev.baseX = n.x; prev.baseY = n.y; place(prev); }
+        return prev; // retain the simulation object and its visual state
       }
+      Object.assign(n, { baseX: n.x, baseY: n.y });
+      if (n.fx != null) place(n); else Object.assign(n, { homeX: n.x, homeY: n.y });
       cache.set(n.id, n);
       bornAt.current.set(n.id, performance.now());
       return n;
     });
 
-    // Seed each new node at its parent's position so it eases out from there
-    // rather than flying in from the origin.
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    for (const link of built.links) {
-      const target = byId.get(link.target);
-      const source = byId.get(link.source);
-      if (target && target.x == null && source && source.x != null) {
-        target.x = source.x + (Math.random() - 0.5) * 8;
-        target.y = source.y + (Math.random() - 0.5) * 8;
-      }
-    }
-
     return { nodes, links: built.links };
-  }, [notes]);
+  }, [notes, agents, tasks, swarms, place]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -325,6 +393,50 @@ export default function GraphView() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => registerPresentationScene(id => {
+    const node = nodeCache.current.get(`agent:${id}`);
+    const fg = fgRef.current;
+    if (!node || !fg || !wrapRef.current) return null;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const point = fg.graph2ScreenCoords(node.x, node.y);
+    return { x: rect.left + point.x, y: rect.top + point.y };
+  }), []);
+
+  useEffect(() => {
+    if (!presentation || !['approaching', 'returning'].includes(presentationPhase)) return;
+    return subscribeFrame(() => requestRedraw());
+  }, [presentation?.key, presentationPhase, requestRedraw]);
+
+  function positionPresentingAgent() {
+    const fg = fgRef.current;
+    const element = wrapRef.current;
+    if (!fg || !element || !camInit.current) return;
+    const current = usePresentation.getState();
+    const rect = element.getBoundingClientRect();
+    const dock = presentationLayout(rect.width, rect.height).dock;
+    const dockWorld = fg.screen2GraphCoords(dock.x, dock.y);
+    const holding = current.active && (current.phase !== 'returning' || performance.now() - current.phaseAt < PRESENTATION_FOLD_MS);
+    for (const node of nodeCache.current.values()) {
+      if (node.type !== 'agent') continue;
+      let motion = nodeMotions.current.get(node.id);
+      if (!motion) {
+        motion = { x: new SpringValue({ zeta: 1, omega: 14 }, node.x), y: new SpringValue({ zeta: 1, omega: 14 }, node.y) };
+        nodeMotions.current.set(node.id, motion);
+      }
+      const presenting = holding && node.id === `agent:${current.active?.leadAgentId}`;
+      const target = presenting ? dockWorld : { x: node.homeX, y: node.homeY };
+      if (REDUCED_MOTION) { motion.x.jump(target.x); motion.y.jump(target.y); }
+      else { motion.x.setTarget(target.x); motion.y.setTarget(target.y); motion.x.update(); motion.y.update(); }
+      node.x = node.fx = motion.x.value;
+      node.y = node.fy = motion.y.value;
+      if (node.id === `agent:${current.active?.leadAgentId}`) {
+        const point = fg.graph2ScreenCoords(node.x, node.y);
+        presentationAnchor.x = rect.left + point.x;
+        presentationAnchor.y = rect.top + point.y;
+      }
+    }
+  }
 
   // Keep the provider's node list current without re-registering it each frame.
   nodesRef.current = data.nodes as any[];
@@ -409,8 +521,8 @@ export default function GraphView() {
     const fg = fgRef.current;
     if (!fg) return;
     fg.d3Force("collide", forceCollide((n: any) => HIT[n.type as GNode["type"]] + 4).strength(1).iterations(2));
-    fg.d3Force("charge")?.strength(-120);
-    fg.d3Force("link")?.distance(44);
+    fg.d3Force("charge")?.strength(0);
+    fg.d3Force("link")?.distance(24);
   }, []);
 
   // Reheat only when the set of nodes changes (add/remove), so a new node finds
@@ -420,6 +532,16 @@ export default function GraphView() {
   useEffect(() => {
     fgRef.current?.d3ReheatSimulation?.();
   }, [nodeIdsKey]);
+
+  useEffect(() => {
+    if (REDUCED_MOTION || !ambientMotion) { requestRedraw(); return; }
+    // The projection is alive: repaint on the shared ticker so rings, comets and
+    // scanlines move at display rate. No React updates per frame, and hidden
+    // pages do not spend time animating.
+    return subscribeFrame(() => {
+      if (!document.hidden) requestRedraw();
+    });
+  }, [requestRedraw, ambientMotion]);
 
   // Drive the rings toward present (1) / absent (0) on hover and selection.
   useEffect(() => {
@@ -451,17 +573,6 @@ export default function GraphView() {
     }
   }, [selectedId, startTicking, requestRedraw]);
 
-  // While a node is open the graph is fully occluded by the overlay. Pause its
-  // render loop so it stops repainting behind the scrim; otherwise every frame it
-  // cools/ticks forces the full-screen backdrop blur to recompute, which janks
-  // the open + node-to-node transitions. Resume on close.
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    if (selectedId) fg.pauseAnimation?.();
-    else fg.resumeAnimation?.();
-  }, [selectedId]);
-
   // Opening is a click, never a dwell. Dwell made resting the cursor a
   // commitment, which is the wrong default for a pointer that is always resting
   // somewhere, and it forced a reopen-blocking timer to stop a node reopening
@@ -489,7 +600,7 @@ export default function GraphView() {
       const dx = n.x - p.x;
       const dy = n.y - p.y;
       const d = dx * dx + dy * dy;
-      const r = HIT[n.type as GNode["type"]];
+      const r = Math.max(HIT[n.type as GNode["type"]], 40 / kRef.current);
       if (d <= r * r && d < bestD) {
         bestD = d;
         best = n;
@@ -509,6 +620,9 @@ export default function GraphView() {
         panVel.current = { x: 0, y: 0 };
         dragging.current = false;
         downNode.current = pick(e.clientX, e.clientY)?.id ?? null;
+        const held = downNode.current ? moved.current.get(downNode.current) : undefined;
+        carry.current = downNode.current && nodeCache.current.get(downNode.current)?.baseX != null
+          ? { id: downNode.current, sx: e.clientX, sy: e.clientY, ox: held?.x ?? 0, oy: held?.y ?? 0, moving: false } : null;
         if (DEBUG)
           console.debug(`[graph] pointerdown at ${e.clientX.toFixed(0)},${e.clientY.toFixed(0)} node=`, downNode.current);
         ensureViewInit();
@@ -533,13 +647,24 @@ export default function GraphView() {
           // promise: if it is lit, pressing opens that node, and no amount of
           // hand drift reinterprets the gesture as relocating the canvas.
           // Panning is for empty background, where there is nothing to open.
-          if (downNode.current) return;
-          // A press is a click until it has travelled past the click slop;
-          // only then is it a pan. Without this the first pixel of movement
-          // started a pan, so a hand's pinch (which always wobbles a little)
-          // could never click the background, only nudge the canvas. lastPtr
-          // keeps following, so the pan begins from where the slop was
-          // crossed and the canvas does not lurch to catch up.
+          if (downNode.current) {
+            // ...but it can be carried: hold the pinch and move, and the item
+            // (with anything attached to it) goes where the hand goes. A hand
+            // needs a generous threshold, or every pinch would nudge things.
+            const held = carry.current;
+            if (!held) return;
+            const dx = e.clientX - held.sx, dy = e.clientY - held.sy;
+            if (!held.moving && Math.hypot(dx, dy) < clickSlop(DRAG_THRESHOLD) * 1.4) return;
+            if (!held.moving) steady.drag(true);
+            held.moving = true;
+            el.style.cursor = "grabbing";
+            moved.current.set(held.id, { x: held.ox + dx / kRef.current, y: held.oy + dy / kRef.current });
+            for (const node of nodeCache.current.values()) if (node.baseX != null && (node.id === held.id || parentOf.current.get(node.id) === held.id)) place(node);
+            requestRedraw();
+            return;
+          }
+          // Let a pinch settle before interpreting its small drift as a pan.
+          // Follow the last pointer so crossing the threshold starts smoothly.
           if (
             !dragging.current &&
             Math.hypot(e.clientX - downRef.current.x, e.clientY - downRef.current.y) <=
@@ -586,8 +711,11 @@ export default function GraphView() {
         dragging.current = false;
         const d = downRef.current;
         const pressed = downNode.current;
+        const carried = carry.current?.moving;
+        carry.current = null;
         downRef.current = null;
         downNode.current = null;
+        if (carried) { steady.drag(false); if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
         if (wasDrag) {
           // Fling: throw the center with the release velocity; the spring settles it.
           const { x: vx, y: vy } = panVel.current;
@@ -612,6 +740,9 @@ export default function GraphView() {
         // long drag was a pan and already returned above.
         if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > clickSlop(DRAG_THRESHOLD)) return;
         if (DEBUG) console.debug("[graph] click: (background)");
+        // A stray pinch beside a result must not close it: results close on
+        // their own button, Escape or by voice, and then the queue moves on.
+        if (usePresentation.getState().active) return;
         clear();
       }}
       onPointerCancel={() => {
@@ -619,6 +750,8 @@ export default function GraphView() {
         // the press state without selecting anything and without touching
         // hover: no click was completed, and the pointer has not gone anywhere.
         dragging.current = false;
+        if (carry.current?.moving) steady.drag(false);
+        carry.current = null;
         downRef.current = null;
         downNode.current = null;
         lastPtr.current = null;
@@ -628,12 +761,42 @@ export default function GraphView() {
         if (!dragging.current) setHovered(null);
       }}
     >
+      <div className="canvas-node-access" aria-label="Canvas items" onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}>
+        {data.nodes.filter(node => node.type === 'agent' || node.type === 'artifact' || node.type === 'swarm').map(node => <button key={node.id} onClick={() => select(node.id)}>{node.label}{node.type === 'agent' ? `: ${agentStatusLabel(node)}` : ''}</button>)}
+      </div>
       <ForceGraph2D
         ref={fgRef}
         width={size.w}
         height={size.h}
         graphData={data}
-        backgroundColor="#0d1117"
+        onRenderFramePre={(ctx, scale) => {
+          positionPresentingAgent();
+          const still = REDUCED_MOTION || !ambientMotion;
+          const time = performance.now() / 1000;
+          // The room answers the voice: rings brighten while you are heard.
+          const wanted = voiceSignal.speaking || voiceSignal.status === 'armed' || voiceSignal.status === 'listening' ? 1 : voiceSignal.status === 'wake' ? .35 : 0;
+          sceneEnergy.current += (wanted - sceneEnergy.current) * (still ? 1 : .06);
+          sceneLevel.current += (voiceSignal.level - sceneLevel.current) * (still ? 1 : .2);
+          const presenting = usePresentation.getState().active;
+          ctx.save();
+          if (presenting) ctx.globalAlpha = .45;
+          drawHolographicSpace(ctx, { time: still ? 0 : time, scale, reduced: still, energy: sceneEnergy.current, level: still ? 0 : sceneLevel.current });
+          if (queuedCount.current > 0) drawQueue(ctx, queuedCount.current, { time, scale, reduced: still });
+          ctx.restore();
+        }}
+        onEngineTick={() => {
+          const fg = fgRef.current;
+          // The library auto-fits newly discovered nodes at its default zoom.
+          // Keep the gesture camera authoritative, including on small screens.
+          if (fg && camInit.current) {
+            if (Math.abs(fg.zoom() - kRef.current) > 0.001) fg.zoom(kRef.current);
+            const center = fg.centerAt();
+            if (Math.abs(center.x - centerX.current.value) > 0.001 || Math.abs(center.y - centerY.current.value) > 0.001) {
+              fg.centerAt(centerX.current.value, centerY.current.value);
+            }
+          }
+        }}
+        backgroundColor="rgba(0,0,0,0)"
         // Reduced motion: pre-settle off-screen so there's little visible
         // motion, but always keep cooldown ticks so the layout actually runs.
         warmupTicks={REDUCED_MOTION ? 120 : 0}
@@ -642,42 +805,87 @@ export default function GraphView() {
         enableNodeDrag={false}
         enableZoomInteraction={false} // zoom + pan handled by the unified ticker
         enablePanInteraction={false}
-        linkColor={() => "rgba(150,176,224,0.12)"}
+        linkColor={() => "rgba(130,205,255,0.16)"}
         nodeCanvasObject={(node: any, ctx, scale) => {
           const sel = node.id === selectedId;
           const hot = node.id === hovered;
+          const still = REDUCED_MOTION || !ambientMotion;
+          const tNow = performance.now();
+          const now = tNow / 1000;
           // Entrance driven by the closed-form spring (analytic, O(1) per frame).
-          const born = bornAt.current.get(node.id) ?? 0;
-          const elapsed = (performance.now() - born) / 1000;
-          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, elapsed);
+          const age = (tNow - (bornAt.current.get(node.id) ?? 0)) / 1000;
+          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, age);
           const grow = Math.max(0, p);
-          const baseR = VIS_R[node.type as GNode["type"]] ?? 3;
+          const baseR = node.type === 'agent' ? Math.max(22, Math.min(36 / scale, 52)) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
           const r = baseR * (0.45 + 0.55 * grow);
-          ctx.globalAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
-          ctx.beginPath();
-          ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-          ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
-          ctx.fill();
-          // Spring-animated ring: scales + fades in/out with carried velocity.
+          const focus = usePresentation.getState().active;
+          const focusAlpha = focus && node.id !== `agent:${focus.leadAgentId}` ? .28 : 1;
+          const entranceAlpha = (p < 0 ? 0 : p > 1 ? 1 : p) * focusAlpha;
+          // Spring-animated aim: carried velocity, so re-aiming never restarts.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
           const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;
-          const ring = Math.max(selAmt, hovAmt);
-          const entranceAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
-          if (ring > 0.002) {
-            ctx.globalAlpha = Math.min(1, ring) * entranceAlpha;
-            ctx.lineWidth = 2 / scale;
-            ctx.strokeStyle = selAmt >= hovAmt ? "#ffffff" : "#2dd4bf";
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, r + 3 * Math.min(1.2, ring), 0, 2 * Math.PI);
-            ctx.stroke();
-            ctx.globalAlpha = entranceAlpha;
+          const aim = Math.max(selAmt, hovAmt);
+          const aimed = Math.max(0, Math.min(1, aim));
+          ctx.globalAlpha = entranceAlpha;
+          if (node.type === 'agent' || node.type === 'swarm') {
+            let activity = activityAt.current.get(node.id);
+            if (!activity || activity.key !== node.activityKey) {
+              // The first sighting is history, not news: no completion pulse on load.
+              activity = { key: node.activityKey, at: activity ? now : -100 };
+              activityAt.current.set(node.id, activity);
+            }
+            drawHolographicAgent(ctx, node.x, node.y, r, node.id.replace('agent:', ''), {
+              state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at, reduced: still, focus: aimed,
+            });
+            if (node.status === 'running' && node.type === 'agent') drawProgressDial(ctx, node.x, node.y, r, { time: now, seconds: node.startedAt ? Math.max(0, (Date.now() - node.startedAt) / 1000) : now - activity.at, scale, reduced: still });
+          } else if (node.type === 'artifact') {
+            drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false, { time: now, age, reduced: still, focus: aimed });
+          } else {
+            ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+            ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? 'oklch(65% .01 260)';
+            ctx.fill();
           }
-          if (scale > 1.3 || node.type === "note" || sel || hot) {
-            ctx.font = `${node.type === "note" ? 5 : 3.6}px ui-sans-serif, system-ui, sans-serif`;
-            ctx.fillStyle = sel || hot ? "#ffffff" : "#c9d1d9";
+          ctx.globalAlpha = entranceAlpha;
+          if (node.badge) {
+            ctx.fillStyle = 'oklch(16% .03 240)';
+            ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
+            ctx.fillStyle = 'oklch(90% .05 210)'; ctx.font = `3px ${HUD_FONT}`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(node.badge.toUpperCase(), node.x, node.y);
+          }
+          drawLockOn(ctx, node.x, node.y, node.type === 'artifact' ? r * .95 : r, aim, scale, selAmt >= hovAmt && selAmt > 0);
+          if ((node.type !== 'post' || sel || hot) && (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || node.type === 'swarm' || sel || hot)) {
+            const lead = node.type === 'agent';
+            const spacing = (value: number) => { if ('letterSpacing' in ctx) (ctx as any).letterSpacing = `${value / scale}px`; };
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            ctx.fillText(node.label, node.x, node.y + r + 3);
+            ctx.font = `${lead ? 600 : 500} ${(lead ? 13.5 : 11.5) / scale}px ${HUD_FONT}`;
+            spacing(lead ? 2.6 : .5);
+            ctx.fillStyle = sel || hot ? "oklch(97% .02 205)" : lead ? "oklch(91% .03 215)" : "oklch(82% .04 222)";
+            const limit = node.type === 'artifact' ? 18 : 30;
+            const text = node.label.length > limit ? node.label.slice(0, limit - 1) + '…' : node.label;
+            const top = node.y + r * (lead ? (node.status === 'running' ? 1.82 : 1.5) : node.type === 'artifact' ? 1.42 : 1.3) + 7 / scale;
+            ctx.fillText(lead ? text.toUpperCase() : text, node.x, top);
+            if (lead) {
+              ctx.font = `500 ${9.5 / scale}px ${HUD_FONT}`;
+              spacing(1.9);
+              ctx.fillStyle = node.activity === 'failed' ? 'oklch(82% .13 70)' : node.status === 'running' || node.activity === 'done' ? 'oklch(84% .11 208)' : 'oklch(64% .04 228)';
+              const working = node.status === 'running' && !usePresentation.getState().active;
+              const since = working ? Math.max(0, Math.floor(node.startedAt ? (Date.now() - node.startedAt) / 1000 : 0)) : 0;
+              const clock = working && node.startedAt ? `  ${String(Math.floor(since / 60)).padStart(2, '0')}:${String(since % 60).padStart(2, '0')}` : '';
+              ctx.fillText(hudStatus(node).toUpperCase() + clock, node.x, top + 20 / scale);
+              if (working && node.step) {
+                // What the agent just said it is doing, typed out as it changes.
+                let typed = stepAt.current.get(node.id);
+                if (!typed || typed.text !== node.step) { typed = { text: node.step, at: now }; stepAt.current.set(node.id, typed); }
+                const shown = still ? node.step : node.step.slice(0, Math.floor((now - typed.at) * 46));
+                spacing(.2);
+                ctx.font = `400 ${11 / scale}px ui-sans-serif, system-ui, sans-serif`;
+                ctx.fillStyle = 'oklch(80% .04 220)';
+                ctx.fillText(shown + (!still && shown.length < node.step.length ? '▍' : ''), node.x, top + 37 / scale);
+              }
+            }
+            spacing(0);
           }
           ctx.globalAlpha = 1;
         }}

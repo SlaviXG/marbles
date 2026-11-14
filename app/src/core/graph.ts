@@ -1,9 +1,156 @@
 import type { Note } from "./types";
+import type { AgentInfo, AgentTask, ArtifactInfo, SwarmTask } from "./agentTypes";
 
 export interface GNode {
   id: string;
   label: string;
-  type: "note" | "section" | "url";
+  type: "note" | "section" | "url" | "agent" | "task" | "artifact" | "swarm" | "post";
+  artifactType?: string;
+  available?: boolean;
+  status?: 'idle' | 'running' | 'unavailable';
+  progress?: string;
+  activity?: 'waiting' | 'working' | 'done' | 'failed' | 'unavailable';
+  activityKey?: string;
+  artifactCount?: number;
+  artifactReady?: boolean;
+  startedAt?: number; // when the current work began, for the live dial
+  step?: string; // the latest thing the worker reported
+  badge?: 'solo' | 'swarm';
+  x?: number;
+  y?: number;
+  fx?: number;
+  fy?: number;
+}
+
+const AGENT_RADIUS = 190;
+const AGENT_ANGLES: Record<string, number> = { claude: -Math.PI / 2, codex: Math.PI / 6, cursor: 5 * Math.PI / 6 };
+
+function pinned(id: string, label: string, type: GNode["type"], x: number, y: number, artifactType?: string): GNode {
+  return { id, label, type, x, y, fx: x, fy: y, ...(artifactType ? { artifactType } : {}) };
+}
+
+function childPosition(parent: GNode, index: number, outward: number, distance: number) {
+  const angle = outward + [0, -.75, .75][index % 3];
+  const radius = distance + Math.floor(index / 3) * 20;
+  return { x: parent.x! + Math.cos(angle) * radius, y: parent.y! + Math.sin(angle) * radius };
+}
+
+// The most recent human-readable line a worker printed: real progress, in its
+// own words. Machine output (JSON events, paths, stack frames) is skipped.
+export function latestStep(output: string | undefined, limit = 44) {
+  const lines = (output ?? '').slice(-3000).replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].replace(/^[\s>*#•\-–—\d.)\]]+/, '').replace(/[*_`]/g, '').trim();
+    if (line.length < 4 || /^[{[<]/.test(line) || !/[a-z]{3}/i.test(line) || /^(at |\/|[A-Z]:\\)/.test(line)) continue;
+    return line.length > limit ? line.slice(0, limit - 1).trimEnd() + '…' : line;
+  }
+  return '';
+}
+
+// Surface deliverables, not implementation files or dependency/build output.
+export function isCanvasArtifact(artifact: ArtifactInfo) {
+  const parts = artifact.path.replace(/\\/g, '/').split('/');
+  if (parts.some(part => part.startsWith('.') || ['node_modules', 'dist', 'build', 'coverage', 'target', 'vendor', '__pycache__', 'venv'].includes(part))) return false;
+  if (/^(AGENTS|CLAUDE|SKILL)\.md$/i.test(artifact.name)) return false;
+  return /\.(md|markdown|mdx|pdf|doc|docx|odt|rtf|txt|xls|xlsx|ods|csv|tsv|ppt|pptx|odp|html|htm|tex|mp3|wav|ogg|m4a|mp4|webm|mov|png|jpe?g|webp|svg)$/i.test(artifact.name);
+}
+
+export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false, swarms: SwarmTask[] = []) {
+  const graph = includeVaultNodes ? buildGraph(notes) : { nodes: [] as GNode[], links: [] as GLink[] };
+  const nodes = [...graph.nodes];
+  const links = [...graph.links];
+  const visibleAgents = agents.filter((agent) => agent.codingAgent).sort((a, b) => a.id.localeCompare(b.id));
+  const agentNodes = new Map<string, GNode>();
+  visibleAgents.forEach((agent, index) => {
+    const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
+    const supported = ['codex', 'claude'].includes(agent.id) || agent.id === 'cursor' && ['cursor-agent', 'agent'].includes(agent.command ?? '');
+    const status = agent.status ?? (!agent.available || agent.kind !== 'cli' || !supported
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && ['running', 'cancelling'].includes(task.status)) || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
+    const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    node.available = agent.available;
+    node.status = status;
+    const latest = tasks.find(task => task.agentId === agent.id && ['running', 'cancelling'].includes(task.status)) ?? tasks.find(task => task.agentId === agent.id);
+    node.progress = latest ? `${latest.status === 'completed' ? 'Ready to review' : latest.status === 'failed' ? 'Needs attention' : latest.status === 'cancelled' ? 'Stopped' : latest.status === 'cancelling' ? 'Stopping' : 'Working'}: ${latest.title || latest.intent?.objective || latest.prompt}` : undefined;
+    const latestSwarm = swarms.find(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ?? swarms.find(swarm => swarm.agents.includes(agent.id));
+    node.activity = status === 'unavailable' ? 'unavailable' : status === 'running' ? 'working' : latestSwarm?.status === 'completed' || latest?.status === 'completed' ? 'done' : latestSwarm?.status === 'failed' || latest?.status === 'failed' ? 'failed' : 'waiting';
+    node.activityKey = `${node.activity}:${latestSwarm?.id ?? latest?.id ?? 'idle'}`;
+    if (latestSwarm) node.progress = `${node.activity === 'working' ? 'Working' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Team task'}: ${latestSwarm.goal}`;
+    if (status === 'running') {
+      const live = swarms.find(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ?? (latest && ['running', 'cancelling'].includes(latest.status) ? latest : undefined);
+      const began = live ? Date.parse((live as { startedAt?: string; createdAt?: string }).startedAt ?? (live as { createdAt?: string }).createdAt ?? '') : NaN;
+      if (Number.isFinite(began)) node.startedAt = began;
+      node.step = latestStep(latest && ['running', 'cancelling'].includes(latest.status) ? latest.stdout : '');
+    }
+    nodes.push(node);
+    agentNodes.set(agent.id, node);
+  });
+  for (const [agentId, parent] of agentNodes) {
+    const agentTasks = tasks.slice(0, 30).filter(task => task.agentId === agentId);
+    const routed = agentTasks.find(task => task.routing);
+    if (routed) {
+      const side = parent.x! < 0 ? -1 : 1;
+      const node = pinned(`task:${routed.id}`, (routed.title || routed.prompt).slice(0, 30), 'task', parent.x! + side * 70, parent.y! + 75);
+      node.badge = routed.routing!.mode;
+      nodes.push(node); links.push({ source: parent.id, target: node.id });
+    }
+    const files = agentTasks
+      .flatMap(task => task.artifacts.filter(isCanvasArtifact).map(artifact => ({ task, artifact })));
+    if (!files.length) continue;
+    const side = parent.x! < 0 ? -1 : 1;
+    const point = { x: parent.x! + side * 90, y: parent.y! - 18 };
+    if (files.length > 1) {
+      const id = `assets:${agentId}`;
+      const ready = files.every(({ task }) => task.status === 'completed');
+      const stack = pinned(id, `${files.length} files${ready ? ' ready' : ''}`, 'artifact', point.x, point.y, 'stack');
+      stack.artifactReady = ready;
+      stack.artifactCount = files.length;
+      nodes.push(stack); links.push({ source: parent.id, target: id });
+      continue;
+    }
+    const { task, artifact } = files[0];
+    const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
+    const format = /\.(md|markdown|mdx)$/i.test(artifact.name) ? 'markdown'
+      : /\.(ppt|pptx|odp)$/i.test(artifact.name) ? 'slides'
+      : /\.(doc|docx|odt|rtf)$/i.test(artifact.name) ? 'docx'
+      : /\.(xls|xlsx|ods|csv|tsv)$/i.test(artifact.name) ? 'spreadsheet' : artifact.type;
+    const fileNode = pinned(id, artifact.name, 'artifact', point.x, point.y, format);
+    fileNode.artifactReady = task.status === 'completed';
+    nodes.push(fileNode);
+    links.push({ source: parent.id, target: id });
+  }
+  for (const [swarmIndex, swarm] of swarms.slice(0, 3).entries()) {
+    const x = swarmIndex === 0 ? 0 : swarmIndex === 1 ? -190 : 190;
+    const y = swarmIndex === 0 ? 0 : -65;
+    const parent = pinned(`swarm:${swarm.id}`, swarm.title || (swarm.mode === 'best-of-n' ? 'Compare results' : 'Team task'), 'swarm', x, y);
+    parent.status = ['running', 'evaluating'].includes(swarm.status) ? 'running' : 'idle';
+    parent.activity = parent.status === 'running' ? 'working' : swarm.status === 'completed' ? 'done' : swarm.status === 'failed' ? 'failed' : 'waiting';
+    parent.activityKey = `${swarm.id}:${swarm.status}`;
+    parent.badge = swarm.routing?.mode;
+    nodes.push(parent);
+    for (const agentId of swarm.agents) if (agentNodes.has(agentId)) links.push({ source: parent.id, target: `agent:${agentId}` });
+    for (const [index, post] of (swarm.blackboard ?? []).slice(-3).entries()) {
+      const pos = childPosition(parent, index, 0.5, 28);
+      const id = `post:${swarm.id}:${post.seq}`;
+      nodes.push(pinned(id, `${post.kind}: ${post.text.slice(0, 28)}`, 'post', pos.x, pos.y));
+      links.push({ source: parent.id, target: id });
+    }
+    const sharedFiles = (swarm.artifacts ?? []).filter(isCanvasArtifact);
+    if (sharedFiles.length > 1) {
+      const id = `assets:swarm:${swarm.id}`;
+      const stack = pinned(id, `${sharedFiles.length} shared files`, 'artifact', x + 150, y - 60, 'stack');
+      stack.artifactCount = sharedFiles.length;
+      stack.artifactReady = swarm.status === 'completed';
+      nodes.push(stack); links.push({ source: parent.id, target: id });
+    } else if (sharedFiles.length) {
+      const artifact = sharedFiles[0];
+      const id = `artifact:${swarm.id}:${encodeURIComponent(artifact.path)}`;
+      const fileNode = pinned(id, artifact.name, 'artifact', x + 150, y - 60, artifact.type);
+      fileNode.artifactReady = swarm.status === 'completed';
+      nodes.push(fileNode);
+      links.push({ source: parent.id, target: id });
+    }
+  }
+  return { nodes, links };
 }
 export interface GLink {
   source: string;

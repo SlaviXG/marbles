@@ -1,8 +1,5 @@
 import { create } from "zustand";
 import type { Note } from "../core/types";
-import { testNotes } from "../core/testNodes";
-
-const byId = (arr: Note[]) => Object.fromEntries(arr.map((n) => [n.id, n]));
 
 interface VaultState {
   notes: Record<string, Note>;
@@ -17,12 +14,10 @@ interface VaultState {
 }
 
 export const useVault = create<VaultState>((set) => ({
-  // Starts with the hardcoded test notes (see core/testNodes.ts) so the graph
-  // is never empty; real notes are added on top.
-  notes: byId(testNotes),
+  notes: {},
   connected: false,
   selectedId: null,
-  setSnapshot: (arr) => set({ notes: byId([...testNotes, ...arr]) }),
+  setSnapshot: (arr) => set({ notes: Object.fromEntries(arr.map((n) => [n.id, n])) }),
   upsert: (note) => set((s) => ({ notes: { ...s.notes, [note.id]: note } })),
   remove: (id) =>
     set((s) => {

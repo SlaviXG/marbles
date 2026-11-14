@@ -1,0 +1,126 @@
+import { gatherStatus } from './statusReporter.mjs';
+import { agentLog } from './logs.mjs';
+import { HermesCoordinator, conciseReply } from './HermesCoordinator.mjs';
+export { buildVoicePrompt } from './HermesCoordinator.mjs';
+
+export function classifyQuery(transcript) {
+  const text = String(transcript ?? '');
+  const command = text.trim().replace(/^(?:can|could|would|will) you\s+(?:please\s+)?/i, '').replace(/^use (?:codex|claude(?: code)?|cursor) to\s+/i, '');
+  const targets = [...new Set([...text.matchAll(/\b(codex|claude(?: code)?|cursor)\b/gi)].map(match => match[1].toLowerCase().startsWith('claude') ? 'claude' : match[1].toLowerCase()))];
+  if (/^(?:please\s+)?(?:make|build|create|write|fix|implement|update|change|add|remove|delete|generate|prepare)\b/i.test(command)) return { intent: /\b(swarm|as a team|all (the )?agents|everyone|work together)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
+  if (/what(?:'s| is) (?:happening|going on)|what (?:is|are) .* doing|\bstatus\b|\bprogress\b|how(?:'s| is) .* doing|are .* (?:done|finished|working|doing)|what .* working on/i.test(text)) return { intent: 'status', targetAgents: targets };
+  if (/\blogs?\b|recent activity|what did .* do|show me .* (?:output|history)/i.test(text)) return { intent: 'log', targetAgents: targets };
+  return { intent: /\b(swarm|as a team|together|all (the )?agents|everyone)\b/i.test(text) ? 'swarm' : 'task', targetAgents: targets };
+}
+
+// How many recent turns are kept word for word; older ones live on in memory.
+const HISTORY_TURNS = 8;
+const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,100}$/.test(value);
+
+// The harness owns bounded conversation memory and idempotent request receipts.
+export class VoiceCommands {
+  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, screen, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog, screen }) }) {
+    Object.assign(this, { taskService, swarmService, coordinator, agentRegistry, readLog, summarizeStatus: summarize });
+    this.requests = new Map(); this.conversations = new Map(); this.summaries = new Map(); this.inflight = 0;
+  }
+  dispatch({ transcript, requestId, conversationId = 'default-chat', selectedId, earlier = [], screen } = {}) {
+    if (typeof transcript !== 'string' || !transcript.trim() || transcript.length > 6000 || !validId(requestId) || !validId(conversationId) ||
+        (selectedId != null && (typeof selectedId !== 'string' || selectedId.length > 1000)) ||
+        (screen != null && (typeof screen !== 'object' || JSON.stringify(screen).length > 4000)) ||
+        !Array.isArray(earlier) || earlier.length > 6 || earlier.some(item => typeof item !== 'string' || !item.trim() || item.length > 3000)) {
+      throw new Error('Supply a transcript under 6,000 characters and valid request/conversation IDs.');
+    }
+    const fingerprint = JSON.stringify({ transcript, conversationId, selectedId, earlier });
+    const previous = this.requests.get(requestId);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new Error('Request ID already used for a different request.');
+      return previous.promise;
+    }
+    if (this.inflight >= 4) throw new Error('Too many voice requests. Wait for the current request.');
+    this.inflight++;
+    let conversation = this.conversations.get(conversationId);
+    if (!conversation) {
+      if (this.conversations.size >= 50) {
+        for (const [id, entry] of this.conversations) if (!entry.pending) { this.conversations.delete(id); break; }
+      }
+      conversation = { history: [], memory: '', tail: Promise.resolve(), pending: 0 };
+      this.conversations.set(conversationId, conversation);
+    }
+    conversation.pending++;
+    const entry = { fingerprint, settled: false };
+    entry.promise = conversation.tail.catch(() => {}).then(async () => {
+      const classified = classifyQuery(transcript);
+      const readOnly = ['status', 'log'].includes(classified.intent);
+      let context;
+      if (readOnly) context = await gatherStatus({ targets: classified.targetAgents,
+        agentRegistry: this.agentRegistry ?? { snapshot: () => [] }, taskService: this.taskService, swarmService: this.swarmService,
+        readLog: this.readLog, includeLogs: classified.intent === 'log' });
+      const result = readOnly && this.summarizeStatus
+        ? { state: classified.intent, reply: conciseReply(await this.summarizeStatus(context, { question: transcript })) }
+        : await this.coordinator.run({ transcript: transcript.trim(), history: conversation.history, selectedId, readOnly, statusContext: context,
+          earlier: earlier.map(item => item.trim()), memory: conversation.memory, screen });
+      if (readOnly) {
+        if (result.state === 'reply') result.state = classified.intent;
+        result.context = { agents: context.agents, tasks: context.tasks, swarms: context.swarms };
+      }
+      const record = (said, outcome) => {
+        conversation.history = [...conversation.history, { role: 'user', content: said.slice(0, 1800) },
+          { role: 'assistant', content: JSON.stringify({ reply: outcome.reply, objective: outcome.intent?.objective, plan: outcome.intent?.plan,
+            assumptions: outcome.intent?.assumptions, taskId: outcome.task?.id, taskIds: outcome.tasks?.map(task => task.id), objectives: outcome.intents?.map(intent => intent.objective), swarmId: outcome.swarm?.id,
+            shown: outcome.display && { kind: outcome.display.kind, id: outcome.display.id, query: outcome.display.query, to: outcome.display.to ?? outcome.display.number } }).slice(0, 1800) }];
+      };
+      const said = earlier.length ? `${earlier.map(item => item.trim()).join(' … ')} … ${transcript.trim()}` : transcript.trim();
+      if (result.state !== 'ignore') record(said, result);
+      // The newest request was answered or shown rather than delegated, so the
+      // earlier ones have not been acted on yet. Give them their own turn now.
+      if (earlier.length && !readOnly && !['assigned', 'swarm'].includes(result.state)) {
+        try {
+          const followUp = await this.coordinator.run({ transcript: earlier.map(item => item.trim()).join('\n'), history: conversation.history.slice(-HISTORY_TURNS), selectedId, memory: conversation.memory, screen,
+            statusContext: { note: 'These were said before the request you just handled and are still waiting. Handle each one now; do not repeat what you already did.' } });
+          if (followUp.state !== 'ignore') { result.followUp = followUp; record('(continuing with what I asked earlier)', followUp); }
+        } catch { /* The newest request is settled; an earlier one failing must not undo it. */ }
+      }
+      // Remember instead of forgetting: turns leaving the short history are
+      // folded into the running memory in the background.
+      if (conversation.history.length > HISTORY_TURNS) {
+        const leaving = conversation.history.slice(0, conversation.history.length - HISTORY_TURNS);
+        conversation.history = conversation.history.slice(-HISTORY_TURNS);
+        const fold = this.coordinator.remember ? this.coordinator.remember(conversation.memory, leaving)
+          : Promise.resolve([conversation.memory, ...leaving.map(turn => String(turn.content).slice(0, 300))].filter(Boolean).join('\n').slice(-1400));
+        conversation.remembering = (conversation.remembering ?? Promise.resolve()).then(() => fold).then(memory => { conversation.memory = memory; }).catch(() => {});
+      }
+      return result;
+    }).catch(error => { this.requests.delete(requestId); throw error; })
+      .finally(() => {
+        this.inflight--; conversation.pending--; entry.settled = true;
+        if (this.requests.size > 200) {
+          for (const [id, record] of this.requests) {
+            if (record.settled && id !== requestId) this.requests.delete(id);
+            if (this.requests.size <= 200) break;
+          }
+        }
+      });
+    conversation.tail = entry.promise;
+    this.requests.set(requestId, entry);
+    return entry.promise;
+  }
+
+  summarize({ id, kind = 'task', conversationId = 'default-chat' } = {}) {
+    if (!validId(id) || !validId(conversationId) || !['task', 'swarm'].includes(kind)) throw new Error('Invalid result reference.');
+    const record = kind === 'task' ? this.taskService.snapshot().find(task => task.id === id) : this.swarmService?.get(id);
+    if (!record || record.source !== 'voice') throw new Error('Voice task not found.');
+    if (['queued', 'running', 'evaluating', 'cancelling'].includes(record.status)) throw new Error('Task is still running.');
+    const key = `${kind}:${id}`;
+    if (!this.summaries.has(key)) {
+      const summary = this.coordinator.summarize(record, kind).then(reply => {
+        const conversation = this.conversations.get(conversationId);
+        if (conversation) conversation.history = [...conversation.history,
+          { role: 'assistant', content: `Worker result (${record.status}): ${conciseReply(reply, 25)}` }].slice(-HISTORY_TURNS);
+        return { reply: conciseReply(reply, 25) };
+      });
+      this.summaries.set(key, summary);
+      if (this.summaries.size > 200) this.summaries.delete(this.summaries.keys().next().value);
+    }
+    return this.summaries.get(key);
+  }
+}

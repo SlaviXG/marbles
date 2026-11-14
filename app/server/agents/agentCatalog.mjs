@@ -1,0 +1,32 @@
+// Adapted from https://github.com/stablyai/orca (MIT license).
+// Only command discovery metadata is carried over; launch and prompt settings are excluded.
+export const agentCatalog = [
+  { id: "claude", name: "Claude Code", detectCmd: "claude", desktopApps: ["Claude.app"], codingAgent: true },
+  { id: "codex", name: "Codex", detectCmd: "codex", desktopApps: ["Codex.app"], codingAgent: true },
+  { id: "grok", name: "Grok", detectCmd: "grok", desktopApps: ["Grok.app"] },
+  { id: "hermes", name: "Hermes", detectCmd: "hermes" },
+  { id: "gemini", name: "Gemini CLI", detectCmd: "gemini" },
+  { id: "cursor", name: "Cursor", detectCmd: "cursor-agent", detectCmdAliases: ["agent"], desktopApps: ["Cursor.app"], codingAgent: true },
+  { id: "aider", name: "Aider", detectCmd: "aider" },
+  { id: "opencode", name: "OpenCode", detectCmd: "opencode" },
+  { id: "opencode2", name: "OpenCode 2", detectCmd: "opencode2" },
+  { id: "goose", name: "Goose", detectCmd: "goose" },
+  { id: "amp", name: "Amp", detectCmd: "amp" },
+  { id: "kilo", name: "Kilo", detectCmd: "kilo" },
+  { id: "kiro", name: "Kiro", detectCmd: "kiro-cli" },
+  { id: "cline", name: "Cline", detectCmd: "cline" },
+  { id: "continue", name: "Continue", detectCmd: "cn" },
+  { id: "copilot", name: "GitHub Copilot", detectCmd: "copilot" },
+  { id: "qwen-code", name: "Qwen Code", detectCmd: "qwen" },
+  { id: "kimi", name: "Kimi", detectCmd: "kimi", detectCmdAliases: ["kimi-code"] },
+  { id: "mistral-vibe", name: "Mistral Vibe", detectCmd: "vibe", detectCmdAliases: ["mistral-vibe"] },
+  { id: "qoder", name: "Qoder", detectCmd: "qodercli", detectCmdAliases: ["qoder"] },
+  { id: "droid", name: "Droid", detectCmd: "droid" },
+  { id: "crush", name: "Crush", detectCmd: "crush" },
+  { id: "codebuff", name: "Codebuff", detectCmd: "codebuff" },
+  { id: "pi", name: "Pi", detectCmd: "pi" },
+  { id: "prime-agent", name: "Prime Agent", detectCmd: "prime-agent" },
+  { id: "openclaw", name: "OpenClaw", detectCmd: "openclaw" },
+  // Orca's wrapper is a separate mode and is present only when Claude is installed too.
+  { id: "claude-agent-teams", name: "Claude Agent Teams", detectCmd: "orca", detectCmdAliases: ["orca-dev", "orca-ide"], detectRequiredCommands: ["claude"], detectUnsupportedRuntimes: ["win32", "wsl"] },
+];

@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type AnimationEvent } from "react";
 import { useVault } from "../state/store";
+import { useAgents, refreshSwarm } from "../state/agents";
+import type { AgentInfo, AgentLog, AgentTask, ArtifactInfo, SwarmTask } from "../core/agentTypes";
+import { isCanvasArtifact } from "../core/graph";
 import { getDetail, hostname, type Detail } from "../core/detail";
 import { sampleSpring, springDurationMs } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
 import { pickPreview } from "./preview";
 import PreviewFrame from "./preview/PreviewFrame";
-import { cameraPointer, registerActionHandler, PRIORITY } from "../input";
+import AssetPreview from "./preview/AssetPreview";
+import FileGlyph, { fileExtension, fileTitle } from "./FileGlyph";
+import { registerActionHandler, PRIORITY, steady } from "../input";
 import { useDragScroll } from "../hooks/useDragScroll";
+import { useDragMove } from "../hooks/useDragMove";
 
 const REDUCED_MOTION =
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -18,13 +24,23 @@ const REDUCED_MOTION =
 const SLIDE = sampleSpring("calm");
 const SLIDE_MS = springDurationMs("calm");
 
-export default function DetailPanel() {
+export default function DetailPanel({ disabled = false }: { disabled?: boolean }) {
   const notes = useVault((s) => s.notes);
+  const agents = useAgents((s) => s.agents);
+  const tasks = useAgents((s) => s.tasks);
+  const swarms = useAgents((s) => s.swarms);
   const selectedId = useVault((s) => s.selectedId);
+  useEffect(() => {
+    if (!selectedId?.startsWith('swarm:')) return;
+    const id = selectedId.slice(6);
+    void refreshSwarm(id).catch(() => {});
+    const timer = window.setInterval(() => { void refreshSwarm(id).catch(() => {}); }, 5000);
+    return () => window.clearInterval(timer);
+  }, [selectedId]);
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
 
-  const open = selectedId ? !!getDetail(notes, selectedId) : false;
+  const open = !disabled && !selectedId?.startsWith('artifact:') && selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.id}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('swarm:') ? swarms.some(s => `swarm:${s.id}` === selectedId) : selectedId.startsWith('post:') ? true : selectedId.startsWith('artifact:') || selectedId.startsWith('assets:') ? true : !!getDetail(notes, selectedId) : false;
 
   const scrimRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -72,7 +88,7 @@ export default function DetailPanel() {
   // Drag-to-scroll: press and drag the content (real mouse or camera-cursor
   // pinch) moves it vertically, like a touch surface. The returned state lets the
   // hover-out logic below ignore the tail of a drag that ends in the exit area.
-  const dragState = useDragScroll(scrollerRef);
+  useDragScroll(scrollerRef);
 
   useEffect(() => {
     if (!selectedId) {
@@ -110,36 +126,12 @@ export default function DetailPanel() {
     }
   };
 
-  // Hover-out dismissal: the window is a transient surface, so leaving its area
-  // closes it. A short grace timer absorbs diagonal/sub-pixel exits; entering
-  // (back) cancels it. pointerleave does not fire when moving onto a descendant,
-  // so hovering the embedded video iframe keeps the window open.
-  const closeTimer = useRef<number | null>(null);
-  const cancelClose = () => {
-    if (closeTimer.current !== null) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  };
-  const scheduleClose = () => {
-    // A scroll-drag that starts inside the content and crosses out into the exit
-    // area is a scroll gesture, not an intent to leave: ignore the hover-out
-    // while dragging, and briefly after it ends (the cursor may coast out as the
-    // pinch releases).
-    if (dragState.current.dragging || performance.now() - dragState.current.endedAt < 350) return;
-    cancelClose();
-    closeTimer.current = window.setTimeout(() => {
-      closeTimer.current = null;
-      clear();
-    }, 120);
-  };
-
   // Stabilize the camera cursor while a node is open: a wider deadzone holds it
   // still against hand tremor so reading is not disturbed (it otherwise slides
   // because inference slows under the open view's GPU/main-thread load).
   useEffect(() => {
-    cameraPointer.setStabilize(open);
-    return () => cameraPointer.setStabilize(false);
+    if (!open) return;
+    return steady.hold();
   }, [open]);
 
   // While a note is open it is the surface in front, so it claims both zoom and
@@ -197,6 +189,8 @@ export default function DetailPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, clear]);
 
+  const gripRef = useRef<HTMLDivElement>(null);
+  useDragMove(frameRef, gripRef, open);
   const firstRun = useRef(true);
   useLayoutEffect(() => {
     const scrim = scrimRef.current;
@@ -225,22 +219,18 @@ export default function DetailPanel() {
   }, [open]);
 
   return (
-    <div className={`immersive-root${open ? " open" : ""}`}>
+    <div className={`immersive-root${open ? " open" : ""}`} hidden={!open}>
       <div className="immersive-scrim" ref={scrimRef} onClick={clear} />
-      {/* Where to move a hand to leave: the window closes when the cursor
-          leaves its frame, which nothing on screen otherwise says. Shown only
-          while a hand is driving (see styles.css); never catches the pointer. */}
-      <ExitHint side="left" />
-      <ExitHint side="right" />
-      {/* Hover zone is the whole window frame, so the feathered side margins are a
-          resting buffer: parking the cursor there keeps it open. Only leaving the
-          frame (into the dimmed scrim) counts as hovering out. */}
+      {/* Keep details stable while the user rests or moves their hand away. */}
       <div
         className="immersive-frame"
+        data-closable="selection"
         ref={frameRef}
-        onPointerEnter={cancelClose}
-        onPointerLeave={scheduleClose}
+        role="region"
+        aria-label="Selected item details"
       >
+        <div className="detail-grip window-grip" ref={gripRef} aria-hidden="true"><i /><i /><i /></div>
+        <button className="detail-close" aria-label="Close details" onClick={clear}><span aria-hidden="true">×</span></button>
         <div className="immersive-bg" />
         <div className="immersive">
           <div
@@ -253,6 +243,34 @@ export default function DetailPanel() {
                 reflows, which is what makes scrollHeight follow the zoom. */}
             <div className="immersive-content">
               {(() => {
+                if (displayedId?.startsWith('agent:')) {
+                  const agent = agents.find(a => `agent:${a.id}` === displayedId);
+                  return agent && <><SpecialHeader kind="Agent" name={agent.name} /><div className="ibody"><AgentBody agent={agent} tasks={tasks.filter(t => t.agentId === agent.id)} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('task:')) {
+                  const task = tasks.find(t => `task:${t.id}` === displayedId);
+                  return task && <><SpecialHeader kind="Task" name={task.title ?? task.prompt} /><div className="ibody"><TaskBody task={task} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('assets:')) {
+                  const owner = displayedId.slice('assets:'.length);
+                  const swarm = owner.startsWith('swarm:') ? swarms.find(s => s.id === owner.slice(6)) : undefined;
+                  const files = swarm ? swarm.artifacts.filter(isCanvasArtifact).map(artifact => ({ id: swarm.id, artifact })) : tasks.filter(task => task.agentId === owner).flatMap(task => task.artifacts.filter(isCanvasArtifact).map(artifact => ({ id: task.id, artifact })));
+                  return <><SpecialHeader kind={swarm ? 'Shared files' : agents.find(agent => agent.id === owner)?.name ?? owner} name={`${files.length} files`} /><div className="ibody"><div className="file-grid">{files.map(({ id, artifact }, n) => <button key={`${id}:${artifact.path}`} className="file-card" style={{ animationDelay: `${Math.min(n, 12) * 55}ms` }} onClick={() => select(`artifact:${id}:${encodeURIComponent(artifact.path)}`)}><FileGlyph name={artifact.name} size={46} /><span className="file-card-name">{fileTitle(artifact.name)}</span><span className="file-card-ext">{fileExtension(artifact.name)}</span></button>)}</div></div></>;
+                }
+                if (displayedId?.startsWith('swarm:')) {
+                  const swarm = swarms.find(s => `swarm:${s.id}` === displayedId);
+                  return swarm && <><SpecialHeader kind="Swarm" name={swarm.goal} /><div className="ibody"><SwarmBody swarm={swarm} select={select} /></div></>;
+                }
+                if (displayedId?.startsWith('post:')) {
+                  const [, swarmId, seq] = displayedId.split(':');
+                  const post = swarms.find(s => s.id === swarmId)?.blackboard.find(p => p.seq === Number(seq));
+                  return post && <><SpecialHeader kind="Blackboard post" name={post.kind} /><div className="ibody"><p>{post.text}</p><p>{post.agentId} · turn {post.turn} · {post.ts}</p></div></>;
+                }
+                if (displayedId?.startsWith('artifact:')) {
+                  const [, taskId, encodedPath] = displayedId.split(':');
+                  const artifact = (tasks.find(t => t.id === taskId)?.artifacts ?? swarms.find(s => s.id === taskId)?.artifacts)?.find(a => encodeURIComponent(a.path) === encodedPath);
+                  return artifact && <><SpecialHeader kind="Artifact" name={artifact.name} /><div className="ibody"><ArtifactBody artifact={artifact} /></div></>;
+                }
                 const d = displayedId ? getDetail(notes, displayedId) : null;
                 if (!d) return null;
                 return (
@@ -268,17 +286,6 @@ export default function DetailPanel() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ExitHint({ side }: { side: "left" | "right" }) {
-  return (
-    <div className={`exit-hint ${side}`} aria-hidden>
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        {side === "left" ? <path d="M19 12H5M11 6l-6 6 6 6" /> : <path d="M5 12h14M13 6l6 6-6 6" />}
-      </svg>
-      <span>close</span>
     </div>
   );
 }
@@ -395,4 +402,70 @@ function ItemsAndUrls({ items, urls }: { items: string[]; urls: string[] }) {
       )}
     </>
   );
+}
+
+function SpecialHeader({ kind, name }: { kind: string; name: string }) {
+  return <div className="ph"><div className={`badge ${kind.toLowerCase()}`} /><div className="meta"><div className="kind">{kind}</div><div className="nm">{name}</div></div></div>;
+}
+function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTask[]; select: (id: string) => void }) {
+  const [log, setLog] = useState<AgentLog | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!agent.available) { setLog({ available: false, reason: 'Agent unavailable' }); return; }
+    const refresh = () => { fetch(`/api/agents/${encodeURIComponent(agent.id)}/log`).then(r => r.json()).then(data => { if (live) setLog(data); }).catch(() => {}); };
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { live = false; window.clearInterval(timer); };
+  }, [agent.id, agent.available]);
+  return <>
+    <p className="agent-voice-hint">Speak to give your team a task. Your teammate’s work and files stay here.</p>
+    <div className="sec">Tasks</div>
+    {tasks.length ? tasks.map(t => <button key={t.id} className="rowlink" onClick={() => select(`task:${t.id}`)}>{t.status === 'completed' ? 'Ready to review' : t.status === 'failed' ? 'Needs attention' : t.status === 'cancelled' ? 'Stopped' : t.status === 'cancelling' ? 'Stopping' : 'Working'} · {t.title || t.intent?.objective || t.prompt}</button>) : <p>No tasks yet.</p>}
+    <details className="technical-details"><summary>Technical activity and recent tools</summary>
+    {log?.available ? <>
+      {log.prompt && <><div className="task-hint">Last prompt · {log.prompt.at ?? ''}</div><p>{log.prompt.text}</p></>}
+      {log.messages?.map((m, i) => <p key={i} className="log-line">{m.at ?? ''} · {m.text}</p>)}
+      {log.tools?.length ? <><div className="sec">Recent tools</div>{log.tools.map((t, i) => <p key={i} className="log-line">{t.at ?? ''} · {t.name} ({t.args})</p>)}</> : null}
+    </> : <p>{log?.reason ?? 'Loading log…'}</p>}</details>
+  </>;
+}
+function TaskBody({ task, select }: { task: AgentTask; select: (id: string) => void }) {
+  return <><div className="sec">{task.status === 'completed' ? 'Ready to review' : task.status === 'failed' ? 'Needs attention' : task.status === 'cancelled' ? 'Stopped' : task.status === 'cancelling' ? 'Stopping' : 'Working'} · {new Date(task.updatedAt).toLocaleString()} {task.source === 'voice' && '· Voice request'}</div>
+    {task.routing && <p><strong>{task.routing.mode}</strong> · {task.routing.reason}</p>}
+    {task.transcript && <><div className="sec">What you said</div><p>{task.transcript}</p></>}
+    {task.intent && <><div className="sec">Understood task</div><p>{task.intent.objective}</p>{task.intent.problem && <p>{task.intent.problem}</p>}</>}
+    {task.intent?.plan && <><div className="sec">Coordinator plan</div><ol>{task.intent.plan.map((step, i) => <li key={i}>{step}</li>)}</ol></>}
+    {!!task.intent?.assumptions?.length && <><div className="sec">Assumptions</div><ul>{task.intent.assumptions.map((item, i) => <li key={i}>{item}</li>)}</ul></>}
+    <details><summary>Agent prompt</summary><pre className="content">{task.prompt}</pre></details>
+    <button className="rowlink" onClick={() => select(`agent:${task.agentId}`)}>{task.agentId}</button>
+    {task.artifacts.length > 0 && <div className="sec">Files</div>}
+    {task.artifacts.map((a) => <button key={a.path} className="rowlink" onClick={() => select(`artifact:${task.id}:${encodeURIComponent(a.path)}`)}>{a.name}</button>)}
+    {task.stdout && <details className="technical-details" open={task.status === 'completed'}><summary>{task.status === 'completed' ? 'Result and activity' : 'Work so far'}</summary><pre className="content">{task.stdout}</pre></details>}
+    {task.status === 'failed' && <p className="task-error" role="status">This task did not finish. Review the details before starting another attempt.</p>}{task.stderr && <details className="technical-details"><summary>Diagnostic details</summary><pre className="content">{task.stderr}</pre></details>}
+  </>;
+}
+function ArtifactBody({ artifact }: { artifact: ArtifactInfo }) {
+  return <AssetPreview key={artifact.path} artifact={artifact} />;
+}
+
+function SwarmBody({ swarm, select }: { swarm: SwarmTask; select: (id: string) => void }) {
+  return <>
+    <div className="sec">{swarm.mode === 'swarm' ? 'Team task' : 'Compare results'} · {swarm.status}</div><p>{swarm.goal}</p>
+    {swarm.routing && <p><strong>{swarm.routing.mode}</strong> · {swarm.routing.reason}</p>}
+    <div className="sec">Team members</div>
+    {swarm.agents.map(id => <button key={id} className="rowlink" onClick={() => select(`agent:${id}`)}>{id}</button>)}
+    <div className="sec">Shared files</div>
+    {swarm.artifacts.length ? swarm.artifacts.map(a => <button key={a.path} className="rowlink" onClick={() => select(`artifact:${swarm.id}:${encodeURIComponent(a.path)}`)}>{a.name}</button>) : <p>Files will appear here as the team produces them.</p>}
+    <details className="technical-details"><summary>Team evaluation</summary>
+      <p>Reward: {swarm.reward == null ? 'Pending' : swarm.reward.toFixed(3)} · Success: {swarm.success == null ? 'Pending' : swarm.success.toFixed(3)} · Output chars: {swarm.tokenProxy}</p>
+      {swarm.winnerId && <p>Best solo agent: {swarm.winnerId}</p>}
+      {swarm.rationale && <p>{swarm.rationale}</p>}{swarm.lesson && <p>Lesson: {swarm.lesson}</p>}
+    </details>
+    <details className="technical-details"><summary>Execution details</summary>
+      {swarm.runs.map((run, index) => <details key={index}><summary>{run.agentId} · turn {run.turn} · {run.status} · {run.outputChars} chars</summary><pre className="content">{run.stdout}</pre></details>)}
+    </details>
+    <details className="technical-details"><summary>Shared team activity</summary>
+      {swarm.blackboard.slice(-200).map(post => <p key={post.seq} className="log-line">{post.agentId} · {post.kind} · {post.text}</p>)}
+    </details>
+  </>;
 }

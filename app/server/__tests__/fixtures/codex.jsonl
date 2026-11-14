@@ -1,0 +1,3 @@
+{"type":"response_item","timestamp":"2026-01-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Build a chart"}]}}
+{"type":"response_item","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"custom_tool_call","name":"exec_command","input":"{\"cmd\":\"echo secret\"}"}}
+{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Chart ready"}]}}
