@@ -1,4 +1,4 @@
-import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawTether } from "./drawHologram";
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawTether } from "./drawHologram";
 import { HUD_FONT, voiceSignal } from "../state/hud";
 import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
 import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
@@ -37,7 +37,7 @@ function hudStatus(node: GNode) {
 }
 
 // The scene sits a little above centre, leaving the floor to the voice core.
-const SCENE_Y = 34;
+const SCENE_Y = 58;
 
 // Premium entrance: critically damped, no overshoot (matches the marble feel).
 const APPEAR: SpringToken = "calm";
@@ -112,6 +112,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
   const presentation = usePresentation(s => s.active);
   const presentationPhase = usePresentation(s => s.phase);
   const activityAt = useRef(new Map<string, { key: string; at: number }>());
+  const stepAt = useRef(new Map<string, { text: string; at: number }>());
   const sceneEnergy = useRef(0);
   const sceneLevel = useRef(0);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -349,6 +350,8 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         prev.activityKey = n.activityKey;
         prev.artifactCount = n.artifactCount;
         prev.artifactReady = n.artifactReady;
+        prev.startedAt = n.startedAt;
+        prev.step = n.step;
         if (n.fx != null) {
           prev.homeX = n.x;
           prev.homeY = n.y;
@@ -742,7 +745,9 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
             if (Math.hypot(node.x - node.homeX, node.y - node.homeY) > 4) continue; // away presenting
             const born = bornAt.current.get(node.id) ?? 0;
             const appear = REDUCED_MOTION ? 1 : Math.max(0, Math.min(1, (performance.now() - born - 250) / 700));
-            drawTether(ctx, node.x, node.y, Math.max(22, 36 / scale), { time, scale, working: node.status === 'running', reduced: still, alpha: appear });
+            drawTether(ctx, node.x, node.y, Math.max(22, Math.min(36 / scale, 52)), { time, scale, working: node.status === 'running', reduced: still, alpha: appear,
+              // A task being handed over: one bright charge runs out to the agent.
+              burst: node.status === 'running' ? time - (activityAt.current.get(node.id)?.at ?? -100) : 99 });
           }
           ctx.restore();
         }}
@@ -778,7 +783,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           const age = (tNow - (bornAt.current.get(node.id) ?? 0)) / 1000;
           const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, age);
           const grow = Math.max(0, p);
-          const baseR = node.type === 'agent' ? Math.max(22, 36 / scale) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
+          const baseR = node.type === 'agent' ? Math.max(22, Math.min(36 / scale, 52)) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
           const r = baseR * (0.45 + 0.55 * grow);
           const focus = usePresentation.getState().active;
           const focusAlpha = focus && node.id !== `agent:${focus.leadAgentId}` ? .28 : 1;
@@ -799,6 +804,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
             drawHolographicAgent(ctx, node.x, node.y, r, node.id.replace('agent:', ''), {
               state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at, reduced: still, focus: aimed,
             });
+            if (node.status === 'running' && node.type === 'agent') drawProgressDial(ctx, node.x, node.y, r, { time: now, seconds: node.startedAt ? Math.max(0, (Date.now() - node.startedAt) / 1000) : now - activity.at, scale, reduced: still });
           } else if (node.type === 'artifact') {
             drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false, { time: now, age, reduced: still, focus: aimed });
           } else {
@@ -825,13 +831,26 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
             ctx.fillStyle = sel || hot ? "oklch(97% .02 205)" : lead ? "oklch(91% .03 215)" : "oklch(82% .04 222)";
             const limit = node.type === 'artifact' ? 18 : 30;
             const text = node.label.length > limit ? node.label.slice(0, limit - 1) + '…' : node.label;
-            const top = node.y + r * (lead ? 1.5 : node.type === 'artifact' ? 1.42 : 1.3) + 7 / scale;
+            const top = node.y + r * (lead ? (node.status === 'running' ? 1.82 : 1.5) : node.type === 'artifact' ? 1.42 : 1.3) + 7 / scale;
             ctx.fillText(lead ? text.toUpperCase() : text, node.x, top);
             if (lead) {
               ctx.font = `500 ${9.5 / scale}px ${HUD_FONT}`;
               spacing(1.9);
               ctx.fillStyle = node.activity === 'failed' ? 'oklch(82% .13 70)' : node.status === 'running' || node.activity === 'done' ? 'oklch(84% .11 208)' : 'oklch(64% .04 228)';
-              ctx.fillText(hudStatus(node).toUpperCase(), node.x, top + 20 / scale);
+              const working = node.status === 'running' && !usePresentation.getState().active;
+              const since = working ? Math.max(0, Math.floor(node.startedAt ? (Date.now() - node.startedAt) / 1000 : 0)) : 0;
+              const clock = working && node.startedAt ? `  ${String(Math.floor(since / 60)).padStart(2, '0')}:${String(since % 60).padStart(2, '0')}` : '';
+              ctx.fillText(hudStatus(node).toUpperCase() + clock, node.x, top + 20 / scale);
+              if (working && node.step) {
+                // What the agent just said it is doing, typed out as it changes.
+                let typed = stepAt.current.get(node.id);
+                if (!typed || typed.text !== node.step) { typed = { text: node.step, at: now }; stepAt.current.set(node.id, typed); }
+                const shown = still ? node.step : node.step.slice(0, Math.floor((now - typed.at) * 46));
+                spacing(.2);
+                ctx.font = `400 ${11 / scale}px ui-sans-serif, system-ui, sans-serif`;
+                ctx.fillStyle = 'oklch(80% .04 220)';
+                ctx.fillText(shown + (!still && shown.length < node.step.length ? '▍' : ''), node.x, top + 37 / scale);
+              }
             }
             spacing(0);
           }

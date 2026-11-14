@@ -105,31 +105,23 @@ model and matching ONNX runtime under
 `npm run build` run setup automatically; `npm run setup:wake` can also be run
 explicitly. Setup needs network access once, then reuses the verified file sizes.
 The browser never downloads wake assets from Hugging Face or a CDN. Generated
-model/runtime files are gitignored and copied into production builds. It runs one
-inference at a time over overlapping audio
-windows, gated by local audio energy, with bounded history. A **50% normalized
-edit-similarity** match to the individual word **Marbles** opens OpenAI
-transcription. The detector scans every word in a sentence, so "hey Marbles",
-"hi Marbles", "yo Marbles", and longer sentences work without requiring a
-particular greeting. Close word transcriptions such as "marvels" and "marble"
-are accepted. It prefers the clearest match, then the earliest occurrence,
-so later request words do not displace an exact wake word. This is text
-similarity, not a calibrated acoustic confidence score. Saying the wake
-phrase alone gets a spoken acknowledgement without launching a task.
-Segment timestamps preserve the utterance containing the wake word while dropping
-earlier room/playback audio. Missing timestamps fall back to the audible onset
-instead of rejecting an otherwise recognized wake word. OpenAI removes the wake
-prefix from the final command transcript.
-This is local ASR-based wake recognition rather than a trained keyword-only
-model; latency and accuracy depend on the device, accent, and room noise.
-An isolated inference failure retries with a fresh window after a short backoff.
-Repeated failures show the actual runtime error. Each window is decoded once with
-segment timestamps, avoiding a second word-alignment decode. The detector accepts
-quieter input (RMS 0.0015), applies bounded gain only to the local recognition copy,
-and performs a final check with 300 ms of trailing silence. If speech ends while
-inference is busy, the next window stays pinned to that speech instead of skipping
-it because the room has gone quiet. Quiet input alone still cannot open the cloud
-gate; the transcript must contain the wake word at the configured similarity.
+model/runtime files are gitignored and copied into production builds. The worker
+warms up before reporting ready. An adaptive energy gate feeds 1.5-second windows
+every 250 ms while speech is present, plus a final window after 250 ms of quiet.
+Only the newest window waits while inference is busy; eight seconds of local audio
+remain available for the command. Fast decoding uses 12 tokens and estimates the
+wake boundary from audio energy. A guarded phonetic match accepts common Marbles
+transcriptions while excluding near misses such as “marvelous” and “tables.”
+On supported browsers, interim Web Speech recognition races the local Whisper
+detector by default. The first match wins and a 1.5-second cooldown prevents
+duplicate wakes. Browser recognition may use the browser vendor’s remote speech
+service; see [SpeechRecognition](https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition).
+If the browser API is unavailable or fails, local Whisper continues. The command
+always comes from the local audio buffer, then OpenAI transcribes it. The orb gives
+a short wake pulse. Set localStorage `marbles.debugWake` to `true` for detection
+latency, match, score, inference time, and dropped-window logs. Run
+`npm run wake:latency` for an offline replay against the local model and two WAV
+clips. Accuracy and latency depend on the device, accent, and room noise.
 
 After wake-up, an adaptive sound trigger commits phrases after 700 ms of quiet
 and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted

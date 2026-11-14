@@ -52,7 +52,9 @@ export function readOffice(bytes: Uint8Array): PreviewSection[] {
         const column = letters ? Array.from(letters).reduce((sum, c) => sum * 26 + c.charCodeAt(0) - 64, 0) - 1 : cells.length;
         if (column > 100) continue;
         while (cells.length <= column) cells.push('');
-        const value = elements(cell, 'v')[0]?.textContent ?? '';
+        // A formula without a cached result still shows what it computes.
+        const formula = elements(cell, 'f')[0]?.textContent;
+        const value = elements(cell, 'v')[0]?.textContent ?? (formula ? `=${formula}` : '');
         cells[column] = cell.getAttribute('t') === 's' ? shared[Number(value)] ?? value : cell.getAttribute('t') === 'inlineStr' ? texts(cell) : value;
       }
       return cells;

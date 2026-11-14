@@ -17,8 +17,11 @@ export function useAgentPolling() {
         void refreshTasks().catch(() => {}).then(() => useAgents.getState().removeAgent(id));
       });
     });
-    tasks();
-    const timer = window.setInterval(tasks, 5000);
-    return () => { live = false; stream?.close(); window.clearInterval(timer); };
+    // Poll faster while anything is running, so progress on the canvas feels live.
+    let timer = 0;
+    const busy = () => useAgents.getState().tasks.some(task => task.status === 'running') || useAgents.getState().swarms.some(swarm => ['running', 'evaluating'].includes(swarm.status));
+    const loop = () => { tasks(); timer = window.setTimeout(loop, busy() ? 1500 : 5000); };
+    loop();
+    return () => { live = false; stream?.close(); window.clearTimeout(timer); };
   }, []);
 }

@@ -73,7 +73,7 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export default function YouTubePlayer({ id }: { id: string }) {
+export default function YouTubePlayer({ id, autoplay = false }: { id: string; autoplay?: boolean }) {
   // Deferred: the iframe/player only mounts once the poster is clicked.
   const [loaded, setLoaded] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -177,6 +177,9 @@ export default function YouTubePlayer({ id }: { id: string }) {
     setCurrent(t);
     p.seekTo(t, true);
   }, []);
+
+  // Asked for by voice: there is no poster to press, so start straight away.
+  useEffect(() => { if (autoplay) start(); }, [autoplay, start]);
 
   if (!loaded) {
     // Click-to-load poster. A real same-origin button, so the virtual cursor's

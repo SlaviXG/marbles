@@ -1,5 +1,5 @@
 import { AudioTurns, pcm16, SAMPLE_RATE } from "./audio";
-import { WakeDetector } from "./WakeDetector";
+import { WakeDetector, type WakeDiagnostic } from "./WakeDetector";
 
 export type VoiceStatus = "idle" | "wake" | "armed" | "loading" | "listening" | "stopping" | "error";
 export type TranscriptEvent = { type: string; item_id?: string; delta?: string; transcript?: string };
@@ -7,6 +7,7 @@ type VoiceEvents = {
   status: (status: VoiceStatus, detail?: string) => void;
   transcript: (event: TranscriptEvent) => void;
   awake?: () => void;
+  wakeDetected?: (diagnostic?: WakeDiagnostic) => void;
   activity?: (level: number, speaking: boolean) => void;
 };
 
@@ -46,7 +47,7 @@ export class VoiceSession {
       if (!this.options.wake) await this.context.resume();
       if (this.disposed) return;
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       if (this.disposed) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
@@ -64,8 +65,9 @@ export class VoiceSession {
       await this.context.audioWorklet.addModule(new URL("./capture.worklet.js", import.meta.url).href);
       if (this.disposed) return;
       if (this.options.wake) {
-        this.wake = new WakeDetector(audio => {
-          if (this.disposed || this.stopping) return;
+        this.wake = new WakeDetector((audio, diagnostic) => {
+          if (this.disposed || this.stopping || (this.awake && !this.replyPlaying)) return;
+          this.events.wakeDetected?.(diagnostic);
           this.events.awake?.();
           this.replyPlaying = false; this.playbackUntil = 0;
           this.awake = true; this.wakeDeadline = Date.now() + 20_000;
@@ -140,7 +142,9 @@ export class VoiceSession {
     this.turns.discard(); this.wake?.reset();
     this.awake = false; this.speaking = false;
     this.events.activity?.(0, false);
-    this.events.status('wake', 'Listening locally for Marbles. Standby audio stays on this device.');
+    this.events.status('wake', this.wake?.browserRecognitionActive
+      ? 'Listening for Marbles with local and browser speech recognition.'
+      : 'Listening locally for Marbles. Standby audio stays on this device.');
   }
 
   setReplyPlaying(playing: boolean) {
@@ -152,7 +156,7 @@ export class VoiceSession {
 
   private reportActivity() {
     if (this.options.wake && !this.awake) {
-      this.events.status('wake', 'Listening locally for Marbles.'); return;
+      this.events.status('wake', 'Listening for Marbles.'); return;
     }
     this.events.status(this.speaking ? "listening" : "armed", this.speaking
       ? "Transcribing with OpenAI. Your audio is being sent."

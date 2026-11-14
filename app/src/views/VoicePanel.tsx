@@ -8,6 +8,8 @@ import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/me
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
+import { mediaCommand } from '../voice/mediaCommand';
+import { useDisplay, type Display } from '../state/display';
 import { useVault } from '../state/store';
 import type { AgentTask, SwarmTask } from '../core/agentTypes';
 import { useHud, voiceSignal } from '../state/hud';
@@ -18,6 +20,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies] = useState(true);
   const [replyPlaying, setReplyPlaying] = useState(false);
+  const [wakePulse, setWakePulse] = useState(false);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout>>();
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
@@ -48,7 +52,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
-    return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
+    return () => { mounted.current = false; clearTimeout(pulseTimer.current); commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
   }, []);
   useEffect(() => {
     for (const task of tasks) {
@@ -104,8 +108,20 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
-      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms);
+      const media = mediaCommand(request, useDisplay.getState().display);
+      if (media) {
+        const view = useDisplay.getState();
+        if (media.action === 'confirm') void view.confirm();
+        else if (media.action === 'close') view.close();
+        else if (media.action === 'grid') view.focus(null);
+        else view.step(media.action === 'next' ? 1 : -1);
+        if (media.reply) message({ id: `media:${crypto.randomUUID()}`, role: 'assistant', text: media.reply });
+        session.current?.rearm();
+        return;
+      }
+      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms, useAgents.getState().agents.filter(agent => agent.codingAgent));
       if (local) {
+        if (local.close || local.select) useDisplay.getState().close();
         if (local.close) useVault.getState().clear();
         if (local.select) useVault.getState().select(local.select);
         message({ id: `canvas:${crypto.randomUUID()}`, role: 'assistant', text: local.reply });
@@ -133,6 +149,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       },
       activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
+      wakeDetected: () => {
+        setWakePulse(false);
+        requestAnimationFrame(() => setWakePulse(true));
+        clearTimeout(pulseTimer.current);
+        pulseTimer.current = setTimeout(() => setWakePulse(false), 600);
+      },
     }, { wake: true });
     session.current = next;
     void next.start();
@@ -161,6 +183,14 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           session.current?.rearm(); watchingSwarms.current.add(data.swarm.id);
           reply(data.reply, { swarmId: data.swarm.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshSwarms()]);
+        } else if (data.state === 'show' && data.display) {
+          // Hermes chose to put something in front of the user.
+          const shown = data.display as Display | { kind: 'select'; id: string } | { kind: 'close' };
+          if (shown.kind === 'select') { useDisplay.getState().close(); useVault.getState().select(shown.id); }
+          else if (shown.kind === 'close') { useDisplay.getState().close(); useVault.getState().clear(); }
+          else { useVault.getState().clear(); useDisplay.getState().show(shown); }
+          reply(data.reply);
+          session.current?.rearm();
         } else if (data.state === 'ignore') {
           setMessages(current => current.filter(item => item.id !== id)); session.current?.rearm();
         } else {
@@ -177,7 +207,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   return (
     <>
     <VoiceConversation messages={messages} retry={enqueue} />
-    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice control">
+    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}${wakePulse ? ' wake-detected' : ''}`} aria-label="Voice control">
       <button type="button" className="voice-marble" disabled={status === "stopping"}
         aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
         aria-pressed={active} aria-describedby="voice-detail"
@@ -189,7 +219,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         </svg>
       </button>
       <div className="voice-caption" role="status" key={caption}>{caption}</div>
-      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Browser-assisted wake recognition may use your browser’s speech service. Command transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
     </>
   );
