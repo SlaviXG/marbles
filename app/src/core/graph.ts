@@ -7,6 +7,7 @@ export interface GNode {
   type: "note" | "section" | "url" | "agent" | "task" | "artifact" | "swarm" | "post";
   artifactType?: string;
   available?: boolean;
+  badge?: 'solo' | 'swarm';
   x?: number;
   y?: number;
   fx?: number;
@@ -58,6 +59,12 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     const parent = agentNodes.get(task.agentId);
     if (!parent) continue;
     const outward = Math.atan2(parent.y!, parent.x!);
+    if (task.routing) {
+      const point = childPosition(parent, childCounts.get(task.agentId) ?? 0, outward, 34);
+      const node = pinned(`task:${task.id}`, task.prompt.slice(0, 30), 'task', point.x, point.y);
+      node.badge = task.routing.mode; nodes.push(node); links.push({source:parent.id,target:node.id});
+      childCounts.set(task.agentId,(childCounts.get(task.agentId) ?? 0)+1);
+    }
     for (const artifact of task.artifacts.filter(isCanvasArtifact)) {
       if (fileCount >= 18) break;
       fileCount++;
@@ -78,6 +85,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     const anchor = swarm.agents.map(id => agentNodes.get(id)).find(Boolean);
     const x = anchor?.x ?? 0, y = anchor?.y ?? 0;
     const parent = pinned(`swarm:${swarm.id}`, swarm.goal.slice(0, 36), 'swarm', x + 30, y + 30);
+    parent.badge = swarm.routing?.mode;
     nodes.push(parent);
     for (const agentId of swarm.agents) if (agentNodes.has(agentId)) links.push({ source: parent.id, target: `agent:${agentId}` });
     for (const [index, post] of (swarm.blackboard ?? []).slice(-12).entries()) {

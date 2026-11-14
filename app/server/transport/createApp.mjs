@@ -10,6 +10,9 @@ import { localVoiceOrigin } from "./voice.mjs";
 import { speechHandler } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
 import { randomUUID } from 'node:crypto';
+import { routeTask } from '../scenarios/router.mjs';
+import { runScenarios } from '../scenarios/runScenario.mjs';
+import { scenarios, scenarioById } from '../scenarios/scenarios.mjs';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
@@ -26,6 +29,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   };
   voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog });
   const app = express();
+  const scenarioRuns = new Map();
   const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
   app.use(express.json({ limit: "32kb" }));
   app.post('/api/voice/speech', speechHandler());
@@ -42,8 +46,27 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   });
   app.get("/api/tasks", (_req, res) => res.json(taskService.snapshot()));
   app.get('/api/swarm/tasks', (_req, res) => res.json(swarmService.snapshot()));
+  app.post('/api/route', async (req,res) => {
+    try { res.json(await routeTask({goal:req.body?.goal})); } catch(e) { res.status(400).json({error:e.message}); }
+  });
+  app.post('/api/tasks/auto', async (req,res) => {
+    try {
+      const routing=await routeTask({goal:req.body?.goal});
+      if (routing.mode==='solo') res.status(202).json({routing,task:await taskService.startIdle(req.body.goal,{routing})});
+      else res.status(202).json({routing,swarm:await swarmService.start({goal:req.body.goal,mode:'swarm',routing})});
+    } catch(e) { res.status(e.code==='AGENT_BUSY'?409:e.code==='NO_AGENTS'?503:400).json({error:e.message}); }
+  });
+  app.post('/api/scenarios/run', (req,res) => {
+    const {scenarios: ids,agents,dryRun}=req.body??{};
+    if (ids!==undefined && (!Array.isArray(ids)||!ids.length||ids.some(id=>!scenarioById(id)))) return res.status(400).json({error:'Unknown or empty scenario selection'});
+    if (typeof dryRun!=='boolean' && dryRun!==undefined) return res.status(400).json({error:'dryRun must be boolean'});
+    const id=randomUUID(), state={id,status:'running',completed:0,total:(ids?.length??scenarios.length)*2}; scenarioRuns.set(id,state);
+    void runScenarios({selected:ids,agents,dryRun:dryRun??false,root:taskService.root,onProgress:p=>Object.assign(state,p)}).then(result=>Object.assign(state,{status:'completed',completed:state.total,result})).catch(error=>Object.assign(state,{status:'failed',error:error.message}));
+    res.status(202).json({id});
+  });
+  app.get('/api/scenarios/runs/:id',(req,res)=>{ const run=scenarioRuns.get(req.params.id); if (!run) return res.status(404).json({error:'Run not found'}); res.json(run); });
   app.post('/api/swarm/tasks', async (req, res) => {
-    try { res.status(202).json({ swarm: await swarmService.start(req.body) }); }
+    try { const {goal,agents,mode,maxTurns,concurrency,size}=req.body??{}; res.status(202).json({ swarm: await swarmService.start({goal,agents,mode,maxTurns,concurrency,size}) }); }
     catch (e) { res.status(e.code === 'AGENT_BUSY' ? 409 : e.code === 'NO_AGENTS' ? 503 : 400).json({ error: e.message }); }
   });
   app.get('/api/swarm/stats', (_req, res) => res.json(swarmService.statsSnapshot()));

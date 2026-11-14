@@ -88,7 +88,7 @@ export class TaskService {
       const id = randomUUID();
       const dir = path.join(this.root, agent.id, id);
       await fs.mkdir(dir, { recursive: true });
-      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title };
+      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
       this.tasks.push(task);
       const launch = launcher(agent, task.prompt, dir);
       let child;

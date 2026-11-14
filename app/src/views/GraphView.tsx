@@ -667,6 +667,13 @@ export default function GraphView() {
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', markdown: 'MD', slides: 'PPT', image: 'IMG' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
           }
+          if (node.badge) {
+            ctx.fillStyle = '#0d1117';
+            ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
+            ctx.fillStyle = '#ffffff'; ctx.font = '3px ui-sans-serif, system-ui, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(node.badge, node.x, node.y);
+          }
           // Spring-animated ring: scales + fades in/out with carried velocity.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
           const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;

@@ -95,6 +95,12 @@ export function createAgentDetector(options = {}) {
       const runtime = runtimeFor(platform, env);
       const supported = catalog.filter((agent) => !(agent.detectUnsupportedRuntimes ?? []).includes(runtime));
       const pathDirs = pathValue.split(platform === "win32" ? ";" : ":");
+      const localBin = path.join(homeDir, ".local", "bin");
+      if (!pathDirs.includes(localBin)) pathDirs.push(localBin);
+      const cursorBin = path.join(homeDir, ".cursor", "bin");
+      try {
+        if ((await fs.stat(cursorBin)).isDirectory() && !pathDirs.includes(cursorBin)) pathDirs.push(cursorBin);
+      } catch { /* Optional Cursor install directory is absent. */ }
       const desktopRoots = options.desktopRoots ?? ["/Applications", path.join(homeDir, "Applications")];
       const commands = [...new Set(supported.flatMap((agent) => [agent.detectCmd, ...(agent.detectCmdAliases ?? []), ...(agent.detectRequiredCommands ?? [])]))];
       const paths = new Map(await Promise.all(commands.map(async (command) => [command, await findCommand(command, pathDirs, platform, env)])));

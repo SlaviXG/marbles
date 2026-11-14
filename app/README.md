@@ -181,6 +181,29 @@ and [structured outputs](https://developers.openai.com/api/docs/guides/structure
 
 Richer parsing (remark AST, frontmatter), search/focus, graph layout polish.
 
+## Scenarios
+
+The office scenario harness compares independent solo attempts with a shared
+swarm at the same number of agent runs. Eight deterministic fixtures cover
+summaries, expenses, sales, policy changes, offsite planning, split roster
+information, log search, and email triage. Each mode is scored by a local rubric;
+the reward also discounts captured output length. Run the fake agent pipeline
+without CLI usage:
+
+```sh
+cd app
+npm run scenarios -- --dry-run
+npm run scenarios -- --dry-run --scenarios=meeting-summary,split-info-roster --agents=codex,claude --keep
+```
+
+Results are written to `scenario-results/<timestamp>.jsonl`, a matching Markdown
+report, and `scenario-results/latest.md`. Workspaces under
+`MARBLES_WORKSPACE_DIR/scenarios/<runId>/` are removed after scoring unless
+`--keep` is set. Omit `--dry-run` to run installed CLI agents. `POST /api/route`
+returns the cheap solo or swarm decision; `POST /api/tasks/auto` applies it.
+`POST /api/scenarios/run` starts a background run and returns an id; poll
+`GET /api/scenarios/runs/:id` for progress.
+
 ## Swarm mode
 
 Use **Start swarm** in the canvas or ask by voice for agents to work together. A

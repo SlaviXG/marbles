@@ -466,6 +466,7 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
 }
 function TaskBody({ task, select }: { task: AgentTask; select: (id: string) => void }) {
   return <><div className="sec">{task.status} · {task.updatedAt} {task.source === 'voice' && '· Voice request'}</div>
+    {task.routing && <p><strong>{task.routing.mode}</strong> · {task.routing.reason}</p>}
     {task.transcript && <><div className="sec">What you said</div><p>{task.transcript}</p></>}
     {task.intent && <><div className="sec">Understood task</div><p>{task.intent.objective}</p>{task.intent.problem && <p>{task.intent.problem}</p>}</>}
     <details><summary>Agent prompt</summary><pre className="content">{task.prompt}</pre></details>
@@ -485,6 +486,7 @@ function ArtifactBody({ artifact }: { artifact: ArtifactInfo }) {
 function SwarmBody({ swarm, select }: { swarm: SwarmTask; select: (id: string) => void }) {
   return <>
     <div className="sec">{swarm.mode} · {swarm.status}</div><p>{swarm.goal}</p>
+    {swarm.routing && <p><strong>{swarm.routing.mode}</strong> · {swarm.routing.reason}</p>}
     <div className="sec">Participants</div>
     {swarm.agents.map(id => <button key={id} className="rowlink" onClick={() => select(`agent:${id}`)}>{id}</button>)}
     <div className="sec">Team result</div>
