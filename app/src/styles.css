@@ -128,6 +128,69 @@ body {
   cursor: pointer;
 }
 
+/* Exit hints: a small arrow in the dimmed gap on each side of the window,
+   pointing outward, marking where to move a hand to close it (leaving the
+   frame closes the window). Centred in the gap between the screen edge and the
+   frame. Only shown while a hand is driving the cursor: a mouse user has the
+   scrim click and Esc. pointer-events: none so they never block the scrim or
+   count as part of the frame. */
+.exit-hint {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font: 500 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 240ms ease;
+}
+
+.exit-hint.left {
+  left: calc((100vw - var(--immersive-w)) / 4);
+  transform: translate(-50%, -50%);
+}
+
+.exit-hint.right {
+  right: calc((100vw - var(--immersive-w)) / 4);
+  transform: translate(50%, -50%);
+}
+
+/* Delayed so the hints arrive after the window has settled, not with it. */
+.app.hand-active .immersive-root.open .exit-hint {
+  opacity: 0.55;
+  transition-delay: 400ms;
+}
+
+/* Animated only while visible, so a closed window costs nothing. */
+.app.hand-active .immersive-root.open .exit-hint svg {
+  animation: exitNudgeRight 1.8s ease-in-out infinite;
+}
+
+.app.hand-active .immersive-root.open .exit-hint.left svg {
+  animation-name: exitNudgeLeft;
+}
+
+@keyframes exitNudgeLeft {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-5px); }
+}
+
+@keyframes exitNudgeRight {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app.hand-active .immersive-root.open .exit-hint svg {
+    animation: none;
+  }
+}
+
 /* the window box; scale driven by WAAPI. Not masked itself, so the close
    button stays crisp; its .immersive child carries the feather + scroll. */
 .immersive-frame {
@@ -460,19 +523,12 @@ body {
   right: 16px;
 }
 
-/* 16 (edge) + 36 (button) + 8 (gap) */
-.hand-side-btn {
-  right: 60px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* one more square to the left: 60 + 36 + 8. Nothing to inspect until the camera
+/* 16 (edge) + 36 (button) + 8 (gap). Nothing to inspect until the camera
    is live, so it fades in with tracking rather than sitting there dead. Kept in
    the layout (not display:none) so the fade has something to animate, and taken
    out of the tab order and the a11y tree while it is invisible. */
 .hand-debug-btn {
-  right: 104px;
+  right: 60px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 160ms ease;
