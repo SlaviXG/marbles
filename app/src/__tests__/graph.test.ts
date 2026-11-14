@@ -109,6 +109,17 @@ describe('agent canvas mapping', () => {
       status: 'running', activity: 'working', label: 'cursor',
     });
   });
+
+  it('keeps a cancelling worker busy and labels its stopped task accurately', () => {
+    const codex = agent('codex', true);
+    const stopping = { ...task, status: 'cancelling' as const, title: 'Prepare the agenda' };
+    expect(composeGraph({}, [codex], [stopping]).nodes[0]).toMatchObject({
+      status: 'running', activity: 'working', progress: 'Stopping: Prepare the agenda',
+    });
+    const stopped = composeGraph({}, [codex], [{ ...stopping, status: 'cancelled' }]);
+    expect(stopped.nodes[0]).toMatchObject({ status: 'idle', activity: 'waiting', progress: 'Stopped: Prepare the agenda' });
+    expect(stopped.nodes.some(node => node.type === 'artifact')).toBe(true);
+  });
 });
 
 describe('swarm graph', () => {

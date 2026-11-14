@@ -48,7 +48,7 @@ export class CompletionTracker {
     for (const source of sources) {
       const key = `${kind}:${source.id}`;
       const previous = this.previous.get(key);
-      const running = ['running', 'evaluating'].includes(source.status);
+      const running = ['running', 'evaluating', 'cancelling'].includes(source.status);
       const entry = previous ?? { eligible: !baseline || running, emitted: false };
       if (running) entry.eligible = true;
       if (source.status === 'completed' && entry.eligible && !entry.emitted) {

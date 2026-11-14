@@ -27,7 +27,28 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     const latest = [task && { at: task.createdAt, stdout: task.stdout }, runs[0] && { at: runs[0].startedAt, stdout: runs[0].stdout }].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     return agentLog(id, undefined, latest?.stdout);
   };
-  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog });
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
+    const notes = service.snapshot().notes ?? [];
+    const note = notes.find(note => note.id === selectedId);
+    const task = selectedId?.startsWith('task:') ? taskService.snapshot().find(task => task.id === selectedId.slice(5)) : null;
+    const swarm = selectedId?.startsWith('swarm:') ? swarmService.get(selectedId.slice(6)) : null;
+    const agent = selectedId?.startsWith('agent:') ? agentRegistry.snapshot().find(agent => agent.id === selectedId.slice(6)) : null;
+    let artifact;
+    if (selectedId?.startsWith('artifact:')) {
+      try {
+        const relative = decodeURIComponent(selectedId.split(':').slice(2).join(':'));
+        const found = [...taskService.snapshot(), ...(swarmService.snapshot?.() ?? [])].flatMap(item => item.artifacts ?? []).find(item => item.path === relative);
+        if (found) artifact = { ...found, absolutePath: await resolveArtifact(taskService.root, found.path) };
+      } catch { /* An expired/missing selection is not a usable source. */ }
+    }
+    return {
+      notes: notes.slice(0, 12).map(note => ({ id: note.id, title: note.title, path: note.path })),
+      selected: note ? { title: note.title, path: note.path, excerpt: note.sections.map(section => section.content).join('\n').slice(0, 1500) }
+        : task ? { id: task.id, title: task.title, status: task.status, objective: task.intent?.objective, artifacts: task.artifacts.slice(0, 5) }
+        : swarm ? { id: swarm.id, kind: 'swarm', status: swarm.status, agents: swarm.agents, artifacts: swarm.artifacts.slice(0, 5) }
+        : agent ? { id: agent.id, kind: 'agent', status: taskService.isBusy(agent.id) ? 'busy' : 'idle' } : artifact ?? null,
+    };
+  } });
   const app = express();
   const scenarioRuns = new Map();
   const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
@@ -86,7 +107,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
       const result = await voiceCommands.dispatch(req.body);
       res.status(['assigned', 'swarm'].includes(result.state) ? 202 : 200).json(result);
     } catch (error) {
-      const status = error.code === 'AGENT_BUSY' ? 409 : error.code === 'NO_AGENTS' ? 503 : 400;
+      const status = error.code === 'AGENT_BUSY' ? 409 : ['NO_AGENTS', 'COORDINATOR_CONFIG', 'COORDINATOR_UNAVAILABLE'].includes(error.code) ? 503 : 400;
       res.status(status).json({ error: error.name === 'TimeoutError' ? 'Task interpretation timed out. Please retry.' : error.message });
     }
   });
@@ -95,6 +116,11 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     const question = req.body?.question;
     if (typeof question !== 'string' || !question.trim() || question.length > 6000) return res.status(400).json({ error: 'Supply a question under 6,000 characters.' });
     try { res.json(await voiceCommands.dispatch({ transcript: question, requestId: randomUUID() })); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
+  app.post('/api/voice/result', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Voice results require a local app origin.' });
+    try { res.json(await voiceCommands.summarize(req.body)); }
     catch (error) { res.status(400).json({ error: error.message }); }
   });
   app.post("/api/agents/:id/tasks", async (req, res) => {

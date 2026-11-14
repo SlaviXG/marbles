@@ -15,13 +15,9 @@
 .canvas-header { position:absolute; inset:26px 32px auto; z-index:42; display:flex; align-items:center; justify-content:space-between; gap:24px; pointer-events:none; }
 .canvas-brand { display:flex; gap:11px; align-items:center; font-size:1.35rem; font-weight:650; letter-spacing:.12em; color:var(--text); }
 .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:50%; background:radial-gradient(circle at 35% 25%,oklch(76% .1 210 / .3),oklch(25% .06 230)); border:1px solid oklch(78% .09 215 / .5); color:var(--teal); box-shadow:0 0 18px oklch(70% .12 220 / .13); font-size:1.2rem; }
-.brand-caption { font-size:.6875rem; font-weight:400; color:var(--muted); letter-spacing:.12em; margin-left:12px; padding-left:22px; border-left:1px solid var(--border); }
 .canvas-connection { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:.8125rem; }
 .canvas-connection>span { width:6px; height:6px; border-radius:50%; background:oklch(70% .1 65); }
 .canvas-connection.connected>span { background:var(--teal); }
-.canvas-intro { position:absolute; top:100px; left:50%; transform:translateX(-50%); z-index:4; text-align:center; pointer-events:none; width:min(600px,calc(100vw - 32px)); }
-.canvas-intro h1 { color:var(--text); font-size:1.5rem; line-height:1.3; font-weight:350; letter-spacing:.01em; margin-bottom:8px; }
-.canvas-intro p { font-size:.875rem; color:var(--muted); margin:0; }
 .canvas-empty { position:absolute; top:40%; left:50%; transform:translateX(-50%); max-width:42ch; text-align:center; font-size:.9375rem; color:var(--muted); background:var(--panel); padding:16px; border-radius:12px; }
 /* Keep the original floating, glowing, microphone-responsive voice marble. */
 .canvas-app .voice-dock { position:fixed; bottom:38px; left:50%; transform:translateX(-50%); z-index:41; width:min(360px,calc(100vw - 32px)); display:flex; flex-direction:column; align-items:center; }
@@ -51,7 +47,6 @@
  .gesture-widget .gesture-visual { position:absolute; left:12px; top:12px; width:60px; height:60px; margin:0; }
  .gesture-widget .gesture-visual canvas { top:7px; height:45px!important; }
  .gesture-widget .gesture-hand-guide { top:3px; width:44px; height:54px; }
- .canvas-app .canvas-intro { top:184px; }
  .has-presentation .gesture-widget { min-height:0; padding-left:12px; }
 }
 @media(max-height:650px) { .gesture-widget .gesture-visual { display:none; } }
@@ -92,17 +87,16 @@
 .canvas-node-access button:focus { position:relative; display:block; width:auto; height:auto; padding:12px 20px; clip-path:none; background:var(--panel); color:var(--text); border:1px solid var(--teal); border-radius:10px; }
 @media(max-width:1000px) { .canvas-app .voice-conversation { left:20px; bottom:200px; width:270px; max-height:25dvh; } }
 @media(max-width:600px) {
- .canvas-header { inset:16px 18px auto; } .canvas-brand { font-size:1.15rem; } .brand-caption { display:none; }
- .canvas-intro { top:90px; } .canvas-intro h1 { font-size:1.25rem; } .canvas-connection { font-size:.75rem; }
+ .canvas-header { inset:16px 18px auto; } .canvas-brand { font-size:1.15rem; }
+ .canvas-connection { font-size:.75rem; }
  .canvas-app .voice-dock { bottom:46px; } .gesture-guide { font-size:.6875rem; max-width:40ch; }
  .canvas-app .voice-conversation { left:16px; bottom:200px; width:min(270px,calc(100vw - 32px)); max-height:24dvh; }
  .canvas-app .immersive-root { inset:76px 12px 190px; width:auto; } .canvas-app .ph { padding:12px 20px 16px; } .canvas-app .ibody { padding:0 20px 24px; }
 }
-@media(max-height:650px) { .canvas-intro { top:74px; } .canvas-intro h1 { font-size:1.125rem; } .canvas-app .voice-dock { bottom:24px; } .gesture-guide { bottom:4px; } }
+@media(max-height:650px) { .canvas-app .voice-dock { bottom:24px; } .gesture-guide { bottom:4px; } }
 @media(prefers-reduced-motion:reduce) { .canvas-app *,.canvas-app *::before,.canvas-app *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
 
 .canvas-brand { text-transform:uppercase; font-size:1.05rem; font-weight:500; }
-.canvas-intro h1 { text-shadow:0 0 28px oklch(75% .1 220 / .14); }
 
 .canvas-app .ph .badge { display:none; }
 .canvas-app .rowlink,.canvas-app .prj { background:transparent; border:0; border-bottom:1px solid var(--border); border-radius:0; padding:12px 0; }
@@ -155,7 +149,6 @@
 .presentation-queue { text-align:right; color:oklch(75% .04 220); }
 .presentation-stage.returning { pointer-events:none; }
 .presentation-stage.returning .presentation-screen { pointer-events:none; }
-.has-presentation .canvas-intro { opacity:.18; transition:opacity 250ms ease-out; }
 .has-presentation .canvas-header { opacity:.75; }
-@media(max-width:849px) { .presentation-header { padding:18px 20px 14px; } .presentation-reader { padding:18px 20px; } .presentation-header h2 { font-size:1.125rem; } .presentation-footer { padding:6px 18px; gap:8px; } .presentation-tether { display:none; } .presentation-queue { max-width:18ch; } .has-presentation .canvas-intro { opacity:0; } }
+@media(max-width:849px) { .presentation-header { padding:18px 20px 14px; } .presentation-reader { padding:18px 20px; } .presentation-header h2 { font-size:1.125rem; } .presentation-footer { padding:6px 18px; gap:8px; } .presentation-tether { display:none; } .presentation-queue { max-width:18ch; } }
 @media(prefers-reduced-motion:reduce) { .presentation-screen { transform:none!important; } }

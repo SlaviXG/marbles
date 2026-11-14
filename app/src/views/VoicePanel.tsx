@@ -4,11 +4,12 @@ import { emptyTranscript, transcriptText, updateTranscript } from "../voice/tran
 import { CommandBuffer } from "../voice/CommandBuffer";
 import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
-import { upsertMessage, statusMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
+import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
 import { useVault } from '../state/store';
+import type { AgentTask, SwarmTask } from '../core/agentTypes';
 
 export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: () => void; onDeactivate?: () => void } = {}) {
   const session = useRef<VoiceSession>();
@@ -18,15 +19,17 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
-  const clarificationContext = useRef("");
+  const conversationId = useRef(crypto.randomUUID());
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
   const draft = useRef(emptyTranscript());
   const consumed = useRef(new Set<string>());
   const draftId = useRef('');
   const watching = useRef(new Map<string, string>());
+  const watchingSwarms = useRef(new Set<string>());
   const tasks = useAgents(state => state.tasks);
+  const swarms = useAgents(state => state.swarms);
   const [status, setStatus] = useState<VoiceStatus>("idle");
-  const [detail, setDetail] = useState("Enable the microphone, then say “Marbles” and your task. Voice requests start when you finish speaking. Transcription uses OpenAI.");
+  const [detail, setDetail] = useState("Describe the outcome. Marbles plans it and delegates to an idle agent.");
   const [level, setLevel] = useState(0);
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
   const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
@@ -45,16 +48,36 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   }, []);
   useEffect(() => {
     for (const task of tasks) {
-      if (task.status === 'running' && task.source === 'voice' && !watching.current.has(task.id)) {
+      if (['running', 'cancelling'].includes(task.status) && task.source === 'voice' && !watching.current.has(task.id)) {
         watching.current.set(task.id, task.title ?? 'your task');
       }
-      if (!watching.current.has(task.id) || task.status === 'running') continue;
+      if (!watching.current.has(task.id) || ['running', 'cancelling'].includes(task.status)) continue;
       watching.current.delete(task.id);
-      const text = task.status === 'failed' ? `I couldn’t finish: ${task.title ?? 'the task'}. Open the task for details.`
-        : task.stdout.trim().slice(-900) || `Finished: ${task.title ?? 'your task'}.${task.artifacts.length ? ` ${task.artifacts.length} files ready.` : ''}`;
-      message({ id: `result:${task.id}`, role: 'assistant', label: task.agentId, text, taskId: task.id });
+      void reportResult(task, 'task');
     }
   }, [tasks]);
+
+  useEffect(() => {
+    for (const swarm of swarms) {
+      if (['running', 'evaluating'].includes(swarm.status) && swarm.source === 'voice') watchingSwarms.current.add(swarm.id);
+      if (!watchingSwarms.current.has(swarm.id) || ['running', 'evaluating'].includes(swarm.status)) continue;
+      watchingSwarms.current.delete(swarm.id);
+      void reportResult(swarm, 'swarm');
+    }
+  }, [swarms]);
+
+  async function reportResult(record: AgentTask | SwarmTask, kind: 'task' | 'swarm') {
+    let text = record.status === 'cancelled' ? `Stopped: ${(record.title ?? 'your task').slice(0, 100)}.`
+      : record.status === 'completed' ? `Finished: ${(record.title ?? 'your task').slice(0, 100)}. Open the task for the result.`
+      : `Couldn’t finish: ${(record.title ?? 'your task').slice(0, 100)}. Open the task for details.`;
+    try {
+      const response = await fetch('/api/voice/result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: record.id, kind, conversationId: conversationId.current }), signal: AbortSignal.timeout(18_000) });
+      if (response.ok) { const data = await response.json(); if (typeof data.reply === 'string' && data.reply.trim()) text = data.reply; }
+    } catch { /* A short local notice keeps results usable if synthesis fails. */ }
+    if (mounted.current) message({ id: `result:${kind}:${record.id}`, role: 'assistant', label: 'Marbles · Claude', text,
+      ...(kind === 'task' ? { taskId: record.id } : { swarmId: record.id }) });
+  }
 
   function message(item: Omit<VoiceMessage, 'expiresAt'>) {
     const time = Date.now();
@@ -74,7 +97,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
       const request = withoutWakePhrase(text);
       if (!request) {
-        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: "I’m listening. What would you like me to do?" });
+        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
       const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms);
@@ -85,8 +108,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         session.current?.rearm();
         return;
       }
-      enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${request}` : request,
-        requestId: crypto.randomUUID() });
+      enqueue({ transcript: request, requestId: crypto.randomUUID(), conversationId: conversationId.current, selectedId: useVault.getState().selectedId });
     });
     const next = new VoiceSession({
       status: (state, detail) => {
@@ -116,35 +138,31 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     requestQueue.current = requestQueue.current.then(async () => {
       if (!mounted.current) return;
       const id = `reply:${request.requestId}`;
-      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', text, ...extra });
-      reply('Finding the right agent…', { pending: true });
+      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Claude', text, ...extra });
+      reply('Planning…', { pending: true });
       try {
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request), signal: AbortSignal.timeout(30_000),
+          body: JSON.stringify(request), signal: AbortSignal.timeout(45_000),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not delegate the task.');
         if (!mounted.current) return;
         if (data.state === 'assigned') {
           session.current?.rearm();
-          clarificationContext.current = '';
           watching.current.set(data.task.id, data.intent.objective);
-          reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
+          reply(data.reply, { taskId: data.task.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshTasks()]);
         } else if (data.state === 'swarm') {
-          session.current?.rearm(); clarificationContext.current = '';
-          reply(`Started a swarm with ${data.swarm.agents.join(' and ')}: ${data.intent.objective}`, { swarmId: data.swarm.id });
+          session.current?.rearm(); watchingSwarms.current.add(data.swarm.id);
+          reply(data.reply, { swarmId: data.swarm.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshSwarms()]);
-        } else if (data.state === 'status' || data.state === 'log') {
-          session.current?.rearm(); clarificationContext.current = '';
-          const item = statusMessage(id, data);
-          if (item) message(item);
-        } else if (data.state === 'clarify') {
-          clarificationContext.current = request.transcript;
-          reply(data.intent.clarification);
+        } else if (data.state === 'ignore') {
+          setMessages(current => current.filter(item => item.id !== id)); session.current?.rearm();
+        } else {
+          reply(data.reply);
+          if (data.state !== 'clarify') session.current?.rearm();
         }
-        else reply('What would you like me to do?');
       } catch (error) {
         if (!mounted.current) return;
         reply(error instanceof Error ? error.message : 'Could not delegate the task.', { retry: request });

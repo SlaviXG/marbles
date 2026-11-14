@@ -31,6 +31,13 @@ describe('completion presentations', () => {
     expect(tracker.observe('task', [{ ...task, status: 'failed' }])).toEqual([]);
     expect(tracker.observe('task', [{ ...task, id: 'fast', status: 'completed' }])).toHaveLength(1);
   });
+  it('does not present cancelled work even when partial files exist', () => {
+    const tracker = new CompletionTracker();
+    tracker.observe('task', [task]);
+    expect(tracker.observe('task', [{ ...task, status: 'cancelling' }])).toEqual([]);
+    expect(tracker.observe('task', [{ ...task, status: 'cancelled' }])).toEqual([]);
+    expect(tracker.observe('task', [{ ...task, status: 'cancelled' }])).toEqual([]);
+  });
   it('uses a swarm lead for shared deliverables and supports reopening files', () => {
     const tracker = new CompletionTracker();
     tracker.observe('swarm', [swarm]);

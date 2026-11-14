@@ -12,6 +12,11 @@ export default function VoiceConversation({ messages, retry, read }: {
         className={`voice-message ${message.role}${message.pending ? ' pending' : ''}`}>
         <span className="voice-message-label">{message.label ?? (message.role === 'user' ? 'You' : 'Marbles')}</span>
         <p aria-live={message.role === 'user' ? 'off' : undefined}>{message.text}</p>
+        {message.plan && <details className="voice-plan">
+          <summary>Plan & assumptions</summary>
+          <ol>{message.plan.plan.map((step, i) => <li key={i}>{step}</li>)}</ol>
+          {message.plan.assumptions.length > 0 && <><span>Assuming</span><ul>{message.plan.assumptions.map((item, i) => <li key={i}>{item}</li>)}</ul></>}
+        </details>}
         {(message.taskId || message.swarmId || message.retry || (read && message.role === 'assistant' && !message.pending)) && <div className="voice-message-actions">
           {read && message.role === 'assistant' && !message.pending && <button type="button" onClick={() => read(message.text)}>Read aloud</button>}
           {message.taskId && <button type="button" onClick={() => useVault.getState().select(`task:${message.taskId}`)}>View task ↗</button>}

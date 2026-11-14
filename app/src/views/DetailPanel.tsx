@@ -243,7 +243,7 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
                 }
                 if (displayedId?.startsWith('task:')) {
                   const task = tasks.find(t => `task:${t.id}` === displayedId);
-                  return task && <><SpecialHeader kind="Task" name={task.prompt} /><div className="ibody"><TaskBody task={task} select={select} /></div></>;
+                  return task && <><SpecialHeader kind="Task" name={task.title ?? task.prompt} /><div className="ibody"><TaskBody task={task} select={select} /></div></>;
                 }
                 if (displayedId?.startsWith('assets:')) {
                   const owner = displayedId.slice('assets:'.length);
@@ -414,7 +414,7 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
   return <>
     <p className="agent-voice-hint">Speak to give your team a task. Your teammate’s work and files stay here.</p>
     <div className="sec">Tasks</div>
-    {tasks.length ? tasks.map(t => <button key={t.id} className="rowlink" onClick={() => select(`task:${t.id}`)}>{t.status === 'completed' ? 'Ready to review' : t.status === 'failed' ? 'Needs attention' : 'Working'} · {t.title || t.intent?.objective || t.prompt}</button>) : <p>No tasks yet.</p>}
+    {tasks.length ? tasks.map(t => <button key={t.id} className="rowlink" onClick={() => select(`task:${t.id}`)}>{t.status === 'completed' ? 'Ready to review' : t.status === 'failed' ? 'Needs attention' : t.status === 'cancelled' ? 'Stopped' : t.status === 'cancelling' ? 'Stopping' : 'Working'} · {t.title || t.intent?.objective || t.prompt}</button>) : <p>No tasks yet.</p>}
     <details className="technical-details"><summary>Technical activity and recent tools</summary>
     {log?.available ? <>
       {log.prompt && <><div className="task-hint">Last prompt · {log.prompt.at ?? ''}</div><p>{log.prompt.text}</p></>}
@@ -424,10 +424,12 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
   </>;
 }
 function TaskBody({ task, select }: { task: AgentTask; select: (id: string) => void }) {
-  return <><div className="sec">{task.status === 'completed' ? 'Ready to review' : task.status === 'failed' ? 'Needs attention' : 'Working'} · {new Date(task.updatedAt).toLocaleString()} {task.source === 'voice' && '· Voice request'}</div>
+  return <><div className="sec">{task.status === 'completed' ? 'Ready to review' : task.status === 'failed' ? 'Needs attention' : task.status === 'cancelled' ? 'Stopped' : task.status === 'cancelling' ? 'Stopping' : 'Working'} · {new Date(task.updatedAt).toLocaleString()} {task.source === 'voice' && '· Voice request'}</div>
     {task.routing && <p><strong>{task.routing.mode}</strong> · {task.routing.reason}</p>}
     {task.transcript && <><div className="sec">What you said</div><p>{task.transcript}</p></>}
     {task.intent && <><div className="sec">Understood task</div><p>{task.intent.objective}</p>{task.intent.problem && <p>{task.intent.problem}</p>}</>}
+    {task.intent?.plan && <><div className="sec">Coordinator plan</div><ol>{task.intent.plan.map((step, i) => <li key={i}>{step}</li>)}</ol></>}
+    {!!task.intent?.assumptions?.length && <><div className="sec">Assumptions</div><ul>{task.intent.assumptions.map((item, i) => <li key={i}>{item}</li>)}</ul></>}
     <details><summary>Agent prompt</summary><pre className="content">{task.prompt}</pre></details>
     <button className="rowlink" onClick={() => select(`agent:${task.agentId}`)}>{task.agentId}</button>
     {task.artifacts.length > 0 && <div className="sec">Files</div>}

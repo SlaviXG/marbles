@@ -10,6 +10,20 @@ const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtur
 const codex = { id: 'codex', kind: 'cli', path: '/bin/codex' };
 const claude = { id: 'claude', kind: 'cli', path: '/bin/claude' };
 describe('task launcher', () => {
+  it('keeps a cancelling agent busy until its managed process exits', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-cancel-'));
+    const child = new EventEmitter(); child.kill = vi.fn(() => true);
+    const service = new TaskService({ root, agentDetector: async () => [codex], spawnProcess: () => child });
+    try {
+      const task = await service.start('codex', 'Do work');
+      expect(service.cancel(task.id).status).toBe('cancelling');
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(service.isBusy('codex')).toBe(true);
+      child.emit('close', null);
+      expect(task.status).toBe('cancelled'); expect(service.isBusy('codex')).toBe(false);
+      expect(service.cancel('unknown')).toBe(null);
+    } finally { child.emit('close', null); await rm(root, { recursive: true, force: true }); }
+  });
   it('keeps dependency files from crowding real deliverables out of artifact discovery', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-files-'));
     try {

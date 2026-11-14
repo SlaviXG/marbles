@@ -51,12 +51,12 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
     const supported = ['codex', 'claude'].includes(agent.id) || agent.id === 'cursor' && ['cursor-agent', 'agent'].includes(agent.command ?? '');
     const status = agent.status ?? (!agent.available || agent.kind !== 'cli' || !supported
-      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && ['running', 'cancelling'].includes(task.status)) || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
     const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     node.status = status;
-    const latest = tasks.find(task => task.agentId === agent.id && task.status === 'running') ?? tasks.find(task => task.agentId === agent.id);
-    node.progress = latest ? `${latest.status === 'completed' ? 'Ready to review' : latest.status === 'failed' ? 'Needs attention' : 'Working'}: ${latest.title || latest.intent?.objective || latest.prompt}` : undefined;
+    const latest = tasks.find(task => task.agentId === agent.id && ['running', 'cancelling'].includes(task.status)) ?? tasks.find(task => task.agentId === agent.id);
+    node.progress = latest ? `${latest.status === 'completed' ? 'Ready to review' : latest.status === 'failed' ? 'Needs attention' : latest.status === 'cancelled' ? 'Stopped' : latest.status === 'cancelling' ? 'Stopping' : 'Working'}: ${latest.title || latest.intent?.objective || latest.prompt}` : undefined;
     const latestSwarm = swarms.find(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ?? swarms.find(swarm => swarm.agents.includes(agent.id));
     node.activity = status === 'unavailable' ? 'unavailable' : status === 'running' ? 'working' : latestSwarm?.status === 'completed' || latest?.status === 'completed' ? 'done' : latestSwarm?.status === 'failed' || latest?.status === 'failed' ? 'failed' : 'waiting';
     node.activityKey = `${node.activity}:${latestSwarm?.id ?? latest?.id ?? 'idle'}`;
@@ -101,7 +101,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   for (const [swarmIndex, swarm] of swarms.slice(0, 3).entries()) {
     const x = swarmIndex === 0 ? 0 : swarmIndex === 1 ? -190 : 190;
     const y = swarmIndex === 0 ? 0 : -65;
-    const parent = pinned(`swarm:${swarm.id}`, swarm.mode === 'best-of-n' ? 'Compare results' : 'Team task', 'swarm', x, y);
+    const parent = pinned(`swarm:${swarm.id}`, swarm.title || (swarm.mode === 'best-of-n' ? 'Compare results' : 'Team task'), 'swarm', x, y);
     parent.status = ['running', 'evaluating'].includes(swarm.status) ? 'running' : 'idle';
     parent.activity = parent.status === 'running' ? 'working' : swarm.status === 'completed' ? 'done' : swarm.status === 'failed' ? 'failed' : 'waiting';
     parent.activityKey = `${swarm.id}:${swarm.status}`;
