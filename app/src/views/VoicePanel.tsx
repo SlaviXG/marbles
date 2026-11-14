@@ -29,7 +29,7 @@ export default function VoicePanel() {
   const [detail, setDetail] = useState("Enable your mic, then describe a task. OpenAI turns your words into a prompt for an idle agent.");
   const [level, setLevel] = useState(0);
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
-  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Hey Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
+  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
     : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
     : status === "error" ? "Enable microphone" : "Microphone off";
 

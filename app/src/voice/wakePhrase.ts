@@ -1,9 +1,8 @@
-export const WAKE_MATCH_THRESHOLD = 0.6;
-const TARGET = 'hey marbles';
-const GREETINGS = new Set(['hey', 'hay', 'hi', 'hei', 'ay']);
+export const WAKE_MATCH_THRESHOLD = 0.5;
+const TARGET = 'marbles';
 
-// Normalized edit similarity, not an acoustic confidence probability. Require
-// an attention word so ordinary phrases such as "they marbles" cannot wake it.
+// Compare individual words anywhere in the transcript, not the full sentence.
+// This is normalized edit similarity, not acoustic confidence.
 function similarity(left: string, right: string): number {
   let row = Array.from({ length: right.length + 1 }, (_, i) => i);
   for (let i = 1; i <= left.length; i++) {
@@ -16,9 +15,9 @@ function similarity(left: string, right: string): number {
   return 1 - row[right.length] / Math.max(left.length, right.length);
 }
 
-function score(first: string, second: string): number | undefined {
-  if (!GREETINGS.has(first) || second.length < 3 || second.length > 14) return;
-  const value = similarity(`hey ${second}`, TARGET);
+function score(word: string): number | undefined {
+  if (word.length < 3 || word.length > 14) return;
+  const value = similarity(word, TARGET);
   return value >= WAKE_MATCH_THRESHOLD ? value : undefined;
 }
 
@@ -35,18 +34,24 @@ function words(text: string): { text: string; index: number; end: number }[] {
 }
 
 export function wakeMatch(text: string): { score: number; start: number; end: number } | undefined {
-  const tokens = words(text);
-  for (let i = tokens.length - 2; i >= 0; i--) {
-    const value = score(tokens[i].text, tokens[i + 1].text);
-    if (value != null) return { score: value, start: tokens[i].index, end: tokens[i + 1].end };
+  let best: { score: number; start: number; end: number } | undefined;
+  for (const token of words(text)) {
+    const value = score(token.text);
+    // Prefer the clearest word match, then its earliest occurrence. In
+    // "Marbles, create tables", the request word must not replace the wake word.
+    if (value != null && (!best || value > best.score)) best = { score: value, start: token.index, end: token.end };
   }
+  return best;
 }
 
 export function wakeStart(chunks: { text: string; timestamp: [number | null, number | null] }[]): number | undefined {
   const tokens = chunks.flatMap(chunk => words(chunk.text).map(word => ({ ...word, at: chunk.timestamp[0] })));
-  for (let i = tokens.length - 2; i >= 0; i--) {
-    if (score(tokens[i].text, tokens[i + 1].text) != null && tokens[i].at != null) return tokens[i].at!;
+  let best: { score: number; at: number } | undefined;
+  for (const token of tokens) {
+    const value = score(token.text);
+    if (value != null && token.at != null && (!best || value > best.score)) best = { score: value, at: token.at };
   }
+  return best?.at;
 }
 
 export function withoutWakePhrase(text: string): string {

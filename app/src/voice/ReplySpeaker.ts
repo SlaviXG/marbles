@@ -5,7 +5,7 @@ export function spokenText(text: string): string {
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, 'link in the message')
-    .replace(/[*_`#]/g, '').replace(/\bhey[\s,.!?:;-]+marbles\b/gi, 'the wake phrase')
+    .replace(/[*_`#]/g, '').replace(/\bmarbles\b/gi, 'the wake word')
     .replace(/\s+/g, ' ').trim();
   // Never speak even a fuzzy wake candidate back into the detector.
   let wake;
