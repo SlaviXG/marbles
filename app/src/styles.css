@@ -85,6 +85,8 @@
 }
 .voice-sphere svg { position: relative; filter: drop-shadow(0 1px 3px oklch(15% 0.03 190)); }
 .voice-dock.armed .voice-halo { opacity: 0.8; }
+.voice-dock.wake .voice-halo { opacity: 0.6; }
+.voice-dock.reply-speaking .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
 .voice-dock.listening .voice-sphere { color: oklch(98% 0.015 170); }
 .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
 .voice-dock.error .voice-halo { background: radial-gradient(circle, oklch(70% 0.15 30 / 0.3), transparent 68%); opacity: 1; }
@@ -125,7 +127,7 @@
   .voice-message p { max-height: 16dvh; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .voice-marble-float, .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: none; }
+  .voice-marble-float, .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo, .voice-dock.reply-speaking .voice-halo { animation: none; }
   .voice-sphere, .voice-halo { transition: none; transform: none; }
   .voice-message { animation: none; transition: none; }
 }

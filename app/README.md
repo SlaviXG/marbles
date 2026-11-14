@@ -58,9 +58,12 @@ Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 
 Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
 `.env`, then restart `npm run dev`. Use Node.js 20+ and open
-`http://localhost:5173` in a browser with AudioWorklet support. Click the floating
-marble once to enable the microphone, stay quiet briefly for calibration, then
-describe a task. Click it again or use **Turn mic off** to stop.
+`http://localhost:5173` in a browser with AudioWorklet support. The app requests
+microphone permission and loads a local wake model automatically. Say **Hey
+Marbles**, then describe your task. The marble returns to wake mode after a task
+is assigned or 20 seconds without speech. Use **Turn mic off** to stop; click the
+marble to enable it again. Browsers that require an initial audio gesture show
+**Enable microphone** once before hands-free listening can begin.
 
 The marble floats and glows with microphone energy. Live speech and replies
 appear as a conversation at the bottom left, with at most three recent bubbles.
@@ -73,19 +76,37 @@ Word/PDF files, spreadsheets, slides, and images. Up to 18 recent files connect
 directly to their producing agents. Task history and other files stay accessible
 from the agent/task panels; dependency and build directories are omitted.
 
-The marble floats and glows with microphone energy. An adaptive local sound
-trigger learns ambient noise, requires about 140 ms of sound above that floor,
-and uses a lower release threshold to avoid cutting quiet syllables. It keeps
-750 ms of pre-roll, commits after 700 ms of quiet, and bounds continuous turns
-at 15 seconds. This is energy detection, so sustained non-speech sounds can
-also trigger it. A closer microphone helps in noisy rooms.
+Standby wake recognition uses quantized `Xenova/whisper-tiny.en` in a browser
+worker via Transformers.js (Apache-2.0 model). The model downloads once and is
+cached by the browser. It runs one inference at a time over overlapping audio
+windows, gated by local audio energy, with bounded history. Only a complete
+**Hey Marbles** word match opens OpenAI transcription. Word timestamps preserve
+the command after the wake phrase while dropping preceding room/playback audio.
+This is local ASR-based wake recognition rather than a trained keyword-only
+model; latency and accuracy depend on the device, accent, and room noise.
 
-OpenAI connects only after the first trigger. Initial speech is buffered and
-sent in paced chunks while the connection starts; recording stops with a clear
-error if a slow connection exceeds the bounded backlog. Mono 24 kHz PCM goes
-through the server WebSocket relay to hosted `gpt-live-transcribe`. The permanent
-API key stays in Node. Audio is sent to OpenAI and billed to the configured key;
-the app does not persist audio.
+After wake-up, an adaptive sound trigger commits phrases after 700 ms of quiet
+and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
+`gpt-live-transcribe` through the server. Standby audio stays local; command audio
+is sent to OpenAI. Initial command audio is buffered and paced, with a bounded
+backlog and visible errors if the connection cannot keep up.
+
+Final replies are read with OpenAI `gpt-4o-mini-tts`, Coral voice, through
+`POST /api/voice/speech`. **AI voice on/muted** toggles automatic playback;
+**Stop reply** interrupts it; **Read aloud** replays a message. Text stays visible
+if audio fails or the browser blocks playback. Code blocks and URLs are simplified
+for speech and long replies are shortened. Up to three replies queue, with three
+clips cached in memory. The voice is AI-generated. Text-to-speech uses the same
+server-side key and incurs OpenAI API usage. This Speech API model is supported
+until its announced January 6, 2027 shutdown; migrate this endpoint before then.
+
+While a reply plays, microphone audio is held out of cloud transcription. The
+local wake detector remains available, so **Hey Marbles** interrupts playback and
+opens the next request. Spoken replies replace the literal wake phrase to avoid
+self-activation. Synthesis is cancelled on interruption, muting, or unmounting;
+audio object URLs and microphone resources are released. The Vite development
+server exposes the speech handler directly as well, so updating speech playback
+does not require restarting an active agent runner. Neither route exposes the key.
 
 As soon as final transcripts arrive after a speech pause, the app sends
 the complete request to `POST /api/voice/tasks`. OpenAI `gpt-4.1-mini` extracts

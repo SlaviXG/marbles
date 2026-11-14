@@ -61,4 +61,7 @@ export class AudioTurns {
     this.length = this.silence = this.attack = 0;
     return hasAudio;
   }
+
+  discard() { this.flush(); this.preRoll = new Float32Array(0); }
+  begin(samples: number) { this.discard(); this.calibrated = 0.4; this.length = samples; }
 }

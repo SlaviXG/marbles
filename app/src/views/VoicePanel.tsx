@@ -5,9 +5,14 @@ import { CommandBuffer } from "../voice/CommandBuffer";
 import { refreshAgents, refreshTasks, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
 import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
+import { ReplySpeaker } from '../voice/ReplySpeaker';
+import { withoutWakePhrase } from '../voice/wakePhrase';
 
 export default function VoicePanel() {
   const session = useRef<VoiceSession>();
+  const speaker = useRef<ReplySpeaker>();
+  const [voiceReplies, setVoiceReplies] = useState(true);
+  const [replyPlaying, setReplyPlaying] = useState(false);
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
@@ -23,15 +28,23 @@ export default function VoicePanel() {
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [detail, setDetail] = useState("Enable your mic, then describe a task. OpenAI turns your words into a prompt for an idle agent.");
   const [level, setLevel] = useState(0);
-  const active = ["armed", "loading", "listening", "stopping"].includes(status);
-  const caption = status === "armed" ? "Speak when ready" : status === "listening" ? "Listening to you"
-    : status === "loading" ? "Connecting…" : status === "stopping" ? "Finishing…"
-    : status === "error" ? "Try again" : "Tap to speak";
+  const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
+  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Hey Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
+    : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
+    : status === "error" ? "Enable microphone" : "Microphone off";
 
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); };
+    speaker.current = new ReplySpeaker({
+      active: playing => { setReplyPlaying(playing); session.current?.setReplyPlaying(playing); },
+      error: text => message({ id: 'speech-error', role: 'assistant', text }),
+    });
+    speaker.current.setEnabled(voiceReplies);
+    // Delay one event loop so StrictMode's initial cleanup cancels its trial
+    // mount before requesting microphone access or loading the wake model.
+    const startup = setTimeout(start, 0);
+    return () => { clearTimeout(startup); mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); };
   }, []);
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -44,6 +57,9 @@ export default function VoicePanel() {
 
   useEffect(() => {
     for (const task of tasks) {
+      if (task.status === 'running' && task.source === 'voice' && !watching.current.has(task.id)) {
+        watching.current.set(task.id, task.title ?? 'your task');
+      }
       if (!watching.current.has(task.id) || task.status === 'running') continue;
       watching.current.delete(task.id);
       const text = task.status === 'failed' ? `I couldn’t finish: ${task.title ?? 'the task'}. Open the task for details.`
@@ -55,6 +71,7 @@ export default function VoicePanel() {
   function message(item: Omit<VoiceMessage, 'expiresAt'>) {
     const time = Date.now(); setNow(time);
     setMessages(current => upsertMessage(current, item, time));
+    if (item.role === 'assistant' && !item.pending && item.id !== 'speech-error') speaker.current?.enqueue(item.id, item.text);
   }
   function pause() { pausedAt.current ??= Date.now(); }
   function resume() {
@@ -66,6 +83,7 @@ export default function VoicePanel() {
 
   function start() {
     commands.current?.dispose();
+    speaker.current?.interrupt();
     session.current?.dispose();
     draft.current = emptyTranscript();
     consumed.current.clear();
@@ -74,7 +92,9 @@ export default function VoicePanel() {
       message({ id: draftId.current, role: 'user', text });
       for (const id of Object.keys(draft.current.items)) consumed.current.add(id);
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
-      enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${text}` : text,
+      const request = withoutWakePhrase(text);
+      if (!request) return; // A standalone wake phrase opens listening, not a task.
+      enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${request}` : request,
         requestId: crypto.randomUUID() });
     });
     const next = new VoiceSession({
@@ -94,8 +114,9 @@ export default function VoicePanel() {
         }
         commands.current?.event(event);
       },
-      activity: (energy, speaking) => { setLevel(energy); commands.current?.activity(speaking); },
-    });
+      activity: (energy, speaking) => { setLevel(energy); commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
+      awake: () => speaker.current?.interrupt(),
+    }, { wake: true });
     session.current = next;
     void next.start();
   }
@@ -115,6 +136,7 @@ export default function VoicePanel() {
         if (!response.ok) throw new Error(data.error || 'Could not delegate the task.');
         if (!mounted.current) return;
         if (data.state === 'assigned') {
+          session.current?.rearm();
           clarificationContext.current = '';
           watching.current.set(data.task.id, data.intent.objective);
           reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
@@ -133,8 +155,9 @@ export default function VoicePanel() {
 
   return (
     <>
-    <VoiceConversation messages={messages} now={now} pause={pause} resume={resume} retry={enqueue} />
-    <section className={`voice-dock ${status}`} aria-label="Voice transcription"
+    <VoiceConversation messages={messages} now={now} pause={pause} resume={resume} retry={enqueue}
+      read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />
+    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice transcription"
       style={{ "--voice-level": level } as CSSProperties}>
       <div className="voice-marble-float">
         <button type="button" className="voice-marble" disabled={status === "stopping"}
@@ -151,6 +174,10 @@ export default function VoicePanel() {
         </button>
       </div>
       <div className="voice-caption" role="status">{caption}</div>
+      <button className="voice-off" type="button" aria-pressed={voiceReplies} onClick={() => {
+        const enabled = !voiceReplies; setVoiceReplies(enabled); speaker.current?.setEnabled(enabled);
+      }}>{voiceReplies ? 'AI voice on' : 'AI voice muted'}</button>
+      {replyPlaying && <button className="voice-off" type="button" onClick={() => speaker.current?.interrupt()}>Stop reply</button>}
       <p id="voice-detail" className="voice-sr-only" role={status === "error" ? "alert" : undefined}>{detail}</p>
       {active && <button className="voice-off" type="button" disabled={status === "stopping"}
         onClick={() => session.current?.stop()}>Turn mic off</button>}

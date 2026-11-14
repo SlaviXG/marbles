@@ -1,10 +1,12 @@
 import { AudioTurns, pcm16, SAMPLE_RATE } from "./audio";
+import { WakeDetector } from "./WakeDetector";
 
-export type VoiceStatus = "idle" | "armed" | "loading" | "listening" | "stopping" | "error";
+export type VoiceStatus = "idle" | "wake" | "armed" | "loading" | "listening" | "stopping" | "error";
 export type TranscriptEvent = { type: string; item_id?: string; delta?: string; transcript?: string };
 type VoiceEvents = {
   status: (status: VoiceStatus, detail?: string) => void;
   transcript: (event: TranscriptEvent) => void;
+  awake?: () => void;
   activity?: (level: number, speaking: boolean) => void;
 };
 
@@ -12,6 +14,11 @@ export class VoiceSession {
   private disposed = false;
   private stopping = false;
   private turns = new AudioTurns();
+  private wake?: WakeDetector;
+  private awake = false;
+  private wakeDeadline = 0;
+  private replyPlaying = false;
+  private playbackUntil = 0;
   private stream?: MediaStream;
   private context?: AudioContext;
   private source?: MediaStreamAudioSourceNode;
@@ -24,7 +31,7 @@ export class VoiceSession {
   private sendTimer?: ReturnType<typeof setTimeout>;
   private timer?: ReturnType<typeof setTimeout>;
 
-  constructor(private events: VoiceEvents) {}
+  constructor(private events: VoiceEvents, private options: { wake?: boolean } = {}) {}
 
   async start() {
     try {
@@ -34,17 +41,45 @@ export class VoiceSession {
       }
       this.events.status("loading", "Allow microphone access. Sound detection runs locally until you speak.");
       this.context = new AudioContext({ sampleRate: SAMPLE_RATE });
-      await this.context.resume();
+      if (!this.options.wake) await this.context.resume();
       if (this.disposed) return;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
       if (this.disposed) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
+      if (this.options.wake) {
+        let resumeTimer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([this.context.resume(), new Promise((_, reject) => {
+            resumeTimer = setTimeout(() => reject(new Error('Your browser needs one click to enable wake listening. Use Enable microphone.')), 2500);
+          })]);
+        } finally { clearTimeout(resumeTimer); }
+        if (this.disposed) return;
+      }
       stream.getAudioTracks()[0].onended = () => this.fail("Microphone disconnected. Reconnect it and try again.");
       if (this.context.sampleRate !== SAMPLE_RATE) throw new Error("This browser cannot capture 24 kHz audio. Try recent Chrome or Edge.");
       await this.context.audioWorklet.addModule(new URL("./capture.worklet.js", import.meta.url).href);
       if (this.disposed) return;
+      if (this.options.wake) {
+        this.wake = new WakeDetector(audio => {
+          if (this.disposed || this.stopping) return;
+          this.events.awake?.();
+          this.replyPlaying = false; this.playbackUntil = 0;
+          this.awake = true; this.wakeDeadline = Date.now() + 20_000;
+          this.events.status('armed', 'Hey Marbles heard. Describe your task.');
+          this.turns.begin(audio.length);
+          this.speaking = true;
+          this.events.activity?.(0.5, true);
+          if (!this.socket) this.connect();
+          this.sendRaw(pcm16(audio));
+        }, message => this.fail(message));
+        this.events.status('loading', 'Loading the local Hey Marbles detector…');
+        this.armTimeout('Wake model download timed out. Check your connection and try again.', 180_000);
+        await this.wake.load(percent => this.events.status('loading', `Downloading local wake model: ${percent}%`));
+        clearTimeout(this.timer);
+        if (this.disposed) return;
+      }
       this.listen();
     } catch (error) {
       if (!this.disposed) this.fail(error instanceof Error && error.name === "NotAllowedError"
@@ -64,29 +99,59 @@ export class VoiceSession {
           if (this.turns.flush()) this.send({ type: "commit" });
           if (this.socket) this.send({ type: "finish" });
           else { this.dispose(); this.events.status("idle", "Microphone off. No audio was sent."); }
-        } else {
-          const turn = this.turns.push(data);
-          this.events.activity?.(turn.level, turn.speaking);
-          this.speaking = turn.speaking;
-          if (turn.audio) {
-            if ((this.socket?.bufferedAmount ?? 0) > SAMPLE_RATE * 2 * 3) {
-              this.fail("Connection cannot keep up. Recording stopped; try again on a faster connection.");
-              return;
-            }
-            if (!this.socket) this.connect();
-            this.sendRaw(pcm16(turn.audio));
-          }
-          if (turn.commit) this.send({ type: "commit" });
-          if (this.ready && !this.stopping) this.reportActivity();
-        }
+        } else this.consume(data);
       } catch { this.fail("Voice connection was interrupted. Please try again."); }
     };
     this.source.connect(this.capture);
     this.capture.connect(this.context!.destination); // Worklet output is silent.
-    this.events.status("armed", "Microphone on. Stay quiet briefly, then speak to wake transcription.");
+    if (this.options.wake) this.rearm();
+    else this.events.status("armed", "Microphone on. Stay quiet briefly, then speak to wake transcription.");
+  }
+
+  private consume(data: Float32Array) {
+    if (this.wake && (!this.awake || this.replyPlaying)) {
+      this.wake.push(data);
+      const rms = Math.sqrt(data.reduce((sum, v) => sum + v * v, 0) / data.length);
+      this.events.activity?.(Math.min(1, rms * 12), false);
+      return;
+    }
+    if (this.replyPlaying || performance.now() < this.playbackUntil) return;
+    const turn = this.turns.push(data);
+    this.events.activity?.(turn.level, turn.speaking);
+    this.speaking = turn.speaking;
+    if (turn.audio) {
+      this.wakeDeadline = Date.now() + 20_000;
+      if ((this.socket?.bufferedAmount ?? 0) > SAMPLE_RATE * 2 * 3) {
+        this.fail('Connection cannot keep up. Recording stopped; please try again.'); return;
+      }
+      if (!this.socket) this.connect();
+      this.sendRaw(pcm16(turn.audio));
+    }
+    if (turn.commit) this.send({ type: 'commit' });
+    if (this.options.wake && Date.now() > this.wakeDeadline && !this.speaking) this.rearm();
+    else if (this.ready && !this.stopping) this.reportActivity();
+  }
+
+  rearm() {
+    if (!this.options.wake || this.disposed || this.stopping) return;
+    if (this.turns.flush()) this.send({ type: 'commit' });
+    this.turns.discard(); this.wake?.reset();
+    this.awake = false; this.speaking = false;
+    this.events.activity?.(0, false);
+    this.events.status('wake', 'Listening locally for Hey Marbles. Standby audio stays on this device.');
+  }
+
+  setReplyPlaying(playing: boolean) {
+    if (playing === this.replyPlaying) return;
+    this.replyPlaying = playing;
+    this.playbackUntil = playing ? Infinity : performance.now() + 350;
+    this.turns.discard(); this.wake?.reset();
   }
 
   private reportActivity() {
+    if (this.options.wake && !this.awake) {
+      this.events.status('wake', 'Listening locally for Hey Marbles.'); return;
+    }
     this.events.status(this.speaking ? "listening" : "armed", this.speaking
       ? "Transcribing with OpenAI. Your audio is being sent."
       : "Waiting for your voice. Quiet audio stays on this device.");
@@ -180,6 +245,7 @@ export class VoiceSession {
     this.disposed = true;
     clearTimeout(this.timer);
     clearTimeout(this.sendTimer);
+    this.wake?.dispose();
     this.releaseMicrophone();
     this.events.activity?.(0, false);
     this.queued = [];
