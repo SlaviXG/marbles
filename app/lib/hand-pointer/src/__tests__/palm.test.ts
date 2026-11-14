@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { PALM_OFF, PALM_ON, palmFacing, palmOpen } from "../palm";
+import {
+  LEN_OFF,
+  LEN_ON,
+  PALM_OFF,
+  PALM_ON,
+  UP_OFF,
+  UP_ON,
+  fingersUp,
+  handPose,
+  palmFacing,
+  palmLength,
+  poseUsable,
+} from "../palm";
 
 // 21 landmarks with only the three the palm test reads filled in. Raw camera
 // frame: x grows to the right of the image, y grows downward.
@@ -11,6 +23,9 @@ const hand = (wrist: [number, number], index: [number, number], pinky: [number, 
   pts[11] = index[1];
   pts[34] = pinky[0];
   pts[35] = pinky[1];
+  // Middle knuckle: halfway between the other two, as on a real hand.
+  pts[18] = (index[0] + pinky[0]) / 2;
+  pts[19] = (index[1] + pinky[1]) / 2;
   return pts;
 };
 
@@ -61,12 +76,58 @@ describe("palmFacing", () => {
   });
 });
 
-describe("palmOpen", () => {
-  it("needs a clear palm to switch on and a clear turn away to switch off", () => {
-    const between = (PALM_ON + PALM_OFF) / 2;
-    expect(palmOpen(between, false)).toBe(false);
-    expect(palmOpen(between, true)).toBe(true);
-    expect(palmOpen(PALM_ON + 0.01, false)).toBe(true);
-    expect(palmOpen(PALM_OFF - 0.01, true)).toBe(false);
+describe("fingersUp", () => {
+  it("is 1 pointing up, 0 lying level and negative hanging down", () => {
+    expect(fingersUp(rightPalm)).toBeGreaterThan(0.95);
+    expect(fingersUp(rotate(rightPalm, Math.PI / 2))).toBeCloseTo(0, 1);
+    expect(fingersUp(rotate(rightPalm, Math.PI))).toBeLessThan(-0.95);
+  });
+
+  it("corrects for a non-square frame", () => {
+    // 45 degrees in real space reads steeper in normalized coords on a wide
+    // frame, because x is squeezed; the aspect puts it back.
+    const tilted = hand([0.5, 0.8], [0.65, 0.6], [0.65, 0.6]);
+    expect(fingersUp(tilted, 4 / 3)).toBeCloseTo(Math.SQRT1_2, 6);
+  });
+});
+
+describe("palmLength", () => {
+  it("shrinks as the hand tips toward the camera", () => {
+    const flat = palmLength(rightPalm);
+    // Tipped forward: the knuckles drop toward the wrist, the width stays.
+    const tipped = hand([0.5, 0.8], [0.56, 0.74], [0.44, 0.76]);
+    expect(flat).toBeGreaterThan(LEN_ON);
+    expect(palmLength(tipped)).toBeLessThan(LEN_OFF);
+  });
+
+  it("does not change with distance or in-plane rotation", () => {
+    const flat = palmLength(rightPalm);
+    expect(palmLength(rightPalm.map((v) => v * 1.5))).toBeCloseTo(flat, 6);
+    expect(palmLength(rotate(rightPalm, 1))).toBeCloseTo(flat, 6);
+  });
+});
+
+describe("poseUsable", () => {
+  const good = { palm: 0.6, up: 1, len: 1.4 };
+
+  it("accepts an upright, square-on palm and rejects each bad pose", () => {
+    expect(poseUsable(handPose(rightPalm, "R"), false)).toBe(true);
+    expect(poseUsable(handPose(rightBack, "R"), false)).toBe(false);
+    expect(poseUsable(handPose(rotate(rightPalm, Math.PI / 2), "R"), false)).toBe(false);
+    expect(poseUsable(handPose(rotate(rightPalm, Math.PI), "R"), false)).toBe(false);
+    expect(poseUsable({ ...good, len: 0.3 }, false)).toBe(false);
+  });
+
+  it("needs every measure past ON to start and any one below OFF to stop", () => {
+    const mid = (on: number, off: number) => (on + off) / 2;
+    for (const between of [
+      { ...good, palm: mid(PALM_ON, PALM_OFF) },
+      { ...good, up: mid(UP_ON, UP_OFF) },
+      { ...good, len: mid(LEN_ON, LEN_OFF) },
+    ]) {
+      expect(poseUsable(between, false)).toBe(false);
+      expect(poseUsable(between, true)).toBe(true);
+    }
+    expect(poseUsable({ ...good, up: UP_OFF - 0.01 }, true)).toBe(false);
   });
 });

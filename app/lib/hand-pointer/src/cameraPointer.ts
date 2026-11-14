@@ -3,7 +3,7 @@ import { OneEuro } from "./oneEuro";
 import { loadParams, subscribeParams, type PointerParams } from "./pointerParams";
 import { createHandWorker, type HandAssets, type HandOut, type WorkerOut } from "./handWorker";
 import { ArticulationTracker } from "./articulation";
-import { palmFacing, palmOpen } from "./palm";
+import { handPose, poseUsable, type HandPose } from "./palm";
 import { DEFAULT_CURSOR_PARAMS } from "./cursorDriver";
 
 // The camera pointer: webcam -> worker (hand landmarks) -> One Euro filter ->
@@ -104,10 +104,10 @@ export const secondaryHand = {
 // zone and whether a hand has drifted outside it. `version` ticks on every
 // inference result so the renderer can skip redraws between them.
 export const handDebug = {
-  // `palm` is the palm-facing score (see palm.ts) and `active` whether the hand
-  // passed the palm gate and is being used as input. Hands that fail it are
-  // still listed, so the overlay can show a hand that is seen but ignored.
-  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean; palm: number; active: boolean }[],
+  // `pose` holds the pose measurements (see palm.ts) and `active` whether the
+  // hand passed the pose gate and is being used as input. Hands that fail it
+  // are still listed, so the overlay can show a hand that is seen but ignored.
+  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean; pose: HandPose; active: boolean }[],
   version: 0,
   // Live tap-gesture state for the overlay, so a click that does not fire can be
   // told apart from a gesture that was never recognised.
@@ -189,9 +189,12 @@ class CameraPointer {
     L: new ArticulationTracker(),
     R: new ArticulationTracker(),
   };
-  // Whether each physical hand currently counts as showing its palm. Kept
-  // between frames for the hysteresis in palmOpen.
+  // Whether each physical hand currently passes the pose gate. Kept between
+  // frames for the hysteresis in poseUsable.
   private palm: Record<"L" | "R", boolean> = { L: false, R: false };
+  // Camera frame width / height, so pose angles are measured in real
+  // proportions rather than the stretched normalized ones.
+  private aspect = 4 / 3;
   private busy = false; // worker has a frame in flight (backpressure)
   private lastSent = 0;
   private rafId = 0;
@@ -359,6 +362,7 @@ class CameraPointer {
     const vh = video.videoHeight;
     if (!this.busy && now - this.lastSent >= minGap && video.readyState >= 2 && vw > 0 && vh > 0) {
       this.lastSent = now;
+      this.aspect = vw / vh;
       // Downscale only when larger than the target. Snapshot the frame onto an
       // OffscreenCanvas and transfer it: transferToImageBitmap is synchronous and
       // reliable, unlike createImageBitmap(video) which can hang on some setups.
@@ -404,17 +408,18 @@ class CameraPointer {
     // a result arrived: the worker is free for the next frame
     this.busy = false;
     this.dbg.tips++;
-    // Palm gate: only a hand showing its palm to the camera is input. One seen
-    // from the back is dropped here, before any gesture is read from it, and
-    // from then on is treated exactly like a hand that is not in frame.
+    // Pose gate: only a hand held up with its palm to the camera is input. One
+    // seen from the back, turned sideways, lying level, hanging down or tipped
+    // so the fingers point at the lens is dropped here, before any gesture is
+    // read from it, and from then on is treated like a hand not in frame.
     for (const side of ["L", "R"] as const) {
       if (!msg.hands.some((c) => c.hand === side)) this.palm[side] = false;
     }
-    const score = new Map<HandOut, number>();
+    const pose = new Map<HandOut, HandPose>();
     const hands = msg.hands.filter((c) => {
-      const s = palmFacing(c.pts, c.hand);
-      score.set(c, s);
-      this.palm[c.hand] = palmOpen(s, this.palm[c.hand]);
+      const s = handPose(c.pts, c.hand, this.aspect);
+      pose.set(c, s);
+      this.palm[c.hand] = poseUsable(s, this.palm[c.hand]);
       return !this.params.requirePalm || this.palm[c.hand];
     });
 
@@ -435,7 +440,7 @@ class CameraPointer {
         hand: c.hand,
         pts: c.pts,
         primary: false,
-        palm: score.get(c) ?? 0,
+        pose: pose.get(c)!,
         active: false,
       }));
       handDebug.version++;
@@ -459,7 +464,7 @@ class CameraPointer {
       hand: c.hand,
       pts: c.pts,
       primary: c === h,
-      palm: score.get(c) ?? 0,
+      pose: pose.get(c)!,
       active: hands.includes(c),
     }));
     handDebug.version++;

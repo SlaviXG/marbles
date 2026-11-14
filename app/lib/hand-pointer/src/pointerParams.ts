@@ -25,8 +25,9 @@ export interface PointerParams {
   // The only press gesture: drag, scroll, click, and (with both hands) zoom.
   pinchOn: number;
   pinchOff: number;
-  // Only use a hand while its palm faces the camera; one seen from the back is
-  // ignored (see palm.ts). Turn off to accept a hand in any orientation.
+  // Only use a hand held up with its palm facing the camera; one seen from the
+  // back, turned sideways, not upright or tipped toward the lens is ignored
+  // (see palm.ts). Turn off to accept a hand in any orientation.
   requirePalm: boolean;
 }
 

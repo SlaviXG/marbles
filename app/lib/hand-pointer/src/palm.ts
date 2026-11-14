@@ -15,9 +15,15 @@
 // at the wrist: about +0.6 for a flat palm, about -0.6 for the back, and near
 // 0 when the hand is edge-on, whatever its distance from the camera. In-plane
 // rotation does not change it, so a tilted or sideways hand reads the same.
+//
+// Two more poses are rejected the same way, because gestures read from them
+// are just as unreliable (see handPose below): a hand that is not upright
+// (wrist level with or above the knuckles), and a hand tipped forward so its
+// fingers point at the camera.
 
 const WRIST = 0;
 const INDEX_MCP = 5;
+const MIDDLE_MCP = 9;
 const PINKY_MCP = 17;
 
 // The sign of the cross product for a RIGHT hand showing its palm, in the raw
@@ -29,12 +35,15 @@ const PINKY_MCP = 17;
 const RIGHT_PALM_SIGN = -1;
 
 // pts: the 21 landmarks, flat [x0,y0,x1,y1,...] in normalized frame coords.
+// aspect: frame width / height. Normalized coords stretch x and y by different
+// amounts on a non-square frame, which would distort every angle and length
+// measured here, so x is scaled back before measuring.
 // Returns a score in -1..1: positive when the palm faces the camera, negative
 // for the back of the hand, near zero when the hand is edge-on.
-export function palmFacing(pts: number[], hand: "L" | "R"): number {
-  const ax = pts[INDEX_MCP * 2] - pts[WRIST * 2];
+export function palmFacing(pts: number[], hand: "L" | "R", aspect = 1): number {
+  const ax = (pts[INDEX_MCP * 2] - pts[WRIST * 2]) * aspect;
   const ay = pts[INDEX_MCP * 2 + 1] - pts[WRIST * 2 + 1];
-  const bx = pts[PINKY_MCP * 2] - pts[WRIST * 2];
+  const bx = (pts[PINKY_MCP * 2] - pts[WRIST * 2]) * aspect;
   const by = pts[PINKY_MCP * 2 + 1] - pts[WRIST * 2 + 1];
   const len = Math.hypot(ax, ay) * Math.hypot(bx, by);
   if (!(len > 1e-9)) return 0;
@@ -42,20 +51,73 @@ export function palmFacing(pts: number[], hand: "L" | "R"): number {
   return sine * RIGHT_PALM_SIGN * (hand === "R" ? 1 : -1);
 }
 
-// A hand turned sideways is rejected along with one seen from the back. Near
-// edge-on the fingers overlap in the image and the landmarks are unreliable,
-// so a pinch read from that pose is mostly noise.
+// How upright the hand is: the cosine of the angle between "straight up" and
+// the line from the wrist to the middle knuckle. 1 with the fingers pointing
+// straight up, 0 with the wrist level with the knuckles (hand lying sideways),
+// negative with the wrist above them (hand hanging down).
+export function fingersUp(pts: number[], aspect = 1): number {
+  const dx = (pts[MIDDLE_MCP * 2] - pts[WRIST * 2]) * aspect;
+  const dy = pts[MIDDLE_MCP * 2 + 1] - pts[WRIST * 2 + 1];
+  const len = Math.hypot(dx, dy);
+  if (!(len > 1e-9)) return 0;
+  return -dy / len; // image y grows downward
+}
+
+// How much of the palm's length the camera sees: wrist-to-middle-knuckle
+// distance divided by the width across the knuckles (index to pinky). About
+// 1.4 for a hand held flat to the camera. Tipping the hand forward, so the
+// fingers point at the lens, shortens the length but not the width, so the
+// ratio falls with the cosine of the tilt and reaches 0 when the fingers point
+// straight at the camera. A ratio is used so distance from the camera cancels.
+export function palmLength(pts: number[], aspect = 1): number {
+  const lx = (pts[MIDDLE_MCP * 2] - pts[WRIST * 2]) * aspect;
+  const ly = pts[MIDDLE_MCP * 2 + 1] - pts[WRIST * 2 + 1];
+  const wx = (pts[PINKY_MCP * 2] - pts[INDEX_MCP * 2]) * aspect;
+  const wy = pts[PINKY_MCP * 2 + 1] - pts[INDEX_MCP * 2 + 1];
+  const width = Math.hypot(wx, wy);
+  if (!(width > 1e-9)) return 0;
+  return Math.hypot(lx, ly) / width;
+}
+
+// The three measurements together. A hand is used as input only when all
+// three say it is held up, square to the camera, palm out.
+export interface HandPose {
+  palm: number; // palmFacing
+  up: number; // fingersUp
+  len: number; // palmLength
+}
+
+export function handPose(pts: number[], hand: "L" | "R", aspect = 1): HandPose {
+  return {
+    palm: palmFacing(pts, hand, aspect),
+    up: fingersUp(pts, aspect),
+    len: palmLength(pts, aspect),
+  };
+}
+
+// Each measurement has an ON threshold a hand must exceed to start counting
+// and a lower OFF threshold it must fall below to stop. The gap is hysteresis,
+// so a hand held near a limit does not flicker in and out of use.
 //
-// With a flat palm scoring about 0.6, the score falls roughly with the cosine
-// of how far the hand has turned: 0.4 is about 55 degrees away from facing the
-// camera and 0.3 about 65 degrees. So a hand must be within about 55 degrees
-// of square-on to start counting, and stops counting past about 65.
-//
-// The gap between the two is hysteresis, so a hand held near the limit does
-// not flicker in and out of use.
+// Palm: a hand turned sideways is rejected along with one seen from the back.
+// Near edge-on the fingers overlap in the image and the landmarks are
+// unreliable. The score falls roughly with the cosine of how far the hand has
+// turned, so with a flat palm at about 0.6, 0.4 is about 55 degrees away from
+// facing the camera and 0.3 about 65.
 export const PALM_ON = 0.4;
 export const PALM_OFF = 0.3;
+// Upright: fingers within 60 degrees of straight up to start, 70 to stop. A
+// hand lying level (0) or hanging down (negative) never counts.
+export const UP_ON = 0.5;
+export const UP_OFF = 0.35;
+// Tilt toward the camera: with a flat hand at about 1.4, 0.9 is about 50
+// degrees of forward tilt and 0.75 about 58.
+export const LEN_ON = 0.9;
+export const LEN_OFF = 0.75;
 
-export function palmOpen(score: number, was: boolean): boolean {
-  return was ? score > PALM_OFF : score > PALM_ON;
+// was: whether this hand counted on the previous frame.
+export function poseUsable(p: HandPose, was: boolean): boolean {
+  return was
+    ? p.palm > PALM_OFF && p.up > UP_OFF && p.len > LEN_OFF
+    : p.palm > PALM_ON && p.up > UP_ON && p.len > LEN_ON;
 }
