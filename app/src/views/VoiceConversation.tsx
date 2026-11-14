@@ -12,9 +12,10 @@ export default function VoiceConversation({ messages, retry, read }: {
         className={`voice-message ${message.role}${message.pending ? ' pending' : ''}`}>
         <span className="voice-message-label">{message.label ?? (message.role === 'user' ? 'You' : 'Marbles')}</span>
         <p aria-live={message.role === 'user' ? 'off' : undefined}>{message.text}</p>
-        {(message.taskId || message.retry || (read && message.role === 'assistant' && !message.pending)) && <div className="voice-message-actions">
+        {(message.taskId || message.swarmId || message.retry || (read && message.role === 'assistant' && !message.pending)) && <div className="voice-message-actions">
           {read && message.role === 'assistant' && !message.pending && <button type="button" onClick={() => read(message.text)}>Read aloud</button>}
           {message.taskId && <button type="button" onClick={() => useVault.getState().select(`task:${message.taskId}`)}>View task ↗</button>}
+          {message.swarmId && <button type="button" onClick={() => useVault.getState().select(`swarm:${message.swarmId}`)}>View swarm ↗</button>}
           {message.retry && <button type="button" onClick={() => retry(message.retry!)}>Retry task</button>}
         </div>}
       </div>)}

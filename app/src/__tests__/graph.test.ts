@@ -38,7 +38,7 @@ describe('agent canvas mapping', () => {
     expect(graph.nodes.map(n => n.id)).toEqual(['agent:claude', 'agent:codex', 'agent:cursor']);
     expect(graph.links).toEqual([]);
     for (const node of graph.nodes) {
-      expect(Math.hypot(node.x!, node.y!)).toBeLessThanOrEqual(90.1);
+      expect(Math.hypot(node.x!, node.y!)).toBeLessThanOrEqual(190.1);
       expect([node.fx, node.fy]).toEqual([node.x, node.y]);
     }
   });
@@ -100,5 +100,19 @@ describe('agent canvas mapping', () => {
     const missing = composeGraph({}, [{ ...agent('codex', true), available: false }], []).nodes[0];
     expect(cursor.status).toBe('unavailable');
     expect(missing.status).toBe('unavailable');
+  });
+});
+
+describe('swarm graph', () => {
+  it('links participants, recent posts and shared artifacts to one swarm node', () => {
+    const agents = ['codex', 'claude'].map(id => ({ id, name: id, kind: 'cli' as const, command: id, path: `/bin/${id}`, version: null, available: true, codingAgent: true }));
+    const swarm = { id: 's1', goal: 'Make a report', mode: 'swarm' as const, agents: ['codex', 'claude'], status: 'running' as const,
+      createdAt: '', endedAt: null, runs: [], blackboard: [{ ts: '', seq: 1, agentId: 'codex', turn: 1, kind: 'claim' as const, text: 'Draft report' }],
+      artifacts: [{ path: 'swarms/s1/shared/report.md', name: 'report.md', type: 'code' as const }], reward: null, success: null, tokenProxy: 0, contributions: {}, rationale: '', lesson: '' };
+    const graph = composeGraph({}, agents, [], false, [swarm]);
+    expect(graph.nodes.map(n => n.id)).toEqual(expect.arrayContaining(['swarm:s1', 'post:s1:1', 'artifact:s1:swarms%2Fs1%2Fshared%2Freport.md']));
+    expect(graph.links).toContainEqual({ source: 'swarm:s1', target: 'agent:codex' });
+    expect(graph.links).toContainEqual({ source: 'swarm:s1', target: 'agent:claude' });
+    expect(graph.links).toContainEqual({ source: 'swarm:s1', target: 'post:s1:1' });
   });
 });

@@ -36,3 +36,7 @@ export interface AgentLog {
   messages?: { text: string; at: string | null }[];
   tools?: { name: string; args: string; at: string | null }[];
 }
+
+export interface SwarmPost { ts: string; seq: number; agentId: string; turn: number; kind: 'claim' | 'note' | 'contribution' | 'question' | 'done'; text: string }
+export interface SwarmRun { agentId: string; turn: number; status: string; startedAt: string; endedAt: string | null; outputChars: number; stdout: string }
+export interface SwarmTask { id: string; goal: string; mode: 'swarm' | 'best-of-n'; agents: string[]; status: 'running' | 'evaluating' | 'completed' | 'failed' | 'cancelled'; createdAt: string; endedAt: string | null; runs: SwarmRun[]; blackboard: SwarmPost[]; artifacts: ArtifactInfo[]; reward: number | null; success: number | null; tokenProxy: number; contributions: Record<string, number>; rationale: string; lesson: string; winnerId?: string }

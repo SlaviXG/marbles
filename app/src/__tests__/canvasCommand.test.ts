@@ -16,5 +16,7 @@ describe('spoken canvas commands', () => {
   });
   it('recognizes explicit preview dismissal', () => {
     expect(canvasCommand('close the preview', [task])?.close).toBe(true);
+    expect(canvasCommand('close it', [task])?.close).toBe(true);
+    expect(canvasCommand('dismiss this screen', [task])?.close).toBe(true);
   });
 });

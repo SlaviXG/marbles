@@ -1,5 +1,6 @@
 const fields = {
   decision: { type: 'string', enum: ['task', 'clarify', 'ignore'] },
+  collaboration: { type: 'string', enum: ['solo', 'swarm'] },
   problem: { type: 'string' }, objective: { type: 'string' },
   constraints: { type: 'array', items: { type: 'string' } },
   successCriteria: { type: 'array', items: { type: 'string' } },
@@ -18,6 +19,7 @@ export async function interpretSpeech(transcript, { apiKey = process.env.OPENAI_
         'Use decision task only for a clear request or question addressed to an assistant. ' +
         'Use ignore for background speech, greetings, filler, or no request. ' +
         'Use clarify when the desired outcome or an essential reference is unclear. Ask one concise question. ' +
+        'Use collaboration swarm when the user asks agents to work together, as a team, as a swarm, or all agents. Otherwise solo. ' +
         'Preserve the actual problem, desired outcome, constraints, and success criteria. ' +
         'Do not invent files, repository paths, requirements, or permissions. Do not execute the task. ' +
         'Return empty strings/arrays for unspecified fields. The runner works in a fresh task folder; ' +
@@ -34,6 +36,7 @@ export async function interpretSpeech(transcript, { apiKey = process.env.OPENAI_
   let intent;
   try { intent = JSON.parse(text); } catch { throw new Error('Could not understand the task. Please rephrase.'); }
   if (!['task', 'clarify', 'ignore'].includes(intent.decision) ||
+      (intent.collaboration !== undefined && !['solo', 'swarm'].includes(intent.collaboration)) ||
       !['problem', 'objective', 'clarification'].every(key => typeof intent[key] === 'string' && intent[key].length <= 2000) ||
       !['constraints', 'successCriteria'].every(key => Array.isArray(intent[key]) && intent[key].length <= 20 && intent[key].every(s => typeof s === 'string' && s.length <= 500)) ||
       (intent.decision === 'task' && !intent.objective.trim()) ||
@@ -57,7 +60,8 @@ export function buildVoicePrompt(transcript, intent) {
 }
 
 export class VoiceCommands {
-  constructor({ taskService, interpret = interpretSpeech }) {
+  constructor({ taskService, swarmService, interpret = interpretSpeech }) {
+    this.swarmService = swarmService;
     this.taskService = taskService;
     this.interpret = interpret;
     this.requests = new Map();
@@ -80,6 +84,11 @@ export class VoiceCommands {
       const intent = await this.interpret(transcript.trim());
       if (intent.decision !== 'task') return { state: intent.decision, intent };
       const prompt = buildVoicePrompt(transcript.trim(), intent);
+      if (intent.collaboration === 'swarm' || /\b(swarm|as a team|together|all (the )?agents|everyone)\b/i.test(transcript)) {
+        if (!this.swarmService) throw new Error('Swarm service unavailable');
+        const swarm = await this.swarmService.start({ goal: prompt, mode: 'swarm' });
+        return { state: 'swarm', swarm, intent };
+      }
       const task = await this.taskService.startIdle(prompt, {
         source: 'voice', transcript: transcript.trim(), intent, title: intent.objective,
       });

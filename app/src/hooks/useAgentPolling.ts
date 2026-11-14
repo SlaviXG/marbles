@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
-import { refreshAgents, refreshTasks, useAgents } from '../state/agents';
+import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from '../state/agents';
 export function useAgentPolling() {
   useEffect(() => {
     let live = true;
     let stream: EventSource | null = null;
-    const tasks = () => { void Promise.all([refreshTasks(), refreshAgents()]).catch(() => {}); };
+    const tasks = () => { void Promise.all([refreshTasks(), refreshAgents(), refreshSwarms()]).catch(() => {}); };
     void refreshAgents().catch(() => {}).then(() => {
       if (!live) return;
       stream = new EventSource('/api/agents/stream');

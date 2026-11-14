@@ -29,6 +29,8 @@ export class VoiceSession {
   private queued: (ArrayBuffer | string)[] = [];
   private queuedBytes = 0;
   private sendTimer?: ReturnType<typeof setTimeout>;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private connectionAttempts = 0;
   private timer?: ReturnType<typeof setTimeout>;
 
   constructor(private events: VoiceEvents, private options: { wake?: boolean } = {}) {}
@@ -67,14 +69,14 @@ export class VoiceSession {
           this.events.awake?.();
           this.replyPlaying = false; this.playbackUntil = 0;
           this.awake = true; this.wakeDeadline = Date.now() + 20_000;
-          this.events.status('armed', 'Hey Marbles heard. Describe your task.');
+          this.events.status('armed', 'Marbles heard. Describe your task.');
           this.turns.begin(audio.length);
           this.speaking = true;
           this.events.activity?.(0.5, true);
           if (!this.socket) this.connect();
           this.sendRaw(pcm16(audio));
         }, message => this.fail(message));
-        this.events.status('loading', 'Loading the local Hey Marbles detector…');
+        this.events.status('loading', 'Loading the local Marbles detector…');
         this.armTimeout('Wake model download timed out. Check your connection and try again.', 180_000);
         await this.wake.load(percent => this.events.status('loading', `Downloading local wake model: ${percent}%`));
         clearTimeout(this.timer);
@@ -138,7 +140,7 @@ export class VoiceSession {
     this.turns.discard(); this.wake?.reset();
     this.awake = false; this.speaking = false;
     this.events.activity?.(0, false);
-    this.events.status('wake', 'Listening locally for Hey Marbles. Standby audio stays on this device.');
+    this.events.status('wake', 'Listening locally for Marbles. Standby audio stays on this device.');
   }
 
   setReplyPlaying(playing: boolean) {
@@ -150,7 +152,7 @@ export class VoiceSession {
 
   private reportActivity() {
     if (this.options.wake && !this.awake) {
-      this.events.status('wake', 'Listening locally for Hey Marbles.'); return;
+      this.events.status('wake', 'Listening locally for Marbles.'); return;
     }
     this.events.status(this.speaking ? "listening" : "armed", this.speaking
       ? "Transcribing with OpenAI. Your audio is being sent."
@@ -162,15 +164,35 @@ export class VoiceSession {
     this.armTimeout("Connection timed out. Check your server and API key.", 20_000);
     const url = new URL("/api/voice", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    this.socket = new WebSocket(url);
-    this.socket.onerror = () => this.fail("Cannot connect to voice. Check the app server and OPENAI_API_KEY.");
-    this.socket.onclose = () => this.fail("Voice connection closed. Try again.");
+    const socket = new WebSocket(url);
+    this.socket = socket;
+    this.connectionAttempts++;
+    let retrying = false;
+    const connectionFailed = () => {
+      if (this.disposed || this.socket !== socket || retrying) return;
+      if (!this.ready && this.connectionAttempts < 3 && !this.stopping) {
+        retrying = true;
+        socket.onerror = socket.onclose = socket.onmessage = null;
+        socket.close();
+        this.events.status('loading', 'Reconnecting to the local voice server…');
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = undefined;
+          if (!this.disposed) this.connect();
+        }, this.connectionAttempts * 500);
+        return;
+      }
+      this.fail(this.ready ? 'Voice connection closed. Please try again.'
+        : 'The local voice server refused the connection. Close other Marbles tabs using voice, or restart the app server.');
+    };
+    socket.onerror = connectionFailed;
+    socket.onclose = connectionFailed;
     this.socket.onmessage = ({ data }) => {
       if (this.disposed) return;
       try {
         const event = JSON.parse(data);
         if (event.type === "ready") {
           this.ready = true;
+          this.connectionAttempts = 0;
           clearTimeout(this.timer);
           this.drain();
           if (this.stopping) this.armTimeout("Final transcription timed out. You can copy the text received so far.", 15_000);
@@ -245,6 +267,7 @@ export class VoiceSession {
     this.disposed = true;
     clearTimeout(this.timer);
     clearTimeout(this.sendTimer);
+    clearTimeout(this.reconnectTimer);
     this.wake?.dispose();
     this.releaseMicrophone();
     this.events.activity?.(0, false);

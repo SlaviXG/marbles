@@ -54,16 +54,17 @@ export async function resolveArtifact(root, relative) {
   return real;
 }
 export class TaskService {
-  constructor({ agentDetector, root = workspaceRoot(), spawnProcess = spawn } = {}) {
+  constructor({ agentDetector, root = workspaceRoot(), spawnProcess = spawn, externalBusy = () => false } = {}) {
     this.agentDetector = agentDetector;
     this.root = root;
     this.spawnProcess = spawnProcess;
+    this.externalBusy = externalBusy;
     this.tasks = [];
     this.reservations = new Set();
   }
   snapshot() { return this.tasks.slice(-50).reverse(); }
   isBusy(agentId) {
-    return this.reservations.has(agentId) || this.tasks.some(task => task.agentId === agentId && task.status === 'running');
+    return this.externalBusy(agentId) || this.reservations.has(agentId) || this.tasks.some(task => task.agentId === agentId && task.status === 'running');
   }
   async startIdle(prompt, metadata = {}) {
     const agents = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));

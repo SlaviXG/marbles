@@ -1,23 +1,47 @@
 import { expect, it } from 'vitest';
-import { hasWakePhrase, wakeStart, withoutWakePhrase } from '../voice/wakePhrase';
+import { hasWakePhrase, wakeMatch, wakeStart, withoutWakePhrase, WAKE_MATCH_THRESHOLD } from '../voice/wakePhrase';
 import { spokenText } from '../voice/ReplySpeaker';
 
-it('matches the exact wake phrase as complete words and keeps its timestamp', () => {
-  expect(hasWakePhrase('Hey, Marbles!')).toBe(true);
-  expect(hasWakePhrase('they marbles')).toBe(false);
-  expect(wakeStart([{ text: 'Hey,', timestamp: [0.2, 0.5] }, { text: 'Marbles!', timestamp: [0.5, 1] }])).toBe(0.2);
-  expect(wakeStart([{ text: 'they marbles', timestamp: [0, 1] }])).toBeUndefined();
-  expect(wakeStart([{ text: 'hey marble', timestamp: [0, 1] }])).toBeUndefined();
+it('compares the trigger word with a 50 percent threshold', () => {
+  expect(WAKE_MATCH_THRESHOLD).toBe(0.5);
+  expect(wakeMatch('Marbles')?.score).toBe(1);
+  expect(wakeMatch('marvels')?.score).toBeGreaterThanOrEqual(0.5);
 });
-it('discards audio-prefix transcription before the last wake phrase', () => {
-  expect(withoutWakePhrase('Some old reply. Hey, Marbles! Write a report.')).toBe('Write a report.');
-  expect(withoutWakePhrase('Hey Marbles.')).toBe('');
+
+it.each([
+  'Marbles', 'hey marbles', 'hi marbles', 'yo marbles', 'Heymarbles',
+  'Could you help me today, Marbles, and write a report?',
+  'I have a long request for you and I will say marbles in the middle of it.',
+  'marvels', 'marble',
+])('finds the trigger word without matching the whole sentence: %s', text => {
+  expect(hasWakePhrase(text)).toBe(true);
+});
+
+it.each(['the sky', 'hey there', 'write a report', 'make a brief', 'something'])('rejects words below the threshold: %s', text => {
+  expect(hasWakePhrase(text)).toBe(false);
+});
+
+it('keeps the trigger-word timestamp rather than the greeting timestamp', () => {
+  expect(wakeStart([
+    { text: 'Hey,', timestamp: [0.2, 0.5] },
+    { text: 'Marbles!', timestamp: [0.5, 1] },
+    { text: 'create tables', timestamp: [1, 2] },
+  ])).toBe(0.5);
+});
+
+it('prefers the clearest match and keeps the task after it intact', () => {
+  expect(withoutWakePhrase('Some old reply. Hey, Marbles! Create tables and labels.')).toBe('Create tables and labels.');
+  expect(withoutWakePhrase('Marbles, explain how marbles are made.')).toBe('explain how marbles are made.');
+  expect(withoutWakePhrase('Yo marvels, create a brief.')).toBe('create a brief.');
+  expect(withoutWakePhrase('Hi Marbles.')).toBe('');
   expect(withoutWakePhrase('Write a report')).toBe('Write a report');
 });
-it('does not read the wake phrase back into the microphone', () => {
-  const text = spokenText('Say **Hey Marbles** and read [the report](https://example.com). ```js\nsecret\n```');
-  expect(text).not.toMatch(/hey marbles/i);
-  expect(text).toContain('the report');
-  expect(text).not.toContain('secret');
+
+it('does not read exact or approximate trigger words back into the microphone', () => {
+  for (const word of ['marbles', 'marvels', 'marble']) {
+    const text = spokenText(`Say **${word}** and read [the report](https://example.com).`);
+    expect(hasWakePhrase(text)).toBe(false);
+  }
+  expect(spokenText('```js\nsecret\n```')).not.toContain('secret');
   expect(spokenText('x'.repeat(2000)).length).toBeLessThan(700);
 });

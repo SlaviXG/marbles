@@ -68,15 +68,15 @@ export function drawHolographicSpace(ctx: CanvasRenderingContext2D) {
   // A single projection plane gives depth without filling the UI with widgets.
   const pool = ctx.createRadialGradient(0, 8, 20, 0, 8, 240);
   pool.addColorStop(0, 'oklch(45% .09 220 / .1)'); pool.addColorStop(1, 'oklch(45% .09 220 / 0)');
-  ctx.fillStyle = pool; ctx.fillRect(-280, -220, 560, 440);
+  ctx.fillStyle = pool; ctx.fillRect(-450, -300, 900, 600);
   ctx.strokeStyle = 'oklch(72% .075 220 / .09)'; ctx.lineWidth = .5;
-  for (const radius of [160, 200, 245]) {
+  for (const radius of [280, 350, 420]) {
     ctx.beginPath(); ctx.ellipse(0, 10, radius, radius * .48, 0, 0, Math.PI * 2); ctx.stroke();
   }
   for (let i = 0; i < 12; i++) {
     const angle = i / 12 * Math.PI * 2;
-    ctx.beginPath(); ctx.moveTo(Math.cos(angle) * 190, 10 + Math.sin(angle) * 91);
-    ctx.lineTo(Math.cos(angle) * 202, 10 + Math.sin(angle) * 97); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(Math.cos(angle) * 335, 10 + Math.sin(angle) * 161);
+    ctx.lineTo(Math.cos(angle) * 351, 10 + Math.sin(angle) * 169); ctx.stroke();
   }
   // Quiet center reticle, rather than a fourth pretend agent.
   ctx.strokeStyle = 'oklch(78% .09 215 / .22)'; ctx.lineWidth = .65;

@@ -109,12 +109,34 @@ export function bridgeVoice(client, { apiKey, connect = (url, options) => new We
 
 export function attachVoice(server, { apiKey = process.env.OPENAI_API_KEY } = {}) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.isAlive === false) { client.terminate(); continue; }
+      client.isAlive = false;
+      client.ping();
+    }
+  }, 15_000);
+  heartbeat.unref?.();
+  server.on('close', () => clearInterval(heartbeat));
+  wss.on('close', () => clearInterval(heartbeat));
   server.on("upgrade", (req, socket, head) => {
-    if (req.url !== "/api/voice" || !localVoiceOrigin(req.headers.origin) || wss.clients.size >= 1) {
+    if (req.url !== "/api/voice" || !localVoiceOrigin(req.headers.origin)) {
       socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       return;
     }
-    wss.handleUpgrade(req, socket, head, (client) => bridgeVoice(client, { apiKey }));
+    // A closing socket from a reload must not reserve the voice slot. Actual
+    // live connections still have one owner; heartbeat reaps abandoned tabs.
+    for (const client of wss.clients) if (client.readyState !== WebSocket.OPEN) client.terminate();
+    if ([...wss.clients].some(client => client.readyState === WebSocket.OPEN)) {
+      socket.end("HTTP/1.1 409 Conflict\r\nX-Marbles-Voice-Error: busy\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (client) => {
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      bridgeVoice(client, { apiKey });
+    });
   });
   return wss;
 }

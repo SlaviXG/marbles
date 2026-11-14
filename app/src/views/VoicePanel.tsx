@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { VoiceSession, type VoiceStatus } from "../voice/VoiceSession";
 import { emptyTranscript, transcriptText, updateTranscript } from "../voice/transcript";
 import { CommandBuffer } from "../voice/CommandBuffer";
-import { refreshAgents, refreshTasks, useAgents } from "../state/agents";
+import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
 import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
@@ -26,10 +26,10 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const watching = useRef(new Map<string, string>());
   const tasks = useAgents(state => state.tasks);
   const [status, setStatus] = useState<VoiceStatus>("idle");
-  const [detail, setDetail] = useState("Enable the microphone, then say “Hey Marbles” and your task. Voice requests start when you finish speaking. Transcription uses OpenAI.");
+  const [detail, setDetail] = useState("Enable the microphone, then say “Marbles” and your task. Voice requests start when you finish speaking. Transcription uses OpenAI.");
   const [level, setLevel] = useState(0);
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
-  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Hey Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
+  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
     : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
     : status === "error" ? "Touch the orb to try again" : "Touch the orb to begin";
 
@@ -73,8 +73,11 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       for (const id of Object.keys(draft.current.items)) consumed.current.add(id);
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
       const request = withoutWakePhrase(text);
-      if (!request) return; // A standalone wake phrase opens listening, not a task.
-      const local = canvasCommand(request, useAgents.getState().tasks);
+      if (!request) {
+        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: "I’m listening. What would you like me to do?" });
+        return;
+      }
+      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms);
       if (local) {
         if (local.close) useVault.getState().clear();
         if (local.select) useVault.getState().select(local.select);
@@ -129,6 +132,10 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           watching.current.set(data.task.id, data.intent.objective);
           reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
           await Promise.all([refreshAgents(), refreshTasks()]);
+        } else if (data.state === 'swarm') {
+          session.current?.rearm(); clarificationContext.current = '';
+          reply(`Started a swarm with ${data.swarm.agents.join(' and ')}: ${data.intent.objective}`, { swarmId: data.swarm.id });
+          await Promise.all([refreshAgents(), refreshSwarms()]);
         } else if (data.state === 'clarify') {
           clarificationContext.current = request.transcript;
           reply(data.intent.clarification);
@@ -161,7 +168,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         </button>
       </div>
       <div className="voice-caption" role="status">{caption}</div>
-      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Hey Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
     <VoiceConversation messages={messages} retry={enqueue}
       read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bridgeVoice, localVoiceOrigin } from "../transport/voice.mjs";
+import { attachVoice, bridgeVoice, localVoiceOrigin } from "../transport/voice.mjs";
 
 class Socket extends EventEmitter {
   readyState = 1;
@@ -13,6 +13,39 @@ class Socket extends EventEmitter {
 
 describe("voice relay", () => {
   afterEach(() => { vi.useRealTimers(); });
+  it('allows a new connection while a previous socket is closing, but preserves a live owner', () => {
+    vi.useFakeTimers();
+    const server = new EventEmitter();
+    const wss = attachVoice(server, { apiKey: 'test' });
+    const upgrade = vi.spyOn(wss, 'handleUpgrade').mockImplementation(() => {});
+    const closing = { readyState: 2, terminate: vi.fn() };
+    const live = { readyState: 1, ping: vi.fn(), terminate: vi.fn() };
+    const request = { url: '/api/voice', headers: { origin: 'http://localhost:5173' } };
+    const socket = { end: vi.fn() };
+    try {
+      wss.clients.add(closing);
+      server.emit('upgrade', request, socket, Buffer.alloc(0));
+      expect(closing.terminate).toHaveBeenCalled();
+      expect(upgrade).toHaveBeenCalledOnce();
+      wss.clients.add(live);
+      server.emit('upgrade', request, socket, Buffer.alloc(0));
+      expect(upgrade).toHaveBeenCalledOnce();
+      expect(socket.end).toHaveBeenCalledWith(expect.stringContaining('409 Conflict'));
+    } finally { server.emit('close'); wss.clients.clear(); wss.close(); }
+  });
+  it('cleans up abandoned voice sockets with a heartbeat', () => {
+    vi.useFakeTimers();
+    const server = new EventEmitter();
+    const wss = attachVoice(server, { apiKey: 'test' });
+    const client = { readyState: 1, isAlive: true, ping: vi.fn(), terminate: vi.fn() };
+    try {
+      wss.clients.add(client);
+      vi.advanceTimersByTime(15000);
+      expect(client.ping).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(15000);
+      expect(client.terminate).toHaveBeenCalledOnce();
+    } finally { server.emit('close'); wss.clients.clear(); wss.close(); }
+  });
   function setup() {
     vi.useFakeTimers();
     const client = new Socket();

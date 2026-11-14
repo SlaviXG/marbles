@@ -1,4 +1,4 @@
-export function drawAsset(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: string) {
+export function drawAsset(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: string, ready = true) {
   ctx.save(); ctx.translate(x, y);
   const paper = (dx: number, dy: number, color: string) => {
     ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(-r * .72 + dx, -r + dy, r * 1.44, r * 1.8, r * .12); ctx.fill();
@@ -24,6 +24,7 @@ export function drawAsset(ctx: CanvasRenderingContext2D, x: number, y: number, r
     for (let i = 0; i < 4; i++) { ctx.moveTo(-r * .46, r * (-.57 + i * .28)); ctx.lineTo(r * (i === 3 ? .1 : .42), r * (-.57 + i * .28)); }
     ctx.stroke();
   }
+  if (!ready) { ctx.restore(); return; }
   // A tiny ready mark is semantic, rather than an ornamental color alone.
   ctx.fillStyle = 'oklch(35% .06 205)'; ctx.beginPath(); ctx.arc(r * .65, r * .67, r * .3, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = 'oklch(85% .09 210)'; ctx.lineWidth = r * .07;

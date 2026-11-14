@@ -8,10 +8,15 @@ import { VoiceCommands } from "../agents/voiceCommands.mjs";
 import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
 import { speechHandler } from "./speech.mjs";
+import { SwarmService } from "../swarm/SwarmService.mjs";
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService = new TaskService({ agentDetector: () => agentRegistry.snapshot() }), voiceCommands = new VoiceCommands({ taskService }) } = {}) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands } = {}) {
+  taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
+  swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
+  taskService.externalBusy = id => swarmService.isBusy(id);
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService });
   const app = express();
   const publicAgent = agent => ({ ...agent, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
   app.use(express.json({ limit: "32kb" }));
@@ -28,11 +33,27 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     req.on("close", unsubscribe);
   });
   app.get("/api/tasks", (_req, res) => res.json(taskService.snapshot()));
+  app.get('/api/swarm/tasks', (_req, res) => res.json(swarmService.snapshot()));
+  app.post('/api/swarm/tasks', async (req, res) => {
+    try { res.status(202).json({ swarm: await swarmService.start(req.body) }); }
+    catch (e) { res.status(e.code === 'AGENT_BUSY' ? 409 : e.code === 'NO_AGENTS' ? 503 : 400).json({ error: e.message }); }
+  });
+  app.get('/api/swarm/stats', (_req, res) => res.json(swarmService.statsSnapshot()));
+  app.get('/api/swarm/tasks/:id', async (req, res) => {
+    const swarm = swarmService.detail ? await swarmService.detail(req.params.id) : swarmService.get(req.params.id);
+    if (!swarm) return res.status(404).json({ error: 'Swarm not found' });
+    res.json(swarm);
+  });
+  app.post('/api/swarm/tasks/:id/cancel', (req, res) => {
+    const swarm = swarmService.cancel(req.params.id);
+    if (!swarm) return res.status(404).json({ error: 'Swarm not found' });
+    res.json({ swarm });
+  });
   app.post("/api/voice/tasks", async (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Voice commands require a local app origin.' });
     try {
       const result = await voiceCommands.dispatch(req.body);
-      res.status(result.state === 'assigned' ? 202 : 200).json(result);
+      res.status(['assigned', 'swarm'].includes(result.state) ? 202 : 200).json(result);
     } catch (error) {
       const status = error.code === 'AGENT_BUSY' ? 409 : error.code === 'NO_AGENTS' ? 503 : 400;
       res.status(status).json({ error: error.name === 'TimeoutError' ? 'Task interpretation timed out. Please retry.' : error.message });
@@ -54,6 +75,15 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
       const file = await resolveArtifact(taskService.root, req.query.path);
       res.sendFile(file);
     } catch { res.status(400).json({ error: "Invalid artifact path" }); }
+  });
+  // A path-based reader keeps generated HTML, styles and images in the same
+  // preview. Resolve every request through the existing workspace boundary.
+  app.get('/api/artifacts/view/*', async (req, res) => {
+    try {
+      const file = await resolveArtifact(taskService.root, req.params[0]);
+      res.set('Content-Security-Policy', "script-src 'none'; object-src 'none'; frame-ancestors 'self'");
+      res.sendFile(file);
+    } catch { res.status(400).json({ error: 'Invalid artifact path' }); }
   });
   app.post("/api/artifacts/open", async (req, res) => {
     try {
