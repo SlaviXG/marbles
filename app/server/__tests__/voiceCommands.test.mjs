@@ -3,10 +3,10 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { VoiceCommands, interpretSpeech, buildVoicePrompt } from '../agents/voiceCommands.mjs';
+import { VoiceCommands, interpretSpeech, buildVoicePrompt, classifyQuery } from '../agents/voiceCommands.mjs';
 import { TaskService } from '../agents/taskService.mjs';
 
-const intent = { decision: 'task', problem: 'Missing greeting', objective: 'Write hello.txt', constraints: ['Use plain text'], successCriteria: ['Contains hello'], clarification: '' };
+const intent = { decision: 'task', collaboration: 'solo', intent: 'task', targetAgents: [], problem: 'Missing greeting', objective: 'Write hello.txt', constraints: ['Use plain text'], successCriteria: ['Contains hello'], clarification: '' };
 const request = { transcript: 'Please write hello.txt with hello.', requestId: 'request-123' };
 
 describe('voice task understanding', () => {
@@ -18,6 +18,8 @@ describe('voice task understanding', () => {
     expect(options.headers.Authorization).toBe('Bearer secret');
     expect(payload.text.format.strict).toBe(true);
     expect(payload.text.format.schema.properties.collaboration.enum).toEqual(['solo', 'swarm']);
+    expect(payload.text.format.schema.properties.intent.enum).toEqual(['task', 'swarm', 'status', 'log']);
+    expect(payload.text.format.schema.required).toContain('targetAgents');
     expect(payload.input).toBe(request.transcript);
     expect(payload.store).toBe(false);
     expect(buildVoicePrompt(request.transcript, intent)).toContain(request.transcript);
@@ -29,6 +31,7 @@ describe('voice task understanding', () => {
   it('rejects malformed output and sanitizes provider failures', async () => {
     await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: false }) })).rejects.toThrow('OpenAI could not interpret');
     await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [] }) }) })).rejects.toThrow('rephrase');
+    await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({ ...intent, targetAgents: ['unknown'] }) }] }] }) }) })).rejects.toThrow('Invalid');
   });
   it('deduplicates simultaneous retries and records voice provenance', async () => {
     const startIdle = vi.fn(async () => ({ id: 'task-1' }));
@@ -74,7 +77,7 @@ describe('idle agent reservation', () => {
     } finally { children.forEach(c => c.emit('close', 0)); await rm(root, { recursive: true, force: true }); }
   });
   it('excludes desktop and unsupported launchers', async () => {
-    const service = new TaskService({ agentDetector: async () => [{ id: 'cursor', kind: 'cli' }, { id: 'codex', kind: 'desktop' }] });
+    const service = new TaskService({ agentDetector: async () => [{ id: 'cursor', kind: 'desktop' }, { id: 'codex', kind: 'desktop' }] });
     await expect(service.startIdle('task')).rejects.toMatchObject({ code: 'NO_AGENTS' });
   });
 });

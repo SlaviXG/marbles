@@ -4,7 +4,7 @@ import { emptyTranscript, transcriptText, updateTranscript } from "../voice/tran
 import { CommandBuffer } from "../voice/CommandBuffer";
 import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
-import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
+import { upsertMessage, visibleMessages, statusMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 
@@ -148,6 +148,10 @@ export default function VoicePanel() {
           session.current?.rearm(); clarificationContext.current = '';
           reply(`Started a swarm with ${data.swarm.agents.join(' and ')}: ${data.intent.objective}`, { swarmId: data.swarm.id });
           await Promise.all([refreshAgents(), refreshSwarms()]);
+        } else if (data.state === 'status' || data.state === 'log') {
+          session.current?.rearm(); clarificationContext.current = '';
+          const item = statusMessage(id, data);
+          if (item) message(item);
         } else if (data.state === 'clarify') {
           clarificationContext.current = request.transcript;
           reply(data.intent.clarification);

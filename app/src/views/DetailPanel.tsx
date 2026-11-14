@@ -431,7 +431,7 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
     const timer = window.setInterval(refresh, 5000);
     return () => { live = false; window.clearInterval(timer); };
   }, [agent.id, agent.available]);
-  const reason = !agent.available ? 'Agent unavailable' : agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : '';
+  const reason = agent.reason ?? (!agent.available ? 'Agent unavailable' : agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude', 'cursor'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : '');
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!prompt.trim() || sending || reason) return;

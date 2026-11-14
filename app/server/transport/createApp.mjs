@@ -9,6 +9,7 @@ import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
 import { speechHandler } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
+import { randomUUID } from 'node:crypto';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
@@ -16,9 +17,16 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
   swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
   taskService.externalBusy = id => swarmService.isBusy(id);
-  voiceCommands ??= new VoiceCommands({ taskService, swarmService });
+  const readLog = id => {
+    if (id !== 'cursor') return agentLog(id);
+    const task = taskService.snapshot().find(task => task.agentId === id);
+    const runs = swarmService.snapshot().flatMap(swarm => swarm.runs ?? []).filter(run => run.agentId === id).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    const latest = [task && { at: task.createdAt, stdout: task.stdout }, runs[0] && { at: runs[0].startedAt, stdout: runs[0].stdout }].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+    return agentLog(id, undefined, latest?.stdout);
+  };
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog });
   const app = express();
-  const publicAgent = agent => ({ ...agent, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
+  const publicAgent = agent => ({ ...agent, reason: taskCapability(agent) ?? agent.reason, status: !agent.available || taskCapability(agent) ? 'unavailable' : taskService.isBusy(agent.id) ? 'running' : 'idle' });
   app.use(express.json({ limit: "32kb" }));
   app.post('/api/voice/speech', speechHandler());
 
@@ -59,6 +67,13 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
       res.status(status).json({ error: error.name === 'TimeoutError' ? 'Task interpretation timed out. Please retry.' : error.message });
     }
   });
+  app.post('/api/assistant/ask', async (req, res) => {
+    if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Assistant questions require a local app origin.' });
+    const question = req.body?.question;
+    if (typeof question !== 'string' || !question.trim() || question.length > 6000) return res.status(400).json({ error: 'Supply a question under 6,000 characters.' });
+    try { res.json(await voiceCommands.dispatch({ transcript: question, requestId: randomUUID() })); }
+    catch (error) { res.status(400).json({ error: error.message }); }
+  });
   app.post("/api/agents/:id/tasks", async (req, res) => {
     try { res.status(202).json(await taskService.start(req.params.id, req.body?.prompt)); }
     catch (error) { res.status(error.code === 'AGENT_BUSY' ? 409 : error.message === "Agent not found" ? 404 : 400).json({ error: error.message }); }
@@ -67,7 +82,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     try {
       const agent = agentRegistry.snapshot().find(a => a.id === req.params.id);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
-      res.json(await agentLog(agent.id));
+      res.json(await readLog(agent.id));
     } catch { res.status(500).json({ error: "Could not read agent log" }); }
   });
   app.get("/api/artifacts/file", async (req, res) => {

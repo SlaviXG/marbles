@@ -9,6 +9,7 @@ export interface DetectedAgent {
   path: string; // Executable or desktop bundle path.
   version: string | null;
   available: boolean;
+  reason?: string;
   codingAgent: boolean; // Catalog eligibility for the agent canvas.
   status?: 'idle' | 'running' | 'unavailable';
 }

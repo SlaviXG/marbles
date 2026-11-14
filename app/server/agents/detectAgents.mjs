@@ -100,7 +100,14 @@ export function createAgentDetector(options = {}) {
       const paths = new Map(await Promise.all(commands.map(async (command) => [command, await findCommand(command, pathDirs, platform, env)])));
       const found = await Promise.all(supported.map(async (agent) => {
         const required = (agent.detectRequiredCommands ?? []).every((command) => paths.get(command));
-        const command = required && [agent.detectCmd, ...(agent.detectCmdAliases ?? [])].find((cmd) => paths.get(cmd));
+        let command = required && [agent.detectCmd, ...(agent.detectCmdAliases ?? [])].find((cmd) => paths.get(cmd));
+        if (agent.id === 'cursor' && command === 'agent') {
+          const candidate = paths.get(command);
+          const resolved = await fs.realpath(candidate).catch(() => candidate);
+          const cursorPath = [path.join(homeDir, '.local', 'bin'), path.join(homeDir, '.cursor')].some(root => resolved.startsWith(root + path.sep) || candidate.startsWith(root + path.sep));
+          const version = cursorPath ? null : await readVersion(candidate, options.versionTimeoutMs ?? VERSION_TIMEOUT_MS);
+          if (!cursorPath && !/cursor/i.test(version ?? '')) command = null;
+        }
         const cliPath = command ? paths.get(command) : null;
         const desktopPath = !cliPath && platform === "darwin" && agent.desktopApps?.length
           ? await findDesktop(agent.desktopApps, desktopRoots) : null;
@@ -113,6 +120,7 @@ export function createAgentDetector(options = {}) {
           path: cliPath || desktopPath,
           version: cliPath && options.readVersions !== false ? await readVersion(cliPath, options.versionTimeoutMs ?? VERSION_TIMEOUT_MS) : null,
           available: true,
+          ...(agent.id === 'cursor' && !cliPath ? { reason: 'Cursor CLI not installed. Install with: curl https://cursor.com/install -fsS | bash, then run `cursor-agent login`.' } : {}),
           codingAgent: agent.codingAgent === true,
         };
       }));

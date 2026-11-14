@@ -141,7 +141,7 @@ the next spoken answer includes the original request as clarification context.
 A clear task becomes a prompt containing both the original wording and the
 structured interpretation.
 
-The existing TaskService chooses an installed, supported, idle Codex or Claude
+The existing TaskService chooses an installed, supported, idle Codex, Claude, or Cursor
 CLI. Desktop-only agents and unsupported launchers are excluded. Reservations
 prevent concurrent voice/manual requests from assigning the same agent. Busy
 agents leave the request available for **Retry task**; retry IDs prevent repeated
@@ -152,6 +152,19 @@ Tasks run in the existing fresh per-task folders under `MARBLES_WORKSPACE_DIR`
 existing project's path if that is the intended target. In-memory task history,
 idle tracking, and retry IDs reset when the server restarts; idle means no active
 Marbles-managed task, not every unrelated CLI session on the machine.
+
+To enable Cursor tasks, install its headless CLI with
+`curl https://cursor.com/install -fsS | bash` and run `cursor-agent login`.
+Marbles detects `cursor-agent` or Cursor's newer `agent` command. Cursor.app
+without the CLI remains visible but cannot launch tasks. Cursor logs in Marbles
+come from captured task or swarm stream output; no previous Cursor session log
+is available before a Marbles run.
+
+Spoken status questions such as “what's happening with Codex?” and log requests
+such as “give me the log” report recent activity without starting a run. The
+reply appears in the conversation and uses the existing speech playback.
+`POST /api/assistant/ask` accepts `{ "question": "what is Codex doing?" }` from
+the same local app origins as voice commands and uses the same intent path.
 
 The relay accepts one voice session from local app origins on ports 5173/5174.
 The server binds to loopback and limits payloads, backlogs, and session duration. Closing sockets do not reserve the voice

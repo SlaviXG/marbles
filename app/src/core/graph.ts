@@ -45,8 +45,8 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   const agentNodes = new Map<string, GNode>();
   visibleAgents.forEach((agent, index) => {
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
-    const status = !agent.available || agent.kind !== 'cli' || !['codex', 'claude'].includes(agent.id)
-      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle';
+    const status = agent.status ?? (!agent.available || agent.kind !== 'cli' || !['codex', 'claude', 'cursor'].includes(agent.id)
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
     const node = pinned(`agent:${agent.id}`, `${agent.name} · ${status}`, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     nodes.push(node);

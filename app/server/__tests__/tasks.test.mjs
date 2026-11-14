@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launcher, validateArtifactPath, resolveArtifact, TaskService, scanArtifacts } from '../agents/taskService.mjs';
-import { parseLog } from '../agents/logs.mjs';
+import { parseLog, parseCursorStream, agentLog } from '../agents/logs.mjs';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const codex = { id: 'codex', kind: 'cli', path: '/bin/codex' };
 const claude = { id: 'claude', kind: 'cli', path: '/bin/claude' };
@@ -51,6 +51,7 @@ describe('task launcher', () => {
       expect(calls[0][2].shell).toBe(false);
       calls.length = 0;
       expect(launcher(claude, 'do Y', root).args).toEqual(['-p', 'do Y', '--permission-mode', 'acceptEdits']);
+      expect(launcher({ id: 'cursor', kind: 'cli', path: '/bin/agent' }, 'do Z', root)).toEqual({ command: '/bin/agent', args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', root, 'do Z'], options: { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } });
       spawnProcess.mock.results[0].value.emit('close', 0);
       expect(task.status).toBe('completed');
     } finally { await rm(root, { recursive: true, force: true }); }
@@ -70,6 +71,22 @@ describe('artifact path safety', () => {
   });
 });
 describe('log parsing', () => {
+  it('parses Cursor stream output, redacts secrets, and handles missing output', async () => {
+    const stdout = [
+      { type: 'system' },
+      { type: 'user', message: { content: [{ type: 'text', text: 'Please inspect report' }] } },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'I found sk-abcdefghijklmnop' }] } },
+      { type: 'tool_call', subtype: 'started', tool_call: { name: 'ReadFile', input: { password: 'private' } } },
+      { type: 'result', result: 'Done' },
+    ].map(JSON.stringify).join('\n');
+    const log = parseCursorStream(stdout.split('\n'));
+    expect(log.prompt.text).toContain('report');
+    expect(log.messages.at(-1).text).toBe('Done');
+    expect(log.tools[0].name).toBe('ReadFile');
+    expect(JSON.stringify(log)).not.toContain('abcdefghijklmnop');
+    expect(JSON.stringify(log)).not.toContain('private');
+    expect(await agentLog('cursor', undefined, '')).toMatchObject({ available: false });
+  });
   for (const kind of ['claude', 'codex']) it(`reads ${kind} fixture without exposing tool values`, async () => {
     const lines = (await readFile(path.join(fixtures, `${kind}.jsonl`), 'utf8')).split('\n');
     const log = parseLog(lines, kind);

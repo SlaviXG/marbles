@@ -13,13 +13,13 @@ const taskService = { root: '/tmp', isBusy: () => false, snapshot: () => [] };
 
 describe('swarm routes', () => {
   it('returns validation errors and 404s as JSON', async () => {
-    const start = vi.fn().mockRejectedValueOnce(new Error('Enter a goal under 6,000 characters')).mockRejectedValueOnce(new Error('Task launch is not supported for this CLI yet'));
+    const start = vi.fn().mockRejectedValueOnce(new Error('Enter a goal under 6,000 characters')).mockRejectedValueOnce(new Error('Cursor CLI not installed'));
     const swarmService = { start, snapshot: () => [], statsSnapshot: () => ({ agents: {} }), get: () => null, cancel: () => null, isBusy: () => false };
     const app = createApp(service, { agentRegistry: registry, taskService, swarmService });
     let res = response(); await route(app, 'post', '/api/swarm/tasks')({ body: { goal: '' } }, res);
     expect(res.statusCode).toBe(400); expect(res.body.error).toContain('goal');
     res = response(); await route(app, 'post', '/api/swarm/tasks')({ body: { goal: 'x', agents: ['cursor'] } }, res);
-    expect(res.statusCode).toBe(400); expect(res.body.error).toContain('not supported');
+    expect(res.statusCode).toBe(400); expect(res.body.error).toContain('not installed');
     res = response(); route(app, 'get', '/api/swarm/tasks/:id')({ params: { id: 'missing' } }, res);
     expect(res.statusCode).toBe(404);
   });

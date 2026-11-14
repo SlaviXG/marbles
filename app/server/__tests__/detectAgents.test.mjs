@@ -65,6 +65,20 @@ describe("agent detection", () => {
     expect(agentCatalog.filter(({ codingAgent }) => codingAgent).map(({ id }) => id)).toEqual(["claude", "codex", "cursor"]);
   });
 
+  it('accepts the generic agent alias only when it identifies Cursor', async () => {
+    const { bin, home } = await fixture();
+    const catalog = agentCatalog.filter(({ id }) => id === 'cursor');
+    await command(bin, 'agent', '#!/bin/sh\necho unrelated-1.0\n');
+    const options = { catalog, pathEnv: bin, homeDir: home, platform: 'linux' };
+    expect(await createAgentDetector(options)()).toEqual([]);
+    await command(bin, 'agent', '#!/bin/sh\necho Cursor Agent 1.0\n');
+    expect((await createAgentDetector(options)())[0]).toMatchObject({ id: 'cursor', kind: 'cli', command: 'agent' });
+    const localBin = path.join(home, '.local', 'bin');
+    await mkdir(localBin, { recursive: true });
+    await command(localBin, 'agent', '#!/bin/sh\necho version-1.0\n');
+    expect((await createAgentDetector({ ...options, pathEnv: localBin })())[0]).toMatchObject({ id: 'cursor', kind: 'cli', command: 'agent' });
+  });
+
   it("uses only --version, times out, and caches the result", async () => {
     const { bin, home, root } = await fixture();
     const marker = path.join(root, "calls");

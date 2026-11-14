@@ -146,10 +146,10 @@ describe('swarm execution', () => {
     fake.children[0].emit('close', 0);
     expect((await pending).contributions).toEqual({ codex: 0.7, claude: 0.3 });
   }));
-  it('rejects unsupported cursor and malformed input', async () => temporary(async root => {
-    const service = new SwarmService({ root, agentDetector: async () => [...agents, { id: 'cursor', kind: 'cli', available: true }] });
+  it('rejects cursor when only the desktop app is installed and rejects malformed input', async () => temporary(async root => {
+    const service = new SwarmService({ root, agentDetector: async () => [...agents, { id: 'cursor', kind: 'desktop', available: true }] });
     await expect(service.start({ goal: '' })).rejects.toThrow('goal');
-    await expect(service.start({ goal: 'test', agents: ['cursor'] })).rejects.toThrow('not supported');
+    await expect(service.start({ goal: 'test', agents: ['cursor'] })).rejects.toThrow('Cursor CLI not installed');
     await expect(service.start({ goal: 'test', agents: ['codex'], concurrency: 5 })).rejects.toThrow('concurrency');
   }));
 });
