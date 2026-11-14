@@ -21,6 +21,7 @@ export class VoiceSession {
   private speaking = false;
   private queued: (ArrayBuffer | string)[] = [];
   private queuedBytes = 0;
+  private sendTimer?: ReturnType<typeof setTimeout>;
   private timer?: ReturnType<typeof setTimeout>;
 
   constructor(private events: VoiceEvents) {}
@@ -106,9 +107,7 @@ export class VoiceSession {
         if (event.type === "ready") {
           this.ready = true;
           clearTimeout(this.timer);
-          for (const chunk of this.queued) this.socket!.send(chunk);
-          this.queued = [];
-          this.queuedBytes = 0;
+          this.drain();
           if (this.stopping) this.armTimeout("Final transcription timed out. You can copy the text received so far.", 15_000);
           else this.reportActivity();
         } else if (event.type === "error") this.fail(event.message);
@@ -122,13 +121,27 @@ export class VoiceSession {
 
   private sendRaw(chunk: ArrayBuffer | string) {
     if (this.disposed) return;
-    if (this.ready) { this.socket!.send(chunk); return; }
     this.queuedBytes += typeof chunk === "string" ? chunk.length : chunk.byteLength;
     if (this.queuedBytes > SAMPLE_RATE * 2 * 8) {
       this.fail("OpenAI is taking too long to connect. Please try again.");
       return;
     }
-    this.queued.push(chunk);
+    if (typeof chunk === 'string') this.queued.push(chunk);
+    else for (let start = 0; start < chunk.byteLength; start += 9600) this.queued.push(chunk.slice(start, start + 9600));
+    this.drain();
+  }
+
+  private drain() {
+    if (!this.ready || this.disposed || this.sendTimer || !this.queued.length) return;
+    if (this.socket!.bufferedAmount > SAMPLE_RATE * 2 * 3) {
+      this.fail('Voice connection cannot keep up. Please try again.'); return;
+    }
+    const chunk = this.queued.shift()!;
+    this.queuedBytes -= typeof chunk === 'string' ? chunk.length : chunk.byteLength;
+    this.socket!.send(chunk);
+    // Pace the initial pre-roll / connection backlog instead of flooding the
+    // upstream socket with several seconds of buffered audio in one event loop.
+    this.sendTimer = setTimeout(() => { this.sendTimer = undefined; this.drain(); }, 20);
   }
 
   private send(event: { type: string }) { this.sendRaw(JSON.stringify(event)); }
@@ -166,6 +179,7 @@ export class VoiceSession {
   dispose() {
     this.disposed = true;
     clearTimeout(this.timer);
+    clearTimeout(this.sendTimer);
     this.releaseMicrophone();
     this.events.activity?.(0, false);
     this.queued = [];

@@ -54,35 +54,56 @@ npm test       # vitest (client + server units)
 
 Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 
-## Live voice transcription
+## Voice tasks
 
-Set `OPENAI_API_KEY` in the repository-root `.env`, alongside
-`OBSIDIAN_VAULT_DIR`, then restart `npm run dev`. Use Node.js 20+ and open
-`http://localhost:5173` in a recent Chrome, Edge, Firefox, or Safari with
-AudioWorklet support. Allow microphone access, then use **Start microphone**
-in the Voice panel. **Stop microphone** releases the mic immediately and waits
-for the final words. Copy or clear the resulting transcript after stopping.
+Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
+`.env`, then restart `npm run dev`. Use Node.js 20+ and open
+`http://localhost:5173` in a browser with AudioWorklet support. Click the floating
+marble once to enable the microphone, stay quiet briefly for calibration, then
+describe a task. Click it again or use **Turn mic off** to stop.
 
-Voice uses OpenAI's hosted `gpt-live-transcribe` model through a server-side
-WebSocket relay. Audio is sent to OpenAI while recording, and API usage is
-billed to the configured key. The browser captures mono 24 kHz PCM with an
-AudioWorklet. Local energy detection keeps 250 ms of pre-roll, commits turns
-after 700 ms of silence, and caps continuous turns at 15 seconds. Live deltas
-appear before each final transcript; commit IDs preserve phrase order when
-completion events arrive out of order. Quiet speech may need a closer mic.
+The marble floats and glows with microphone energy. An adaptive local sound
+trigger learns ambient noise, requires about 140 ms of sound above that floor,
+and uses a lower release threshold to avoid cutting quiet syllables. It keeps
+750 ms of pre-roll, commits after 700 ms of quiet, and bounds continuous turns
+at 15 seconds. This is energy detection, so sustained non-speech sounds can
+also trigger it. A closer microphone helps in noisy rooms.
 
-The permanent API key stays in the Node process, never in browser code or
-client messages. Audio and transcripts are not persisted by this app. The relay
-accepts one session at a time from local app origins on ports 5173/5174, with
-payload, backlog, startup, and session-duration limits. The backend binds to
-loopback; add authentication and explicit origin configuration before deploying
-it as a shared service. Keep the frontend on port 5173.
+OpenAI connects only after the first trigger. Initial speech is buffered and
+sent in paced chunks while the connection starts; recording stops with a clear
+error if a slow connection exceeds the bounded backlog. Mono 24 kHz PCM goes
+through the server WebSocket relay to hosted `gpt-live-transcribe`. The permanent
+API key stays in Node. Audio is sent to OpenAI and billed to the configured key;
+the app does not persist audio.
 
-This is a transcription preview, with no agent dispatch yet. Transcript text
-is available in the panel for future prompt integration.
+After all final transcripts arrive and you pause for 1.8 seconds, the app sends
+the complete request to `POST /api/voice/tasks`. OpenAI `gpt-4.1-mini` extracts
+the problem, objective, constraints, and success criteria as structured JSON.
+Greetings/background speech launch nothing. Unclear requests ask a question;
+the next spoken answer includes the original request as clarification context.
+A clear task becomes a prompt containing both the original wording and the
+structured interpretation.
+
+The existing TaskService chooses an installed, supported, idle Codex or Claude
+CLI. Desktop-only agents and unsupported launchers are excluded. Reservations
+prevent concurrent voice/manual requests from assigning the same agent. Busy
+agents leave the request available for **Retry task**; retry IDs prevent repeated
+HTTP requests from launching a task twice. **View task** opens the canvas task
+with the transcript, understood goal, exact agent prompt, logs, and artifacts.
+Tasks run in the existing fresh per-task folders under `MARBLES_WORKSPACE_DIR`
+(default `~/marbles-workspace`), using the CLI's existing login. Mention an
+existing project's path if that is the intended target. In-memory task history,
+idle tracking, and retry IDs reset when the server restarts; idle means no active
+Marbles-managed task, not every unrelated CLI session on the machine.
+
+The relay accepts one voice session from local app origins on ports 5173/5174.
+The server binds to loopback and limits payloads, backlogs, and session duration.
+Before sharing this server, add authentication and explicit origin configuration.
+Keep the frontend on port 5173. The key, audio, and local configuration are never
+committed; transcripts and generated prompts remain in the server task history.
 
 API references: [live transcription](https://developers.openai.com/api/docs/guides/realtime-transcription)
-and [WebSocket connections](https://developers.openai.com/api/docs/guides/voice-websockets?api=realtime).
+and [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 ## Next
 

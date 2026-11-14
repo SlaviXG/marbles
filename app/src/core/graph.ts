@@ -37,7 +37,9 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   const agentNodes = new Map<string, GNode>();
   visibleAgents.forEach((agent, index) => {
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
-    const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    const status = !agent.available || agent.kind !== 'cli' || !['codex', 'claude'].includes(agent.id)
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') ? 'running' : 'idle';
+    const node = pinned(`agent:${agent.id}`, `${agent.name} · ${status}`, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     nodes.push(node);
     agentNodes.set(agent.id, node);
@@ -50,7 +52,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     childCounts.set(task.agentId, index + 1);
     const outward = Math.atan2(parent.y!, parent.x!);
     const point = childPosition(parent, index, outward, 24);
-    const taskNode = pinned(`task:${task.id}`, task.prompt.slice(0, 48), 'task', point.x, point.y);
+    const taskNode = pinned(`task:${task.id}`, (task.title ?? task.prompt).slice(0, 48), 'task', point.x, point.y);
     nodes.push(taskNode);
     links.push({ source: `agent:${task.agentId}`, target: `task:${task.id}` });
     for (const [artifactIndex, artifact] of task.artifacts.entries()) {

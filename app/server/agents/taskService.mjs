@@ -55,32 +55,49 @@ export class TaskService {
     this.root = root;
     this.spawnProcess = spawnProcess;
     this.tasks = [];
+    this.reservations = new Set();
   }
   snapshot() { return this.tasks.slice(-50).reverse(); }
-  async start(agentId, prompt) {
+  isBusy(agentId) {
+    return this.reservations.has(agentId) || this.tasks.some(task => task.agentId === agentId && task.status === 'running');
+  }
+  async startIdle(prompt, metadata = {}) {
+    const agents = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));
+    if (!agents.length) throw Object.assign(new Error('No supported CLI agents found. Install and sign in to Codex or Claude Code.'), { code: 'NO_AGENTS' });
+    for (const agent of agents) {
+      try { return await this.start(agent.id, prompt, metadata); }
+      catch (error) { if (error.code !== 'AGENT_BUSY') throw error; }
+    }
+    throw Object.assign(new Error('All agents are busy. Your request is kept here; retry when an agent is idle.'), { code: 'AGENT_BUSY' });
+  }
+  async start(agentId, prompt, metadata = {}) {
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 10000) throw new Error('Enter a task under 10,000 characters');
     const agent = (await this.agentDetector()).find(a => a.id === agentId);
     if (!agent) throw new Error('Agent not found');
     const reason = taskCapability(agent);
     if (reason) throw new Error(reason);
-    const id = randomUUID();
-    const dir = path.join(this.root, agent.id, id);
-    await fs.mkdir(dir, { recursive: true });
-    const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [] };
-    this.tasks.push(task);
-    const launch = launcher(agent, task.prompt, dir);
-    let child;
-    try { child = this.spawnProcess(launch.command, launch.args, launch.options); }
-    catch (e) { task.status = 'failed'; task.stderr = String(e.message).slice(0, 1000); return task; }
-    const update = () => { task.updatedAt = new Date().toISOString(); scanArtifacts(dir, this.root).then(files => { task.artifacts = files; }).catch(() => {}); };
-    child.stdout?.on('data', chunk => { task.stdout = tail(task.stdout, chunk.toString()); update(); });
-    child.stderr?.on('data', chunk => { task.stderr = tail(task.stderr, chunk.toString()); update(); });
-    let ended = false;
-    const finish = (status, message = '') => { if (ended) return; ended = true; task.status = status; if (message) task.stderr = tail(task.stderr, message); update(); clearInterval(timer); };
-    child.on('error', e => finish('failed', e.message));
-    child.on('close', code => finish(code === 0 ? 'completed' : 'failed'));
-    const timer = setInterval(update, 2000);
-    timer.unref?.();
-    return task;
+    if (this.isBusy(agentId)) throw Object.assign(new Error('Agent is busy'), { code: 'AGENT_BUSY' });
+    this.reservations.add(agentId);
+    try {
+      const id = randomUUID();
+      const dir = path.join(this.root, agent.id, id);
+      await fs.mkdir(dir, { recursive: true });
+      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title };
+      this.tasks.push(task);
+      const launch = launcher(agent, task.prompt, dir);
+      let child;
+      try { child = this.spawnProcess(launch.command, launch.args, launch.options); }
+      catch (e) { task.status = 'failed'; task.stderr = String(e.message).slice(0, 1000); return task; }
+      const update = () => { task.updatedAt = new Date().toISOString(); scanArtifacts(dir, this.root).then(files => { task.artifacts = files; }).catch(() => {}); };
+      child.stdout?.on('data', chunk => { task.stdout = tail(task.stdout, chunk.toString()); update(); });
+      child.stderr?.on('data', chunk => { task.stderr = tail(task.stderr, chunk.toString()); update(); });
+      let ended = false;
+      const finish = (status, message = '') => { if (ended) return; ended = true; task.status = status; if (message) task.stderr = tail(task.stderr, message); update(); clearInterval(timer); };
+      child.on('error', e => finish('failed', e.message));
+      child.on('close', code => finish(code === 0 ? 'completed' : 'failed'));
+      const timer = setInterval(update, 2000);
+      timer.unref?.();
+      return task;
+    } finally { this.reservations.delete(agentId); }
   }
 }
