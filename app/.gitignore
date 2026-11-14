@@ -5,3 +5,5 @@ public/models/
 public/wake-runtime/
 scenario-results/*.jsonl
 .hermes-runtime/
+# Vite dev-server cache
+.vite/
