@@ -25,7 +25,7 @@ const missingAlignments: { chunks: Parameters<typeof recognizedWakeStart>[0]['ch
 it.each(missingAlignments)(
   'does not lose a recognized wake word when alignment is absent or invalid: %j', ({ chunks }) => {
     const audio = new Float32Array(16000 * 2);
-    audio.fill(0.002, 8000, 12000);
+    audio.fill(0.01, 8000, 12000);
     expect(recognizedWakeStart({ text: 'Marbles', chunks }, audio)).toBeCloseTo(0.4);
   },
 );

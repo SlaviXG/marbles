@@ -30,8 +30,8 @@ it('keeps standby audio local until a timestamped wake match and suppresses spea
     bufferedAmount = 0; send = vi.fn(); close = vi.fn(); onmessage: any;
     constructor() { sockets.push(this); }
   });
-  const awake = vi.fn();
-  const session = new VoiceSession({ status: vi.fn(), transcript: vi.fn(), awake }, { wake: true });
+  const awake = vi.fn(), wakeDetected = vi.fn();
+  const session = new VoiceSession({ status: vi.fn(), transcript: vi.fn(), awake, wakeDetected }, { wake: true });
   const startup = session.start();
   await vi.waitFor(() => expect(workers).toHaveLength(1));
   workers[0].onmessage({ data: { type: 'ready' } });
@@ -40,8 +40,10 @@ it('keeps standby audio local until a timestamped wake match and suppresses spea
   for (let i = 0; i < 20; i++) frame();
   expect(sockets).toHaveLength(0);
   const job = workers[0].postMessage.mock.calls.find(([data]: any[]) => data.type === 'audio')[0];
-  workers[0].onmessage({ data: { type: 'result', start: 0, epoch: job.epoch, end: job.end, length: job.length } });
+  workers[0].onmessage({ data: { type: 'result', text: 'Marbles', start: 0, epoch: job.epoch, end: job.end, length: job.length } });
   expect(awake).toHaveBeenCalledOnce();
+  expect(wakeDetected).toHaveBeenCalledOnce();
+  expect(wakeDetected.mock.invocationCallOrder[0]).toBeLessThan(awake.mock.invocationCallOrder[0]);
   expect(sockets).toHaveLength(1);
   sockets[0].onmessage({ data: { toString: () => '{"type":"ready"}' } });
   session.setReplyPlaying(true);
