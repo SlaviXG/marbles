@@ -90,6 +90,12 @@ it('waits locally for speech, paces startup audio, and drains final words on sto
   audio(0.1); audio(0.1);
   expect(socketCreated).toHaveBeenCalledOnce();
   expect(socket.send).not.toHaveBeenCalled();
+  const rejected = socket;
+  rejected.onerror();
+  expect(rejected.close).toHaveBeenCalled();
+  vi.advanceTimersByTime(500);
+  expect(socketCreated).toHaveBeenCalledTimes(2);
+  expect(socket.send).not.toHaveBeenCalled();
   socket.onmessage({ data: JSON.stringify({ type: 'ready' }) });
   expect(socket.send).toHaveBeenCalledOnce();
   expect(socket.send.mock.calls[0][0]).toBeInstanceOf(ArrayBuffer);
