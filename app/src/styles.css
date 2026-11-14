@@ -1,0 +1,660 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --line: rgba(140, 160, 210, 0.16);
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --marble: #e8e8ea;
+  --teal: #2dd4bf;
+  /* immersive detail window size (tweakable). */
+  --immersive-w: 68vw;
+  --immersive-h: 90vh;
+  /* horizontal inset of the content column inside the window. The feathered side
+     margins it leaves are a resting buffer (still inside the hover frame). */
+  --immersive-inset: 7%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  background-color: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+  overflow: hidden;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+}
+
+/* When a node is open the graph is paused (see GraphView) and we snap a CONSTANT
+   blur radius on. A constant radius rasterizes ONCE and is cached by the
+   compositor; animating the radius (the old `transition: filter`) instead forced
+   a full-screen gaussian re-blur every frame of the ramp (the radius changes, so
+   nothing can be cached), which is what janked the open/close + node-to-node
+   transitions. The visible "ramp" now comes from the scrim's WAAPI opacity fade
+   (DetailPanel), which is compositor-cheap and masks the snap. 8px (was 15) is a
+   cheaper rasterization, and the scrim already does the dimming. */
+.stage.blurred {
+  filter: blur(8px);
+}
+
+/* atmospheric backdrop (neutral, no tint) */
+.vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(140% 120% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.55));
+}
+
+/* header */
+.head {
+  position: absolute;
+  top: 18px;
+  left: 22px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.eyebrow {
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--marble);
+  font-weight: 600;
+}
+
+.status {
+  position: absolute;
+  top: 20px;
+  right: 22px;
+  z-index: 5;
+  font-size: 0.8rem;
+}
+
+.status.up {
+  color: var(--teal);
+}
+
+.status.down {
+  color: #f85149;
+}
+
+/* ---- immersive detail window: a large centered surface with feathered edges
+   that dissolve into a dimmed backdrop. Replaces the old side panel. ---- */
+.immersive-root {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  /* The scrim and frame fade individually (see DetailPanel); the root itself
+     stays opaque and is base-hidden via its children's own opacity. */
+  pointer-events: none;
+}
+
+.immersive-root.open {
+  pointer-events: auto;
+}
+
+/* Dims the graph so the window reads as in front; click to close. Just a flat
+   tint (cheap): the blur lives on the .stage layer, not a backdrop-filter here,
+   so scrolling content over this scrim doesn't trigger any per-frame re-blur. */
+.immersive-scrim {
+  position: absolute;
+  inset: 0;
+  opacity: 0; /* base hidden; faded by WAAPI */
+  background: rgba(5, 8, 12, 0.62);
+  cursor: pointer;
+}
+
+/* the window box; scale driven by WAAPI. Not masked itself, so the close
+   button stays crisp; its .immersive child carries the feather + scroll. */
+.immersive-frame {
+  position: relative;
+  width: var(--immersive-w);
+  height: var(--immersive-h);
+  opacity: 0; /* base hidden; faded + scaled by WAAPI */
+  transform-origin: 50% 50%;
+}
+
+/* Dark backdrop of the region. Only this layer is feathered, so the dissolve
+   happens on the region's outer edge while the content above stays full-strength
+   (text/video never darken). No backdrop-filter here: a masked backdrop-filter is
+   off the GPU fast path and would re-rasterize every frame of the fade-in (the
+   readable blur comes from the scrim). Longer ramps = a smoother fade. */
+.immersive-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.5);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent),
+    linear-gradient(to bottom, transparent, #000 11%, #000 89%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent),
+    linear-gradient(to bottom, transparent, #000 11%, #000 89%, transparent);
+  mask-composite: intersect;
+}
+
+/* Viewport that clips + fades the content layers. The vertical mask makes
+   scrolling content dissolve at the top/bottom instead of hard-cutting. Vertical
+   only (sides stay full strength). The 28px band is smaller than the header's
+   top pad and the body's bottom pad, so at rest those empty buffers fill the
+   band and nothing visible fades; only content scrolled into the edge fades. */
+.immersive {
+  position: absolute;
+  inset: 0;
+  /* Spans the whole frame so the side margins scroll too (the wheel over them
+     drives the content). The text is held in the readable column by padding on
+     the rows below, not by insetting this scroller. The full-width .immersive-bg
+     behind keeps the feathered dark region looking unchanged. */
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* The node view. Navigating swaps this layer outright (re-keyed in DetailPanel)
+   so the new content fades in cleanly over the backdrop, with no text overlap. */
+.immersive-layer {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+/* Reader zoom, set by DetailPanel's zoom-action handler.
+   `zoom` rather than font-size or transform, because it is the only one that
+   behaves like the browser's own zoom: it scales EVERYTHING (text, images,
+   padding, the lot) and reflows at the new size. font-size moved almost
+   nothing here, since this panel's CSS is mostly px; transform would scale the
+   pixels rather than the layout, holding line length fixed and leaving the
+   content overflowing its box. Applied to this inner wrapper so the scroller
+   above keeps its own inset:0 box and scrollHeight tracks the zoomed content. */
+.immersive-content {
+  zoom: var(--text-scale, 1);
+}
+
+/* Node-to-node navigation dip: the current view fades out quickly, content is
+   swapped at the trough (in DetailPanel), then the new view fades in. Sequenced
+   so the two never overlap, but fast enough to feel like one motion. */
+/* While drag-scrolling (press-drag the content), suppress text selection and
+   show the grab affordance for the real mouse (the camera cursor hides it). */
+.immersive-layer.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.immersive-layer.out {
+  animation: navOut 60ms ease-in both;
+  will-change: opacity;
+}
+
+.immersive-layer.in {
+  animation: navIn 110ms ease-out both;
+  will-change: opacity;
+}
+
+.immersive-layer::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes navOut {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes navIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .immersive-layer.out,
+  .immersive-layer.in {
+    animation: none;
+  }
+}
+
+.ibody {
+  /* horizontal inset holds the text in the readable column (scroller is full width) */
+  padding: 0 var(--immersive-inset) 9%;
+}
+
+.ph {
+  padding: 22px 22px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+/* header sits inside the feathered window: match the body's horizontal inset,
+   drop the rule. Top gap is small (content layer isn't masked, so it won't fade). */
+.immersive .ph {
+  /* match the body's column inset (scroller is full width, text stays in column) */
+  padding: 32px var(--immersive-inset) 18px;
+  border-bottom: 0;
+}
+
+.badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex: none;
+}
+
+.badge.note {
+  background: var(--marble);
+}
+.badge.section {
+  background: var(--teal);
+}
+.badge.url {
+  background: var(--muted);
+}
+
+.ph .kind {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ph .nm {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.15;
+  margin-top: 3px;
+  color: var(--marble);
+  word-wrap: break-word;
+}
+
+.sec {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 18px 0 9px;
+}
+
+.rowlink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--teal);
+  padding: 4px 0 4px 10px;
+  margin: 10px 0 4px;
+  color: var(--marble);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rowlink:hover {
+  color: #fff;
+}
+
+.items {
+  margin: 0.2rem 0 0.6rem;
+  padding-left: 1.1rem;
+  font-size: 0.88rem;
+}
+
+.urls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0.2rem 0 0.6rem;
+}
+
+.urls a {
+  color: #58a6ff;
+  font-size: 0.8rem;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0;
+}
+
+.prj {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+  background: rgba(13, 17, 23, 0.4);
+}
+
+.prj:hover {
+  border-color: rgba(208, 224, 255, 0.4);
+}
+
+.prj .t {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prj .arrow {
+  color: var(--teal);
+}
+
+/* ---- camera hand cursor: a soft luminous dot following the fingertip ----
+   transform + opacity are written by the ticker (HandCursor); only those animate,
+   so it stays on the compositor fast path. pointer-events none: it is a visual
+   lead for now, not yet a real pointer (clicking comes with the pinch gesture). */
+.hand-cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.hand-cursor-dot {
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px; /* center on the tracked point */
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, #eafffb 0%, var(--teal) 45%, rgba(45, 212, 191, 0) 72%);
+  box-shadow: 0 0 10px rgba(45, 212, 191, 0.9), 0 0 24px rgba(45, 212, 191, 0.55);
+  transition: transform 90ms ease, box-shadow 90ms ease;
+}
+
+/* Pinch (press): contract and brighten, the visual "mouse down". */
+.hand-cursor.pinch .hand-cursor-dot {
+  transform: scale(0.6);
+  box-shadow: 0 0 14px rgba(45, 212, 191, 1), 0 0 34px rgba(45, 212, 191, 0.7);
+}
+
+/* While the camera cursor is live it replaces the mouse: hide the native cursor
+   everywhere, including the graph's inline cursor (so !important is needed). */
+.app.hand-active,
+.app.hand-active * {
+  cursor: none !important;
+}
+
+/* The camera-cursor controls: two equal squares in the corner, the hand toggle
+   with the side selector immediately left of it, sharing one chrome so they
+   read as a single control rather than two unrelated buttons. */
+.sq-btn {
+  position: fixed;
+  bottom: 16px;
+  z-index: 41;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(22, 27, 34, 0.85);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.sq-btn:hover {
+  border-color: rgba(45, 212, 191, 0.5);
+}
+
+.sq-btn:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.sq-btn.on {
+  color: var(--teal);
+  border-color: rgba(45, 212, 191, 0.6);
+}
+
+.hand-btn {
+  right: 16px;
+}
+
+/* 16 (edge) + 36 (button) + 8 (gap) */
+.hand-side-btn {
+  right: 60px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* one more square to the left: 60 + 36 + 8. Nothing to inspect until the camera
+   is live, so it fades in with tracking rather than sitting there dead. Kept in
+   the layout (not display:none) so the fade has something to animate, and taken
+   out of the tab order and the a11y tree while it is invisible. */
+.hand-debug-btn {
+  right: 104px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.hand-debug-btn.avail {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hand-debug-btn {
+    transition: none;
+  }
+}
+
+/* Landmark overlay: camera space, stacked above the square controls (16-52) and
+   the folder button (56-86) that share this edge. Purely diagnostic, so it never
+   takes the pointer. */
+.hand-debug {
+  position: fixed;
+  bottom: 96px;
+  right: 16px;
+  z-index: 41;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(9, 12, 17, 0.92);
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+
+/* knowledge-source prototype button: same chrome as the hand toggle, stacked
+   just above it so the two opt-in controls share a corner. */
+.folder-btn {
+  position: fixed;
+  bottom: 56px;
+  right: 16px;
+  z-index: 41;
+  background: rgba(22, 27, 34, 0.85);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 12px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.folder-btn:hover {
+  border-color: rgba(45, 212, 191, 0.5);
+}
+
+.folder-btn.on {
+  color: var(--teal);
+  border-color: rgba(45, 212, 191, 0.6);
+}
+
+/* ---- live preview (autoplay video, etc.) inside the immersive view ---- */
+.preview-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 2px 0 14px;
+  overflow: hidden;
+  border-radius: 8px;
+  animation: previewIn 320ms ease both;
+}
+
+/* the YouTube API swaps .preview-video for an <iframe>, so size both */
+.preview-frame .preview-video,
+.preview-frame iframe,
+.preview-frame .yt-player,
+.preview-frame .yt-mount,
+.preview-frame .yt-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+@keyframes previewIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---- deferred YouTube player (poster + overlay controls operable by the
+   virtual cursor). The native YT control bar is across a cross-origin iframe, so
+   synthetic events can't reach it; these are our own same-origin controls. ---- */
+
+/* Click-to-load poster: the thumbnail with a play badge. A real <button>, so the
+   virtual cursor's synthetic click loads + plays the video. */
+.yt-poster {
+  background-size: cover;
+  background-position: center;
+  cursor: pointer;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* YouTube-style red rounded play badge. */
+.yt-play-badge {
+  width: 68px;
+  height: 48px;
+  border-radius: 14px;
+  background: #f00;
+  position: relative;
+}
+.yt-play-badge::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 54%;
+  transform: translate(-50%, -50%);
+  border-style: solid;
+  border-width: 10px 0 10px 17px;
+  border-color: transparent transparent transparent #fff;
+}
+
+.yt-player {
+  overflow: hidden;
+}
+
+/* Overlay controls. Revealed by JS state (.show), NOT CSS :hover, because the
+   virtual cursor's synthetic events do not trigger :hover. Fade is opacity only
+   (compositor-cheap). pointer-events flips with visibility so a hidden bar never
+   eats clicks meant for the poster/video. */
+.yt-controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(to top, rgba(5, 8, 12, 0.85), rgba(5, 8, 12, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.yt-controls.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Flat icon button, like YouTube's transport controls (no chrome). */
+.yt-btn {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.yt-btn:hover {
+  opacity: 0.85;
+}
+
+.yt-time {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Red scrubber to match the real player. */
+.yt-seek {
+  flex: 1 1 auto;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #f00;
+}

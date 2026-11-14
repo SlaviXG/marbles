@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hand-pointer demo</title>
+    <style>
+      body { margin: 0; height: 100vh; background: #0d1117; color: #c9d1d9; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+      header { padding: 20px 24px; display: flex; gap: 16px; align-items: center; }
+      button { font: inherit; padding: 10px 18px; border-radius: 9px; border: 1px solid #30363d; background: #161b22; color: inherit; cursor: pointer; }
+      button:hover { border-color: #2dd4bf; }
+      #status { color: #8b949e; }
+      .targets { display: flex; gap: 24px; padding: 24px; }
+      .targets button { width: 120px; height: 120px; font-size: 28px; }
+      #box { position: absolute; left: 60%; top: 55%; width: 140px; height: 140px; border-radius: 16px; background: #2dd4bf; color: #0d1117; display: grid; place-items: center; touch-action: none; user-select: none; }
+      #box.held { outline: 3px solid #fff; }
+      p { padding: 0 24px; color: #8b949e; max-width: 60ch; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="toggle">Start hand pointer</button>
+      <span id="status">off</span>
+    </header>
+    <p>
+      Raise a hand. Pinch thumb and index to click a square. Pinch and hold the
+      teal box to drag it. Pinch with both hands and move them apart to scale it.
+      Moving the mouse takes the cursor back.
+    </p>
+    <div class="targets">
+      <button>0</button>
+      <button>0</button>
+      <button>0</button>
+    </div>
+    <div id="box">drag me</div>
+    <script type="module" src="./demo.ts"></script>
+  </body>
+</html>
