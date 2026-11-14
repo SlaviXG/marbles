@@ -42,7 +42,7 @@ export default function GestureWidget() {
       drawn = handDebug.version; wasPresent = present;
       const hands = present ? handDebug.hands : [];
       ctx.clearRect(0, 0, W, H);
-      ctx.strokeStyle = 'oklch(65% .06 220 / .22)';
+      ctx.strokeStyle = 'oklch(70% .08 215 / .3)';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 5]);
       ctx.strokeRect(params.zoneX0 * W, params.zoneY0 * H, (params.zoneX1 - params.zoneX0) * W, (params.zoneY1 - params.zoneY0) * H);
@@ -50,18 +50,23 @@ export default function GestureWidget() {
       for (const hand of hands) {
         const px = (i: number) => (1 - hand.pts[i * 2]) * W;
         const py = (i: number) => hand.pts[i * 2 + 1] * H;
-        const color = hand.primary ? 'oklch(84% .1 210)' : 'oklch(72% .04 240)';
-        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = hand.primary ? 1.5 : 1;
+        const pinched = (hand.primary && pointerTarget.pinching) || (!hand.primary && secondaryHand.pinching);
+        const color = pinched ? 'oklch(88% .13 78)' : hand.primary ? 'oklch(88% .11 205)' : 'oklch(74% .06 235)';
+        ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = hand.primary ? 1.6 : 1.1;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.shadowColor = color; ctx.shadowBlur = 8;
         ctx.beginPath();
         for (const [a, b] of BONES) { ctx.moveTo(px(a), py(a)); ctx.lineTo(px(b), py(b)); }
         ctx.stroke();
+        ctx.shadowBlur = 0;
         for (let i = 0; i < hand.pts.length / 2; i++) {
-          ctx.beginPath(); ctx.arc(px(i), py(i), i === 4 || i === 8 ? 2.6 : 1.5, 0, Math.PI * 2); ctx.fill();
+          ctx.beginPath(); ctx.arc(px(i), py(i), i === 4 || i === 8 ? 2.8 : 1.5, 0, Math.PI * 2); ctx.fill();
         }
-        if ((hand.primary && pointerTarget.pinching) || (!hand.primary && secondaryHand.pinching)) {
-          ctx.strokeStyle = 'oklch(86% .12 80)'; ctx.lineWidth = 2;
-          ctx.beginPath(); ctx.moveTo(px(4), py(4)); ctx.lineTo(px(8), py(8)); ctx.stroke();
-        }
+        // Mark the working point: a ring around the pinch, or the fingertip aimed with.
+        const cx = pinched ? (px(4) + px(8)) / 2 : px(8), cy = pinched ? (py(4) + py(8)) / 2 : py(8);
+        ctx.lineWidth = 1; ctx.globalAlpha = pinched ? 1 : .55;
+        ctx.beginPath(); ctx.arc(cx, cy, pinched ? 7 : 9, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
       }
     });
     return () => { unsub(); unsubParams(); };
@@ -69,28 +74,23 @@ export default function GestureWidget() {
 
   const active = status === 'tracking';
   const hasHand = active && feedback !== 'waiting';
-  const label = status === 'off' ? 'Camera off' : status === 'starting' ? 'Starting camera…'
-    : status === 'denied' ? 'Camera access blocked' : status === 'error' ? 'Camera unavailable'
-    : feedback === 'waiting' ? 'Show your hand' : feedback === 'zooming' ? 'Two-hand zoom'
-    : feedback === 'pinching' ? 'Pinching' : feedback === 'mouse' ? 'Mouse in control' : 'Hand detected';
-  const hint = status === 'off' ? 'Touch the orb to enable gestures.'
-    : status === 'starting' ? 'Allow camera access to continue.'
-    : status === 'denied' ? 'Allow your camera in the browser, then restart the orb.'
-    : status === 'error' ? 'Check your camera, then restart the orb.'
-    : feedback === 'mouse' ? 'Move your hand to take control.'
-    : feedback === 'zooming' ? 'Move hands apart or together.'
-    : 'Point to move. Pinch to select.';
+  const label = status === 'off' ? 'Gestures off' : status === 'starting' ? 'Starting camera'
+    : status === 'denied' ? 'Camera blocked' : status === 'error' ? 'Camera unavailable'
+    : feedback === 'waiting' ? 'Show your hand' : feedback === 'zooming' ? 'Zoom'
+    : feedback === 'pinching' ? 'Pinch' : feedback === 'mouse' ? 'Mouse control' : 'Tracking';
+  // Words only when something needs doing; the live hand speaks for itself.
+  const hint = status === 'denied' ? 'Allow your camera in the browser, then restart the orb.'
+    : status === 'error' ? 'Check your camera, then restart the orb.' : '';
 
-  return <aside className={`gesture-widget ${status}${hasHand ? ' has-hand' : ''}`} aria-label="Gesture recognition" title={error ?? undefined}>
-    <div className="gesture-widget-title"><span aria-hidden="true" />Gesture recognition</div>
+  return <aside className={`gesture-widget ${status} feedback-${feedback}${hasHand ? ' has-hand' : ''}`} aria-label="Gesture recognition" title={error ?? undefined}>
     <div className="gesture-visual" aria-hidden="true">
       <svg className="gesture-hand-guide" viewBox="0 0 80 100" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M24 54V26a5 5 0 0 1 10 0v25-35a5 5 0 0 1 10 0v35-30a5 5 0 0 1 10 0v32-23a5 5 0 0 1 10 0v33c0 17-10 27-24 27-11 0-18-7-23-17L7 54a5 5 0 0 1 8-6l9 12" />
-        <path d="M27 72c0-8 4-15 11-18M35 90v6m17-8v8" />
       </svg>
       <canvas ref={canvasRef} style={{ width: W, height: H }} />
+      <i className="holo-corner tl" /><i className="holo-corner tr" /><i className="holo-corner bl" /><i className="holo-corner br" />
     </div>
-    <p className="gesture-feedback" role="status" aria-live="polite" aria-atomic="true">{label}</p>
-    <p className="gesture-widget-hint">{hint}</p>
+    <p className="gesture-feedback" role="status" aria-live="polite" aria-atomic="true"><span aria-hidden="true" />{label}</p>
+    {hint && <p className="gesture-widget-hint">{hint}</p>}
   </aside>;
 }

@@ -10,6 +10,7 @@ import { subscribeFrame } from "../motion/ticker";
 import { pickPreview } from "./preview";
 import PreviewFrame from "./preview/PreviewFrame";
 import AssetPreview from "./preview/AssetPreview";
+import FileGlyph, { fileExtension, fileTitle } from "./FileGlyph";
 import { cameraPointer, registerActionHandler, PRIORITY } from "../input";
 import { useDragScroll } from "../hooks/useDragScroll";
 
@@ -224,7 +225,7 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
         role="region"
         aria-label="Selected item details"
       >
-        <button className="detail-close" onClick={clear}>Close details <span aria-hidden="true">×</span></button>
+        <button className="detail-close" aria-label="Close details" onClick={clear}><span aria-hidden="true">×</span></button>
         <div className="immersive-bg" />
         <div className="immersive">
           <div
@@ -249,7 +250,7 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
                   const owner = displayedId.slice('assets:'.length);
                   const swarm = owner.startsWith('swarm:') ? swarms.find(s => s.id === owner.slice(6)) : undefined;
                   const files = swarm ? swarm.artifacts.filter(isCanvasArtifact).map(artifact => ({ id: swarm.id, artifact })) : tasks.filter(task => task.agentId === owner).flatMap(task => task.artifacts.filter(isCanvasArtifact).map(artifact => ({ id: task.id, artifact })));
-                  return <><SpecialHeader kind="Files" name="Your files" /><div className="ibody"><p>{swarm ? 'Shared team files' : `Made by ${agents.find(agent => agent.id === owner)?.name ?? owner}`}. Point and pinch a file to open its details.</p>{files.map(({ id, artifact }) => <button key={`${id}:${artifact.path}`} className="rowlink" onClick={() => select(`artifact:${id}:${encodeURIComponent(artifact.path)}`)}>{artifact.name}</button>)}</div></>;
+                  return <><SpecialHeader kind={swarm ? 'Shared files' : agents.find(agent => agent.id === owner)?.name ?? owner} name={`${files.length} files`} /><div className="ibody"><div className="file-grid">{files.map(({ id, artifact }, n) => <button key={`${id}:${artifact.path}`} className="file-card" style={{ animationDelay: `${Math.min(n, 12) * 55}ms` }} onClick={() => select(`artifact:${id}:${encodeURIComponent(artifact.path)}`)}><FileGlyph name={artifact.name} size={46} /><span className="file-card-name">{fileTitle(artifact.name)}</span><span className="file-card-ext">{fileExtension(artifact.name)}</span></button>)}</div></div></>;
                 }
                 if (displayedId?.startsWith('swarm:')) {
                   const swarm = swarms.find(s => `swarm:${s.id}` === displayedId);

@@ -1,35 +1,193 @@
-export type AgentMotion = { state: string; time: number; elapsed: number; reduced: boolean };
+// Canvas drawing for the projected scene. Everything is drawn in graph units,
+// inside the force-graph's own frame, so it pans and zooms with the team.
+export type AgentMotion = { state: string; time: number; elapsed: number; reduced: boolean; focus?: number };
+export type SpaceMotion = { time: number; scale: number; reduced: boolean; energy: number; level: number };
+
+const TAU = Math.PI * 2;
+const TILT = .48; // the projection plane is a circle seen at an angle
+
+// Stable pseudo-random dust, generated once.
+const DUST = Array.from({ length: 46 }, (_, i) => {
+  const r = (n: number) => { const x = Math.sin(i * 127.1 + n * 311.7) * 43758.5453; return x - Math.floor(x); };
+  return { x: (r(1) - .5) * 1100, y: (r(2) - .5) * 640, size: .5 + r(3) * 1.1, speed: 2 + r(4) * 5, phase: r(5) * TAU };
+});
+
+export function drawHolographicSpace(ctx: CanvasRenderingContext2D, motion: SpaceMotion) {
+  const { time: t, energy, level } = motion;
+  const hair = Math.max(.35, .7 / motion.scale);
+  ctx.save();
+
+  // Light pooled on the floor of the projection.
+  const pool = ctx.createRadialGradient(0, 14, 10, 0, 14, 330);
+  pool.addColorStop(0, `oklch(52% .11 215 / ${.13 + energy * .08})`); pool.addColorStop(.5, 'oklch(45% .09 225 / .05)'); pool.addColorStop(1, 'oklch(45% .09 220 / 0)');
+  ctx.save(); ctx.scale(1, .62); ctx.fillStyle = pool; ctx.beginPath(); ctx.arc(0, 14, 330, 0, TAU); ctx.fill(); ctx.restore();
+
+  // Dust in the beam.
+  for (const mote of DUST) {
+    const y = ((mote.y - t * mote.speed + 320) % 640 + 640) % 640 - 320;
+    const twinkle = motion.reduced ? .5 : .5 + .5 * Math.sin(t * 1.3 + mote.phase);
+    ctx.fillStyle = `oklch(86% .07 210 / ${.05 + twinkle * .16})`;
+    ctx.beginPath(); ctx.arc(mote.x, y, mote.size, 0, TAU); ctx.fill();
+  }
+
+  // The plane: work in a squashed space so circles land as ellipses.
+  ctx.save(); ctx.translate(0, 12); ctx.scale(1, TILT);
+
+  if (!motion.reduced && typeof ctx.createConicGradient === 'function') {
+    // One slow sweep, like a scanner checking in on the team.
+    const sweep = ctx.createConicGradient(t * .35, 0, 0);
+    sweep.addColorStop(0, 'oklch(80% .12 210 / 0)'); sweep.addColorStop(.9, 'oklch(80% .12 210 / 0)');
+    sweep.addColorStop(.998, `oklch(84% .12 210 / ${.035 + energy * .05})`); sweep.addColorStop(1, 'oklch(80% .12 210 / 0)');
+    ctx.fillStyle = sweep; ctx.beginPath(); ctx.arc(0, 0, 338, 0, TAU); ctx.arc(0, 0, 60, 0, TAU, true); ctx.fill();
+    // ...and its leading edge, a hairline.
+    const lead = t * .35;
+    ctx.strokeStyle = `oklch(88% .1 208 / ${.16 + energy * .14})`; ctx.lineWidth = hair;
+    ctx.beginPath(); ctx.moveTo(Math.cos(lead) * 60, Math.sin(lead) * 60); ctx.lineTo(Math.cos(lead) * 338, Math.sin(lead) * 338); ctx.stroke();
+  }
+
+  const ring = (radius: number, alpha: number, width = hair, dash?: number[], offset = 0) => {
+    ctx.strokeStyle = `oklch(78% .09 215 / ${alpha})`; ctx.lineWidth = width;
+    ctx.setLineDash(dash ?? []); ctx.lineDashOffset = offset;
+    ctx.beginPath(); ctx.arc(0, 0, radius, 0, TAU); ctx.stroke();
+  };
+  ring(190, .1 + energy * .1);
+  ring(262, .08, hair, [2, 9], t * 5);
+  ring(338, .13 + energy * .08);
+  ring(352, .2 + energy * .15, hair * 2.4, [70, 46, 190, 46], -t * 9);
+  ring(430, .07, hair, [1, 6], t * 3);
+  ctx.setLineDash([]);
+
+  // Bearing ticks around the main ring.
+  ctx.strokeStyle = `oklch(80% .09 215 / ${.16 + energy * .1})`; ctx.lineWidth = hair;
+  ctx.beginPath();
+  for (let i = 0; i < 72; i++) {
+    const a = i / 72 * TAU, r0 = i % 6 === 0 ? 362 : 366, c = Math.cos(a), s = Math.sin(a);
+    ctx.moveTo(c * r0, s * r0); ctx.lineTo(c * 372, s * 372);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // Centre mark: a quiet reticle that breathes with the user's voice.
+  const pulse = 1 + level * .5;
+  ctx.strokeStyle = `oklch(84% .1 212 / ${.25 + energy * .3})`; ctx.lineWidth = hair * 1.3;
+  ctx.beginPath(); ctx.ellipse(0, 0, 30 * pulse, 30 * pulse * TILT, 0, 0, TAU); ctx.stroke();
+  ctx.setLineDash([3, 5]); ctx.lineDashOffset = -t * 6;
+  ctx.beginPath(); ctx.ellipse(0, 0, 44 * pulse, 44 * pulse * TILT, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(8, 0); ctx.moveTo(0, -5); ctx.lineTo(0, 5); ctx.stroke();
+  ctx.restore();
+}
+
+/** A line of light from the centre to a teammate; pulses run outward while it works. */
+export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; scale: number; working: boolean; reduced: boolean; alpha: number }) {
+  const length = Math.hypot(x, y);
+  if (length < r * 2 + 50) return;
+  const ux = x / length, uy = y / length;
+  const from = 46, to = length - r * 1.45;
+  ctx.save(); ctx.globalAlpha *= motion.alpha;
+  const line = ctx.createLinearGradient(ux * from, uy * from, ux * to, uy * to);
+  line.addColorStop(0, 'oklch(80% .1 212 / 0)'); line.addColorStop(.5, `oklch(80% .1 212 / ${motion.working ? .45 : .2})`); line.addColorStop(1, `oklch(84% .1 212 / ${motion.working ? .6 : .32})`);
+  ctx.strokeStyle = line; ctx.lineWidth = Math.max(.4, .8 / motion.scale);
+  ctx.beginPath(); ctx.moveTo(ux * from, uy * from); ctx.lineTo(ux * to, uy * to); ctx.stroke();
+  if (motion.working && !motion.reduced) {
+    for (let i = 0; i < 3; i++) {
+      const p = (motion.time * .55 + i / 3) % 1;
+      const d = from + (to - from) * p;
+      const fade = Math.sin(p * Math.PI);
+      ctx.fillStyle = `oklch(95% .06 205 / ${fade})`;
+      ctx.beginPath(); ctx.arc(ux * d, uy * d, 1.7, 0, TAU); ctx.fill();
+      ctx.fillStyle = `oklch(85% .12 210 / ${fade * .25})`;
+      ctx.beginPath(); ctx.arc(ux * d, uy * d, 5, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/** Four brackets closing in on whatever the hand is aimed at. */
+export function drawLockOn(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, amount: number, scale: number, selected: boolean) {
+  if (amount < .003) return;
+  const a = Math.min(1.15, amount);
+  const radius = r * (1.55 + (1 - a) * .7);
+  ctx.save(); ctx.translate(x, y); ctx.rotate((1 - a) * .8 + Math.PI / 4);
+  ctx.globalAlpha *= Math.min(1, amount);
+  ctx.strokeStyle = selected ? 'oklch(93% .07 200)' : 'oklch(86% .11 208)';
+  ctx.lineWidth = Math.max(.8, 1.6 / scale); ctx.lineCap = 'round';
+  for (let i = 0; i < 4; i++) {
+    const mid = i / 4 * TAU;
+    ctx.beginPath(); ctx.arc(0, 0, radius, mid - .34, mid + .34); ctx.stroke();
+  }
+  ctx.globalAlpha *= .5; ctx.lineWidth = Math.max(.4, .7 / scale);
+  for (let i = 0; i < 4; i++) {
+    const mid = i / 4 * TAU + Math.PI / 4, c = Math.cos(mid), s = Math.sin(mid);
+    ctx.beginPath(); ctx.moveTo(c * radius * .93, s * radius * .93); ctx.lineTo(c * radius * 1.07, s * radius * 1.07); ctx.stroke();
+  }
+  ctx.restore();
+}
 
 export function drawHolographicAgent(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, id: string, motion: AgentMotion) {
   const working = motion.state === 'working';
   const done = motion.state === 'done';
   const failed = motion.state === 'failed';
   const unavailable = motion.state === 'unavailable';
-  const color = failed ? 'oklch(81% .13 70)' : id === 'cursor' ? 'oklch(78% .08 265)' : 'oklch(82% .1 210)';
-  const phase = motion.reduced ? 0 : motion.time;
+  const hue = failed ? 70 : id === 'cursor' ? 262 : 208;
+  const ink = (l: number, a: number, c = .11) => `oklch(${l}% ${c} ${hue} / ${a})`;
+  const color = ink(failed ? 82 : 84, 1, failed ? .14 : .11);
+  const t = motion.reduced ? 0 : motion.time;
+  const focus = motion.focus ?? 0;
   ctx.save(); ctx.translate(x, y);
-  ctx.globalAlpha *= unavailable ? .5 : 1;
-  const glow = ctx.createRadialGradient(0, 0, r * .5, 0, 0, r * 1.7);
-  glow.addColorStop(0, 'oklch(70% .13 220 / .13)'); glow.addColorStop(1, 'oklch(70% .13 220 / 0)');
-  ctx.fillStyle = glow; ctx.fillRect(-r * 1.7, -r * 1.7, r * 3.4, r * 3.4);
-  const lens = ctx.createRadialGradient(-r * .35, -r * .4, 0, 0, 0, r);
-  lens.addColorStop(0, 'oklch(36% .065 225)'); lens.addColorStop(.7, 'oklch(23% .045 235)'); lens.addColorStop(1, 'oklch(34% .07 220)');
-  ctx.fillStyle = lens; ctx.beginPath(); ctx.arc(0, 0, r * .87, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = color; ctx.lineWidth = r * .018;
-  ctx.beginPath(); ctx.arc(0, 0, r * .9, 0, Math.PI * 2); ctx.stroke();
-  ctx.save(); ctx.globalAlpha *= .2;
+  ctx.globalAlpha *= unavailable ? .42 : 1;
+
+  // Bloom.
+  const reach = r * (working ? 2.5 : 1.9 + focus * .3);
+  const glow = ctx.createRadialGradient(0, 0, r * .4, 0, 0, reach);
+  glow.addColorStop(0, ink(72, working ? .3 : .16 + focus * .1, .14)); glow.addColorStop(1, ink(70, 0, .13));
+  ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, reach, 0, TAU); ctx.fill();
+
+  // Lens: dark glass with a lit rim.
+  const lens = ctx.createRadialGradient(-r * .3, -r * .38, 0, 0, 0, r * .9);
+  lens.addColorStop(0, ink(40, .95, .075)); lens.addColorStop(.65, ink(20, .95, .045)); lens.addColorStop(1, ink(33, .95, .08));
+  ctx.fillStyle = lens; ctx.beginPath(); ctx.arc(0, 0, r * .86, 0, TAU); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = r * .028;
+  ctx.setLineDash(unavailable ? [r * .08, r * .1] : []);
+  ctx.beginPath(); ctx.arc(0, 0, r * .88, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+
+  // Gyroscope: two faint orbits inside the lens.
+  ctx.save(); ctx.globalAlpha *= .22; ctx.lineWidth = r * .015;
   for (const direction of [-1, 1]) {
-    ctx.beginPath(); ctx.ellipse(0, 0, r * .85, r * .33, direction * .65, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(0, 0, r * .84, r * .3, direction * .65 + t * .12 * direction, 0, TAU); ctx.stroke();
   }
   ctx.restore();
-  const breath = .48 + Math.sin(phase * 1.1) * .08;
-  ctx.save(); ctx.globalAlpha *= working ? .9 : breath;
-  ctx.lineWidth = r * .035; ctx.beginPath();
-  const angle = working ? phase * .8 : -.5;
-  ctx.arc(0, 0, r * 1.06, angle, angle + Math.PI * 1.35); ctx.stroke();
-  ctx.lineWidth = r * .015; ctx.beginPath(); ctx.arc(0, 0, r * 1.18, -angle, -angle + Math.PI * .45); ctx.stroke(); ctx.restore();
+
+  if (!unavailable) {
+    // Segmented ring: turns lazily at rest, spins up while working.
+    const spin = t * (working ? 1.5 : .22);
+    const breath = motion.reduced ? .55 : .5 + Math.sin(t * 1.1 + r) * .12;
+    ctx.save(); ctx.globalAlpha *= Math.min(1, working ? .95 : breath + focus * .3);
+    ctx.lineWidth = r * .045; ctx.lineCap = 'butt';
+    for (let i = 0; i < 3; i++) {
+      const a = spin + i / 3 * TAU;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.08, a, a + TAU / 3 - .42); ctx.stroke();
+    }
+    // Fine counter-rotating scale.
+    ctx.globalAlpha *= .55; ctx.lineWidth = r * .05;
+    ctx.setLineDash([r * .012, r * .085]); ctx.lineDashOffset = spin * r * .6;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.24, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+
+    if (working && !motion.reduced) {
+      // A comet on the outer ring: unmistakably busy, even at a distance.
+      const a = t * 2.1;
+      ctx.lineCap = 'round'; ctx.lineWidth = r * .05;
+      for (let i = 0; i < 10; i++) {
+        ctx.strokeStyle = ink(92, (1 - i / 10) * .8, .08);
+        ctx.beginPath(); ctx.arc(0, 0, r * 1.4, a - (i + 1) * .13, a - i * .13); ctx.stroke();
+      }
+      ctx.fillStyle = ink(97, 1, .04);
+      ctx.beginPath(); ctx.arc(Math.cos(a) * r * 1.4, Math.sin(a) * r * 1.4, r * .055, 0, TAU); ctx.fill();
+    }
+  }
+
   // Provider-specific geometric glyphs, never decorative faces or fake metrics.
-  ctx.strokeStyle = color; ctx.lineWidth = r * .055; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.strokeStyle = color; ctx.lineWidth = r * .06; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.beginPath();
   if (done) {
     ctx.moveTo(-r * .25, 0); ctx.lineTo(-r * .04, r * .2); ctx.lineTo(r * .32, -r * .23);
@@ -43,44 +201,30 @@ export function drawHolographicAgent(ctx: CanvasRenderingContext2D, x: number, y
     ctx.moveTo(-r * .19, -r * .3); ctx.lineTo(r * .31, 0); ctx.lineTo(r * .05, r * .08); ctx.lineTo(-r * .1, r * .33); ctx.closePath();
   } else {
     for (let i = 0; i < 6; i++) {
-      const a = i / 6 * Math.PI * 2;
+      const a = i / 6 * TAU;
       ctx.moveTo(Math.cos(a) * r * .12, Math.sin(a) * r * .12);
       ctx.lineTo(Math.cos(a) * r * .34, Math.sin(a) * r * .34);
     }
   }
   ctx.stroke();
+
+  const base = ctx.globalAlpha;
   if (working) {
     for (let i = 0; i < 3; i++) {
-      ctx.globalAlpha = .35 + (motion.reduced ? .2 : (Math.sin(phase * 3 - i) + 1) * .3);
-      ctx.fillStyle = color; ctx.beginPath(); ctx.arc((i - 1) * r * .14, r * .5, r * .035, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = base * (.35 + (motion.reduced ? .2 : (Math.sin(t * 3 - i) + 1) * .3));
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc((i - 1) * r * .14, r * .5, r * .035, 0, TAU); ctx.fill();
     }
   }
-  if (done && !motion.reduced && motion.elapsed < 2) {
-    ctx.globalAlpha = (1 - motion.elapsed / 2) * .65;
-    ctx.strokeStyle = color; ctx.lineWidth = r * .025;
-    ctx.beginPath(); ctx.arc(0, 0, r * (1.15 + motion.elapsed * .22), 0, Math.PI * 2); ctx.stroke();
+  if ((done || failed) && !motion.reduced && motion.elapsed < 2.4) {
+    // State change: two rings thrown outward, once.
+    for (const delay of [0, .35]) {
+      const p = (motion.elapsed - delay) / 1.6;
+      if (p <= 0 || p >= 1) continue;
+      const eased = 1 - Math.pow(1 - p, 3);
+      ctx.globalAlpha = base * (1 - eased) * .8;
+      ctx.strokeStyle = color; ctx.lineWidth = r * .04 * (1 - eased) + r * .008;
+      ctx.beginPath(); ctx.arc(0, 0, r * (1.1 + eased * 1.5), 0, TAU); ctx.stroke();
+    }
   }
-  ctx.restore();
-}
-
-export function drawHolographicSpace(ctx: CanvasRenderingContext2D) {
-  ctx.save();
-  // A single projection plane gives depth without filling the UI with widgets.
-  const pool = ctx.createRadialGradient(0, 8, 20, 0, 8, 240);
-  pool.addColorStop(0, 'oklch(45% .09 220 / .1)'); pool.addColorStop(1, 'oklch(45% .09 220 / 0)');
-  ctx.fillStyle = pool; ctx.fillRect(-450, -300, 900, 600);
-  ctx.strokeStyle = 'oklch(72% .075 220 / .09)'; ctx.lineWidth = .5;
-  for (const radius of [280, 350, 420]) {
-    ctx.beginPath(); ctx.ellipse(0, 10, radius, radius * .48, 0, 0, Math.PI * 2); ctx.stroke();
-  }
-  for (let i = 0; i < 12; i++) {
-    const angle = i / 12 * Math.PI * 2;
-    ctx.beginPath(); ctx.moveTo(Math.cos(angle) * 335, 10 + Math.sin(angle) * 161);
-    ctx.lineTo(Math.cos(angle) * 351, 10 + Math.sin(angle) * 169); ctx.stroke();
-  }
-  // Quiet center reticle, rather than a fourth pretend agent.
-  ctx.strokeStyle = 'oklch(78% .09 215 / .22)'; ctx.lineWidth = .65;
-  ctx.beginPath(); ctx.ellipse(0, 0, 29, 14, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(7, 0); ctx.moveTo(0, -4); ctx.lineTo(0, 4); ctx.stroke();
   ctx.restore();
 }

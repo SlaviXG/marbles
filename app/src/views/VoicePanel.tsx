@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { VoiceSession, type VoiceStatus } from "../voice/VoiceSession";
 import { emptyTranscript, transcriptText, updateTranscript } from "../voice/transcript";
 import { CommandBuffer } from "../voice/CommandBuffer";
@@ -10,11 +10,13 @@ import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
 import { useVault } from '../state/store';
 import type { AgentTask, SwarmTask } from '../core/agentTypes';
+import { useHud, voiceSignal } from '../state/hud';
+import VoiceCore from './VoiceCore';
 
 export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: () => void; onDeactivate?: () => void } = {}) {
   const session = useRef<VoiceSession>();
   const speaker = useRef<ReplySpeaker>();
-  const [voiceReplies, setVoiceReplies] = useState(true);
+  const [voiceReplies] = useState(true);
   const [replyPlaying, setReplyPlaying] = useState(false);
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
@@ -30,11 +32,13 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const swarms = useAgents(state => state.swarms);
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [detail, setDetail] = useState("Describe the outcome. Marbles plans it and delegates to an idle agent.");
-  const [level, setLevel] = useState(0);
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
-  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
-    : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
-    : status === "error" ? "Touch the orb to try again" : "Touch the orb to begin";
+  const caption = replyPlaying ? '' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "Go ahead" : status === "listening" ? "Listening"
+    : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model') : 'Waking up' : status === "stopping" ? "Standing down"
+    : status === "error" ? "Tap to retry" : "Tap to wake";
+  useEffect(() => { useHud.getState().setVoice(status); }, [status]);
+  useEffect(() => { useHud.getState().setSpeaking(replyPlaying); }, [replyPlaying]);
+  useEffect(() => () => { voiceSignal.level = 0; useHud.getState().setVoice('idle'); useHud.getState().setSpeaking(false); }, []);
 
 
   useEffect(() => {
@@ -127,7 +131,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         }
         commands.current?.event(event);
       },
-      activity: (energy, speaking) => { setLevel(energy); commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
+      activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
     }, { wake: true });
     session.current = next;
@@ -172,28 +176,21 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
 
   return (
     <>
-    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice transcription"
-      style={{ "--voice-level": level } as CSSProperties}>
-
-      <div className="voice-marble-float">
-        <button type="button" className="voice-marble" disabled={status === "stopping"}
-          aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
-          aria-pressed={active} aria-describedby="voice-detail"
-          onClick={() => { if (active) { session.current?.stop(); onDeactivate?.(); } else { start(); onActivate?.(); } }}>
-          <span className="voice-halo" aria-hidden="true" />
-          <span className="voice-sphere" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="9" y="3" width="6" height="12" rx="3" />
-              <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" />
-            </svg>
-          </span>
-        </button>
-      </div>
-      <div className="voice-caption" role="status">{caption}</div>
+    <VoiceConversation messages={messages} retry={enqueue} />
+    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice control">
+      <button type="button" className="voice-marble" disabled={status === "stopping"}
+        aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
+        aria-pressed={active} aria-describedby="voice-detail"
+        onClick={() => { if (active) { session.current?.stop(); voiceSignal.level = 0; onDeactivate?.(); } else { start(); onActivate?.(); } }}>
+        <VoiceCore />
+        <svg className="voice-mic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" />
+        </svg>
+      </button>
+      <div className="voice-caption" role="status" key={caption}>{caption}</div>
       <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
-    <VoiceConversation messages={messages} retry={enqueue}
-      read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />
     </>
   );
 }

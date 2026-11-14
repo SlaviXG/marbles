@@ -94,6 +94,8 @@ export default function HandCursor() {
   if (status !== "tracking") return null;
   return (
     <div className="hand-cursor" ref={ref} aria-hidden>
+      <div className="hand-cursor-ring" />
+      <div className="hand-cursor-ripple" />
       <div className="hand-cursor-dot" />
     </div>
   );

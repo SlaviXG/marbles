@@ -1,4 +1,5 @@
-import { drawHolographicAgent, drawHolographicSpace } from "./drawHologram";
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawTether } from "./drawHologram";
+import { HUD_FONT, voiceSignal } from "../state/hud";
 import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
 import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
 import { drawAsset } from "./drawAsset";
@@ -26,6 +27,16 @@ function agentStatusLabel(node: GNode) {
   if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning to team' : 'Presenting result';
   return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Not available' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Ready to help';
 }
+
+// The short status word projected under each teammate.
+function hudStatus(node: GNode) {
+  const state = usePresentation.getState();
+  if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning' : 'Presenting';
+  return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Offline' : node.activity === 'done' ? 'Result ready' : node.activity === 'failed' ? 'Needs attention' : 'Standing by';
+}
+
+// The scene sits a little above centre, leaving the floor to the voice core.
+const SCENE_Y = 34;
 
 // Premium entrance: critically damped, no overshoot (matches the marble feel).
 const APPEAR: SpringToken = "calm";
@@ -100,6 +111,8 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
   const presentation = usePresentation(s => s.active);
   const presentationPhase = usePresentation(s => s.phase);
   const activityAt = useRef(new Map<string, { key: string; at: number }>());
+  const sceneEnergy = useRef(0);
+  const sceneLevel = useRef(0);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [hovered, setHovered] = useState<string | null>(null);
 
@@ -163,9 +176,9 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
     // first interaction, including when discovery has not returned yet.
     const zoom = Math.min(1.25, Math.max(.5, Math.min(el.clientWidth / 1100, (el.clientHeight - 280) / 600)));
     centerX.current.jump(0);
-    centerY.current.jump(0);
+    centerY.current.jump(SCENE_Y);
     fg.zoom(zoom);
-    fg.centerAt(0, 0);
+    fg.centerAt(0, SCENE_Y);
     kRef.current = zoom;
     zoomDispLog.current = Math.log(kRef.current);
     camInit.current = true;
@@ -502,12 +515,12 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
 
   useEffect(() => {
     if (REDUCED_MOTION || !ambientMotion) { requestRedraw(); return; }
-    // One modest shared repaint rate for state rings and the holographic cores.
-    // No React updates per frame; hidden pages do not spend time animating.
-    const timer = window.setInterval(() => {
+    // The projection is alive: repaint on the shared ticker so rings, comets and
+    // scanlines move at display rate. No React updates per frame, and hidden
+    // pages do not spend time animating.
+    return subscribeFrame(() => {
       if (!document.hidden) requestRedraw();
-    }, 50);
-    return () => window.clearInterval(timer);
+    });
   }, [requestRedraw, ambientMotion]);
 
   // Drive the rings toward present (1) / absent (0) on hover and selection.
@@ -699,7 +712,27 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         width={size.w}
         height={size.h}
         graphData={data}
-        onRenderFramePre={ctx => { positionPresentingAgent(); drawHolographicSpace(ctx); }}
+        onRenderFramePre={(ctx, scale) => {
+          positionPresentingAgent();
+          const still = REDUCED_MOTION || !ambientMotion;
+          const time = performance.now() / 1000;
+          // The room answers the voice: rings brighten while you are heard.
+          const wanted = voiceSignal.speaking || voiceSignal.status === 'armed' || voiceSignal.status === 'listening' ? 1 : voiceSignal.status === 'wake' ? .35 : 0;
+          sceneEnergy.current += (wanted - sceneEnergy.current) * (still ? 1 : .06);
+          sceneLevel.current += (voiceSignal.level - sceneLevel.current) * (still ? 1 : .2);
+          const presenting = usePresentation.getState().active;
+          ctx.save();
+          if (presenting) ctx.globalAlpha = .45;
+          drawHolographicSpace(ctx, { time: still ? 0 : time, scale, reduced: still, energy: sceneEnergy.current, level: still ? 0 : sceneLevel.current });
+          for (const node of nodeCache.current.values()) {
+            if (node.type !== 'agent' || node.x == null || node.status === 'unavailable') continue;
+            if (Math.hypot(node.x - node.homeX, node.y - node.homeY) > 4) continue; // away presenting
+            const born = bornAt.current.get(node.id) ?? 0;
+            const appear = REDUCED_MOTION ? 1 : Math.max(0, Math.min(1, (performance.now() - born - 250) / 700));
+            drawTether(ctx, node.x, node.y, Math.max(22, 36 / scale), { time, scale, working: node.status === 'running', reduced: still, alpha: appear });
+          }
+          ctx.restore();
+        }}
         onEngineTick={() => {
           const fg = fgRef.current;
           // The library auto-fits newly discovered nodes at its default zoom.
@@ -721,79 +754,73 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         enableNodeDrag={false}
         enableZoomInteraction={false} // zoom + pan handled by the unified ticker
         enablePanInteraction={false}
-        linkColor={() => "rgba(150,176,224,0.12)"}
+        linkColor={() => "rgba(130,205,255,0.16)"}
         nodeCanvasObject={(node: any, ctx, scale) => {
           const sel = node.id === selectedId;
           const hot = node.id === hovered;
+          const still = REDUCED_MOTION || !ambientMotion;
+          const tNow = performance.now();
+          const now = tNow / 1000;
           // Entrance driven by the closed-form spring (analytic, O(1) per frame).
-          const born = bornAt.current.get(node.id) ?? 0;
-          const elapsed = (performance.now() - born) / 1000;
-          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, elapsed);
+          const age = (tNow - (bornAt.current.get(node.id) ?? 0)) / 1000;
+          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, age);
           const grow = Math.max(0, p);
-          const baseR = node.type === 'agent' ? Math.max(20, 30 / scale) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
+          const baseR = node.type === 'agent' ? Math.max(22, 36 / scale) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
           const r = baseR * (0.45 + 0.55 * grow);
           const focus = usePresentation.getState().active;
           const focusAlpha = focus && node.id !== `agent:${focus.leadAgentId}` ? .28 : 1;
-          ctx.globalAlpha = (p < 0 ? 0 : p > 1 ? 1 : p) * focusAlpha;
-          ctx.beginPath();
-          if (node.type === 'artifact') ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 3);
-          else ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-          ctx.fillStyle = node.type === 'agent' ? 'oklch(85% .03 280)' : COLORS[node.type as GNode["type"]] ?? 'oklch(65% .01 260)';
-          if (node.type !== 'agent' && node.type !== 'swarm' && node.type !== 'artifact') ctx.fill();
+          const entranceAlpha = (p < 0 ? 0 : p > 1 ? 1 : p) * focusAlpha;
+          // Spring-animated aim: carried velocity, so re-aiming never restarts.
+          const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
+          const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;
+          const aim = Math.max(selAmt, hovAmt);
+          const aimed = Math.max(0, Math.min(1, aim));
+          ctx.globalAlpha = entranceAlpha;
           if (node.type === 'agent' || node.type === 'swarm') {
-            const now = performance.now() / 1000;
             let activity = activityAt.current.get(node.id);
             if (!activity || activity.key !== node.activityKey) {
-              activity = { key: node.activityKey, at: now };
+              // The first sighting is history, not news: no completion pulse on load.
+              activity = { key: node.activityKey, at: activity ? now : -100 };
               activityAt.current.set(node.id, activity);
             }
             drawHolographicAgent(ctx, node.x, node.y, r, node.id.replace('agent:', ''), {
-              state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at,
-              reduced: REDUCED_MOTION || !ambientMotion,
+              state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at, reduced: still, focus: aimed,
             });
-            if (node.status === 'running') {
-              ctx.strokeStyle = 'oklch(78% .11 215)';
-              ctx.lineWidth = 2 / scale;
-              ctx.beginPath(); ctx.arc(node.x, node.y, r + 5 / scale, 0, Math.PI * 2); ctx.stroke();
-            }
+          } else if (node.type === 'artifact') {
+            drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false, { time: now, age, reduced: still, focus: aimed });
+          } else {
+            ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+            ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? 'oklch(65% .01 260)';
+            ctx.fill();
           }
-          if (node.type === 'artifact') {
-            drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false);
-          }
+          ctx.globalAlpha = entranceAlpha;
           if (node.badge) {
-            ctx.fillStyle = '#0d1117';
+            ctx.fillStyle = 'oklch(16% .03 240)';
             ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
-            ctx.fillStyle = '#ffffff'; ctx.font = '3px ui-sans-serif, system-ui, sans-serif';
+            ctx.fillStyle = 'oklch(90% .05 210)'; ctx.font = `3px ${HUD_FONT}`;
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(node.badge, node.x, node.y);
+            ctx.fillText(node.badge.toUpperCase(), node.x, node.y);
           }
-          // Spring-animated ring: scales + fades in/out with carried velocity.
-          const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
-          const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;
-          const ring = Math.max(selAmt, hovAmt);
-          const entranceAlpha = (p < 0 ? 0 : p > 1 ? 1 : p) * focusAlpha;
-          if (ring > 0.002) {
-            ctx.globalAlpha = Math.min(1, ring) * entranceAlpha;
-            ctx.lineWidth = 2 / scale;
-            ctx.strokeStyle = selAmt >= hovAmt ? "oklch(85% .1 210)" : "oklch(73% .1 225)";
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, r + 3 * Math.min(1.2, ring), 0, 2 * Math.PI);
-            ctx.stroke();
-            ctx.globalAlpha = entranceAlpha;
-          }
+          drawLockOn(ctx, node.x, node.y, node.type === 'artifact' ? r * .95 : r, aim, scale, selAmt >= hovAmt && selAmt > 0);
           if ((node.type !== 'post' || sel || hot) && (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || node.type === 'swarm' || sel || hot)) {
-            ctx.font = `${node.type === "agent" ? 16 / scale : 12 / scale}px ui-sans-serif, system-ui, sans-serif`;
-            ctx.fillStyle = sel || hot ? "oklch(94% .025 210)" : "oklch(87% .025 230)";
+            const lead = node.type === 'agent';
+            const spacing = (value: number) => { if ('letterSpacing' in ctx) (ctx as any).letterSpacing = `${value / scale}px`; };
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            const limit = node.type === 'artifact' ? 17 : 34;
-            const label = node.label.length > limit ? node.label.slice(0, limit - 2) + '…' : node.label;
-            ctx.fillText(label, node.x, node.y + r + 5 / scale);
-            if (node.type === 'agent') {
-              ctx.font = `${12 / scale}px ui-sans-serif, system-ui, sans-serif`;
-              ctx.fillStyle = node.status === 'running' ? 'oklch(83% .1 210)' : 'oklch(67% .035 230)';
-              ctx.fillText(agentStatusLabel(node), node.x, node.y + r + 27 / scale);
+            ctx.font = `${lead ? 600 : 500} ${(lead ? 13.5 : 11.5) / scale}px ${HUD_FONT}`;
+            spacing(lead ? 2.6 : .5);
+            ctx.fillStyle = sel || hot ? "oklch(97% .02 205)" : lead ? "oklch(91% .03 215)" : "oklch(82% .04 222)";
+            const limit = node.type === 'artifact' ? 18 : 30;
+            const text = node.label.length > limit ? node.label.slice(0, limit - 1) + '…' : node.label;
+            const top = node.y + r * (lead ? 1.5 : node.type === 'artifact' ? 1.42 : 1.3) + 7 / scale;
+            ctx.fillText(lead ? text.toUpperCase() : text, node.x, top);
+            if (lead) {
+              ctx.font = `500 ${9.5 / scale}px ${HUD_FONT}`;
+              spacing(1.9);
+              ctx.fillStyle = node.activity === 'failed' ? 'oklch(82% .13 70)' : node.status === 'running' || node.activity === 'done' ? 'oklch(84% .11 208)' : 'oklch(64% .04 228)';
+              ctx.fillText(hudStatus(node).toUpperCase(), node.x, top + 20 / scale);
             }
+            spacing(0);
           }
           ctx.globalAlpha = 1;
         }}
