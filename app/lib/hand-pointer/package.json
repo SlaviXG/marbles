@@ -1,0 +1,27 @@
+{
+  "name": "hand-pointer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Webcam hand tracking as a pointer: pinch to click, drag, and two-hand zoom, delivered as ordinary DOM pointer events.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "demo": "vite demo"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}
