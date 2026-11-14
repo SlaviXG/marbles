@@ -2,22 +2,24 @@ import express from "express";
 import { detectAgents } from "../agents/detectAgents.mjs";
 import { TaskService, resolveArtifact } from "../agents/taskService.mjs";
 import { agentLog } from "../agents/logs.mjs";
+import { AgentRegistry } from "../agents/AgentRegistry.mjs";
 import { spawn } from "node:child_process";
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service, { agentDetector = detectAgents, taskService = new TaskService({ agentDetector }) } = {}) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService = new TaskService({ agentDetector: () => agentRegistry.snapshot() }) } = {}) {
   const app = express();
   app.use(express.json({ limit: "32kb" }));
 
   app.get("/api/vault", (_req, res) => res.json(service.snapshot()));
-  app.get("/api/agents", async (_req, res) => {
-    try {
-      res.json(await agentDetector());
-    } catch (error) {
-      console.error("Agent detection failed:", error);
-      res.status(500).json({ error: "Agent detection failed" });
-    }
+  app.get("/api/agents", (_req, res) => res.json(agentRegistry.snapshot()));
+  app.get("/api/agents/stream", (req, res) => {
+    res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+    res.flushHeaders();
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    const unsubscribe = agentRegistry.onChange(({ type, agent, id }) => send(type, agent ?? { id }));
+    send("snapshot", agentRegistry.snapshot());
+    req.on("close", unsubscribe);
   });
   app.get("/api/tasks", (_req, res) => res.json(taskService.snapshot()));
   app.post("/api/agents/:id/tasks", async (req, res) => {
@@ -26,7 +28,7 @@ export function createApp(service, { agentDetector = detectAgents, taskService =
   });
   app.get("/api/agents/:id/log", async (req, res) => {
     try {
-      const agent = (await agentDetector()).find(a => a.instanceName === req.params.id);
+      const agent = agentRegistry.snapshot().find(a => a.id === req.params.id);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
       res.json(await agentLog(agent.id));
     } catch { res.status(500).json({ error: "Could not read agent log" }); }

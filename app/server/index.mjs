@@ -7,6 +7,7 @@ import { ObsidianVaultSource } from "./source/ObsidianVaultSource.mjs";
 import { VaultService } from "./VaultService.mjs";
 import { createApp } from "./transport/createApp.mjs";
 import { createAgentDetector } from "./agents/detectAgents.mjs";
+import { AgentRegistry } from "./agents/AgentRegistry.mjs";
 
 // Composition root: build the object graph and wire the layers together.
 async function main() {
@@ -33,7 +34,10 @@ async function main() {
 
   console.log(`Parsed ${service.snapshot().notes.length} note(s) from ${config.vaultDir}`);
 
-  createApp(service, { agentDetector: createAgentDetector({ owner: config.agentOwner }) }).listen(config.port, () =>
+  const registry = new AgentRegistry({ detector: createAgentDetector({ cacheTtlMs: 0, readVersions: false }) });
+  await registry.refresh();
+  registry.start();
+  createApp(service, { agentRegistry: registry }).listen(config.port, () =>
     console.log(`vault-viz server: http://localhost:${config.port}`),
   );
 }

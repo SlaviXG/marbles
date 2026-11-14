@@ -2,7 +2,7 @@
 
 ## Step 1: agent detection (done)
 
-The server now discovers known agent CLIs on PATH and, on macOS, selected desktop bundles. `GET /api/agents` returns cached public discovery results with stable `<owner>-<agentId>` instance names. Set `MARBLES_AGENT_OWNER` to override the OS username. Discovery only checks executables and optionally runs `--version`; it does not start tasks or voting.
+The server discovers known agent CLIs on PATH and, on macOS, selected desktop bundles at startup and every 10 seconds. Agent identity is the catalog ID (`claude`, `codex`, `cursor`), and `GET /api/agents` plus `/api/agents/stream` expose the current agents and add/change/remove events. The canvas keeps existing agent positions stable and shows an unavailable agent while its tasks remain. Task workspaces use `~/marbles-workspace/<agentId>/<taskId>/`. Discovery checks PATH and app bundles without launching tasks or voting.
 
 ## Goal and boundary
 
@@ -20,7 +20,7 @@ The server is the authority for bidding, ownership, and execution. A client may 
 
 ## Agent and task nodes
 
-Register each installed, enabled runner as an `AgentInstance`, for example `pushkar-codex` or `pushkar-claude-code`. A provider label is display data; the stable ID identifies the local runner and its capability/availability configuration. An adapter interface lets other agents join without changing the vote protocol. Registry state belongs in the server, with safe public fields sent to the client; CLI paths, credentials, and private settings stay server-side.
+Register each installed, enabled runner by its agent ID, for example `codex` or `claude`. The provider label is display data; the stable ID identifies the local runner and its capability/availability configuration. An adapter interface lets other agents join without changing the vote protocol. Registry state belongs in the server, with safe public fields sent to the client; credentials and private settings stay server-side.
 
 Extend `GNode` in `app/src/core/graph.ts` to a discriminated union of the current knowledge nodes plus `agent` and `task` nodes. Keep the existing `buildGraph(notes)` behavior, then compose in agents and recent tasks from the separate store. Prefix new IDs (`agent:<id>`, `task:<id>`) because note IDs are paths and URL IDs are raw URLs. Add links from a task node to candidates while voting and retain a highlighted task-to-winner link after selection. Cap displayed task history (for example, the current task plus 20 recent tasks) so the force simulation stays responsive; history can remain available in the task panel.
 
@@ -71,7 +71,7 @@ export interface TaskRequest {
   references: GraphReference[];
 }
 export interface AgentInstance {
-  id: string; // e.g. pushkar-codex; graph ID is agent:${id}
+  id: string; // e.g. codex; graph ID is agent:${id}
   provider: string;
   label: string;
   capabilities: string[];

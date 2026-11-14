@@ -35,11 +35,10 @@ describe("agent detection", () => {
       pathEnv: bin,
       homeDir: home,
       platform: "linux",
-      owner: "Test User",
       readVersions: false,
     });
     expect(await detect()).toEqual([{
-      id: "kimi", instanceName: "test-user-kimi", name: "Kimi", kind: "cli",
+      id: "kimi", name: "Kimi", kind: "cli",
       command: "kimi-code", path: path.join(bin, "kimi-code"), version: null, available: true, codingAgent: false,
     }]);
     await command(bin, "claude");

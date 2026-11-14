@@ -7,11 +7,6 @@ import { agentCatalog } from "./agentCatalog.mjs";
 const VERSION_TIMEOUT_MS = 800;
 const CACHE_TTL_MS = 10_000;
 
-function ownerName(value) {
-  const owner = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-  return owner || "local";
-}
-
 function runtimeFor(platform, env) {
   return platform === "linux" && (env.WSL_DISTRO_NAME || env.WSL_INTEROP) ? "wsl" : platform;
 }
@@ -92,9 +87,8 @@ export function createAgentDetector(options = {}) {
     const env = options.env ?? process.env;
     const platform = options.platform ?? process.platform;
     const homeDir = options.homeDir ?? os.homedir();
-    const owner = ownerName(options.owner ?? env.MARBLES_AGENT_OWNER ?? os.userInfo().username);
     const pathValue = options.pathEnv ?? env.PATH ?? "";
-    const key = JSON.stringify([pathValue, platform, homeDir, owner]);
+    const key = JSON.stringify([pathValue, platform, homeDir]);
     if (cached?.key === key && Date.now() < expiresAt) return cached.promise;
 
     const promise = (async () => {
@@ -113,7 +107,6 @@ export function createAgentDetector(options = {}) {
         if (!cliPath && !desktopPath) return null;
         return {
           id: agent.id,
-          instanceName: `${owner}-${agent.id}`,
           name: agent.name,
           kind: cliPath ? "cli" : "desktop",
           command: cliPath ? command : null,

@@ -3,7 +3,6 @@ export type AgentKind = "cli" | "desktop";
 
 export interface DetectedAgent {
   id: string; // Catalog/provider ID, such as "codex".
-  instanceName: string; // Stable local instance name, such as "pushkar-codex".
   name: string;
   kind: AgentKind;
   command: string | null; // CLI command name; null for desktop apps.

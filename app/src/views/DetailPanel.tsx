@@ -28,7 +28,7 @@ export default function DetailPanel() {
   const select = useVault((s) => s.select);
   const clear = useVault((s) => s.clear);
 
-  const open = selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.instanceName}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('artifact:') ? true : !!getDetail(notes, selectedId) : false;
+  const open = selectedId ? selectedId.startsWith('agent:') ? agents.some(a => `agent:${a.id}` === selectedId) : selectedId.startsWith('task:') ? tasks.some(t => `task:${t.id}` === selectedId) : selectedId.startsWith('artifact:') ? true : !!getDetail(notes, selectedId) : false;
 
   const scrimRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -253,8 +253,8 @@ export default function DetailPanel() {
             <div className="immersive-content">
               {(() => {
                 if (displayedId?.startsWith('agent:')) {
-                  const agent = agents.find(a => `agent:${a.instanceName}` === displayedId);
-                  return agent && <><SpecialHeader kind="Agent" name={agent.instanceName} /><div className="ibody"><AgentBody agent={agent} tasks={tasks.filter(t => t.agentId === agent.instanceName)} select={select} /></div></>;
+                  const agent = agents.find(a => `agent:${a.id}` === displayedId);
+                  return agent && <><SpecialHeader kind="Agent" name={agent.name} /><div className="ibody"><AgentBody agent={agent} tasks={tasks.filter(t => t.agentId === agent.id)} select={select} /></div></>;
                 }
                 if (displayedId?.startsWith('task:')) {
                   const task = tasks.find(t => `task:${t.id}` === displayedId);
@@ -408,18 +408,19 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
   const [log, setLog] = useState<AgentLog | null>(null);
   useEffect(() => {
     let live = true;
-    const refresh = () => { fetch(`/api/agents/${encodeURIComponent(agent.instanceName)}/log`).then(r => r.json()).then(data => { if (live) setLog(data); }).catch(() => {}); };
+    if (!agent.available) { setLog({ available: false, reason: 'Agent unavailable' }); return; }
+    const refresh = () => { fetch(`/api/agents/${encodeURIComponent(agent.id)}/log`).then(r => r.json()).then(data => { if (live) setLog(data); }).catch(() => {}); };
     refresh();
     const timer = window.setInterval(refresh, 5000);
     return () => { live = false; window.clearInterval(timer); };
-  }, [agent.instanceName]);
-  const reason = agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : '';
+  }, [agent.id, agent.available]);
+  const reason = !agent.available ? 'Agent unavailable' : agent.kind !== 'cli' ? 'Desktop app has no non-interactive CLI' : !['codex', 'claude'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : '';
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!prompt.trim() || sending || reason) return;
     setSending(true); setError('');
     try {
-      const response = await fetch(`/api/agents/${encodeURIComponent(agent.instanceName)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
+      const response = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not start task');
       setPrompt('');
@@ -429,9 +430,9 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
     finally { setSending(false); }
   };
   return <>
-    <div className="sec">{agent.name} · {agent.kind}</div>
+    <div className="sec">{agent.name} · {agent.available ? agent.kind : 'unavailable'}</div>
     <form className="agent-task-form" onSubmit={submit}>
-      <label htmlFor="agent-task-input">Give {agent.instanceName} a task</label>
+      <label htmlFor="agent-task-input">Give {agent.name} a task</label>
       <textarea id="agent-task-input" value={prompt} onChange={e => setPrompt(e.target.value)} disabled={!!reason || sending} placeholder={reason || 'Describe the task…'} />
       <button type="submit" disabled={!!reason || sending || !prompt.trim()}>Start task</button>
       {reason && <div className="task-hint">{reason}</div>}{error && <div className="task-error">{error}</div>}

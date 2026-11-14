@@ -301,6 +301,7 @@ export default function GraphView() {
         prev.label = n.label; // a renamed heading updates in place, no restructure
         prev.type = n.type;
         prev.artifactType = n.artifactType;
+        prev.available = n.available;
         if (n.fx != null) {
           prev.x = n.x;
           prev.y = n.y;
@@ -647,9 +648,15 @@ export default function GraphView() {
           ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
           ctx.fill();
           if (node.type === 'agent') {
-            ctx.strokeStyle = '#8eacc2';
+            ctx.strokeStyle = node.available === false ? '#ee8b83' : '#8eacc2';
             ctx.lineWidth = 1 / scale;
             ctx.stroke();
+            if (node.available === false) {
+              ctx.fillStyle = '#0d1117';
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, r * 0.42, 0, 2 * Math.PI);
+              ctx.fill();
+            }
           }
           if (node.type === 'artifact') {
             ctx.fillStyle = '#0d1117';

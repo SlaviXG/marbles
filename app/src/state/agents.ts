@@ -5,9 +5,20 @@ interface AgentState {
   tasks: AgentTask[];
   setAgents: (agents: AgentInfo[]) => void;
   setTasks: (tasks: AgentTask[]) => void;
+  upsertAgent: (agent: AgentInfo) => void;
+  removeAgent: (id: string) => void;
+}
+function retainTaskAgents(agents: AgentInfo[], previous: AgentInfo[], tasks: AgentTask[]) {
+  const live = new Set(agents.map(a => a.id));
+  const activeTasks = new Set(tasks.map(t => t.agentId));
+  return [...agents, ...previous.filter(a => !live.has(a.id) && activeTasks.has(a.id)).map(a => ({ ...a, available: false }))];
 }
 export const useAgents = create<AgentState>((set) => ({
-  agents: [], tasks: [], setAgents: (agents) => set({ agents }), setTasks: (tasks) => set({ tasks }),
+  agents: [], tasks: [],
+  setAgents: (agents) => set(s => ({ agents: retainTaskAgents(agents, s.agents, s.tasks) })),
+  setTasks: (tasks) => set(s => ({ tasks, agents: retainTaskAgents(s.agents.filter(a => a.available), s.agents, tasks) })),
+  upsertAgent: (agent) => set(s => ({ agents: [...s.agents.filter(a => a.id !== agent.id), agent] })),
+  removeAgent: (id) => set(s => ({ agents: retainTaskAgents(s.agents.filter(a => a.id !== id), s.agents, s.tasks) })),
 }));
 export async function refreshAgents() {
   const response = await fetch('/api/agents');

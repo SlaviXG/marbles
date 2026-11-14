@@ -59,12 +59,12 @@ export class TaskService {
   snapshot() { return this.tasks.slice(-50).reverse(); }
   async start(agentId, prompt) {
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 10000) throw new Error('Enter a task under 10,000 characters');
-    const agent = (await this.agentDetector()).find(a => a.instanceName === agentId);
+    const agent = (await this.agentDetector()).find(a => a.id === agentId);
     if (!agent) throw new Error('Agent not found');
     const reason = taskCapability(agent);
     if (reason) throw new Error(reason);
     const id = randomUUID();
-    const dir = path.join(this.root, agent.instanceName, id);
+    const dir = path.join(this.root, agent.id, id);
     await fs.mkdir(dir, { recursive: true });
     const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [] };
     this.tasks.push(task);

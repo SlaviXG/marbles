@@ -7,21 +7,21 @@ import { fileURLToPath } from 'node:url';
 import { launcher, validateArtifactPath, resolveArtifact, TaskService } from '../agents/taskService.mjs';
 import { parseLog } from '../agents/logs.mjs';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
-const codex = { id: 'codex', kind: 'cli', path: '/bin/codex', instanceName: 'pushkar-codex' };
-const claude = { id: 'claude', kind: 'cli', path: '/bin/claude', instanceName: 'pushkar-claude' };
+const codex = { id: 'codex', kind: 'cli', path: '/bin/codex' };
+const claude = { id: 'claude', kind: 'cli', path: '/bin/claude' };
 describe('task launcher', () => {
   it('starts empty and only reports files from a newly instructed task', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-task-'));
-    const previous = path.join(root, 'pushkar-codex', 'previous');
+    const previous = path.join(root, 'codex', 'previous');
     const spawnProcess = vi.fn(() => { const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); return child; });
     try {
       await mkdir(previous, { recursive: true });
       await writeFile(path.join(previous, 'old.md'), 'old run');
       const service = new TaskService({ agentDetector: async () => [codex], root, spawnProcess });
       expect(service.snapshot()).toEqual([]);
-      const task = await service.start('pushkar-codex', 'write a file');
+      const task = await service.start('codex', 'write a file');
       expect(task.artifacts).toEqual([]);
-      const generated = path.join(root, 'pushkar-codex', task.id, 'new.md');
+      const generated = path.join(root, 'codex', task.id, 'new.md');
       await writeFile(generated, 'new run');
       spawnProcess.mock.results[0].value.stdout.emit('data', 'done');
       await vi.waitFor(() => expect(task.artifacts.map(a => a.name)).toEqual(['new.md']));
@@ -35,10 +35,10 @@ describe('task launcher', () => {
     const spawnProcess = vi.fn((...args) => { calls.push(args); const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); return child; });
     try {
       const service = new TaskService({ agentDetector: async () => [codex], root, spawnProcess });
-      const task = await service.start('pushkar-codex', 'do X');
+      const task = await service.start('codex', 'do X');
       expect(task.status).toBe('running');
       expect(calls[0][0]).toBe('/bin/codex');
-      expect(calls[0][1]).toEqual(['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', path.join(root, 'pushkar-codex', task.id), 'do X']);
+      expect(calls[0][1]).toEqual(['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', path.join(root, 'codex', task.id), 'do X']);
       expect(calls[0][2].shell).toBe(false);
       calls.length = 0;
       expect(launcher(claude, 'do Y', root).args).toEqual(['-p', 'do Y', '--permission-mode', 'acceptEdits']);

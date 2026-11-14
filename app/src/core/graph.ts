@@ -6,6 +6,7 @@ export interface GNode {
   label: string;
   type: "note" | "section" | "url" | "agent" | "task" | "artifact";
   artifactType?: string;
+  available?: boolean;
   x?: number;
   y?: number;
   fx?: number;
@@ -13,7 +14,7 @@ export interface GNode {
 }
 
 const AGENT_RADIUS = 42;
-const TAU = 2 * Math.PI;
+const AGENT_ANGLES: Record<string, number> = { claude: -Math.PI / 2, codex: Math.PI / 6, cursor: 5 * Math.PI / 6 };
 
 function pinned(id: string, label: string, type: GNode["type"], x: number, y: number, artifactType?: string): GNode {
   return { id, label, type, x, y, fx: x, fy: y, ...(artifactType ? { artifactType } : {}) };
@@ -32,13 +33,14 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   const graph = includeVaultNodes ? buildGraph(notes) : { nodes: [] as GNode[], links: [] as GLink[] };
   const nodes = [...graph.nodes];
   const links = [...graph.links];
-  const visibleAgents = agents.filter((agent) => agent.codingAgent).sort((a, b) => a.instanceName.localeCompare(b.instanceName));
+  const visibleAgents = agents.filter((agent) => agent.codingAgent).sort((a, b) => a.id.localeCompare(b.id));
   const agentNodes = new Map<string, GNode>();
   visibleAgents.forEach((agent, index) => {
-    const angle = -Math.PI / 2 + index * TAU / visibleAgents.length;
-    const node = pinned(`agent:${agent.instanceName}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
+    const node = pinned(`agent:${agent.id}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    node.available = agent.available;
     nodes.push(node);
-    agentNodes.set(agent.instanceName, node);
+    agentNodes.set(agent.id, node);
   });
   const childCounts = new Map<string, number>();
   for (const task of tasks.slice(0, 30).reverse()) {

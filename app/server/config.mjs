@@ -19,6 +19,5 @@ export function loadConfig() {
   return {
     vaultDir,
     port: Number(process.env.VAULT_VIZ_PORT) || 5174,
-    agentOwner: process.env.MARBLES_AGENT_OWNER,
   };
 }
