@@ -137,3 +137,7 @@ The `GNode` extension should retain `{ id, label, type }` for every variant, wit
 ## Step 2: agents, tasks and artifacts on the canvas
 
 The canvas now adds detected local agents as white nodes, direct assignments as green task nodes, and workspace files as blue artifact cards. Tasks run through supported Codex or Claude Code CLIs in per-task folders under `MARBLES_WORKSPACE_DIR` (default `~/marbles-workspace`). The agent panel polls recent local session logs and allows direct task submission; other detected agents remain visible with a disabled task input. The original voting flow above remains a future proposal.
+
+## Canvas refinement
+
+The main canvas now hides vault note, section, and URL nodes while retaining the vault graph code. Only catalog entries marked `codingAgent` (Claude Code, Codex, and Cursor) appear in a compact, pinned center cluster. In-memory tasks start empty; a green task appears after a direct instruction, and blue artifacts appear only when that task creates files in its fresh task directory. Task and artifact nodes stay pinned near their parent.

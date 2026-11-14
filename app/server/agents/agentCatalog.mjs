@@ -1,12 +1,12 @@
 // Adapted from https://github.com/stablyai/orca (MIT license).
 // Only command discovery metadata is carried over; launch and prompt settings are excluded.
 export const agentCatalog = [
-  { id: "claude", name: "Claude Code", detectCmd: "claude", desktopApps: ["Claude.app"] },
-  { id: "codex", name: "Codex", detectCmd: "codex", desktopApps: ["Codex.app"] },
+  { id: "claude", name: "Claude Code", detectCmd: "claude", desktopApps: ["Claude.app"], codingAgent: true },
+  { id: "codex", name: "Codex", detectCmd: "codex", desktopApps: ["Codex.app"], codingAgent: true },
   { id: "grok", name: "Grok", detectCmd: "grok", desktopApps: ["Grok.app"] },
   { id: "hermes", name: "Hermes", detectCmd: "hermes" },
   { id: "gemini", name: "Gemini CLI", detectCmd: "gemini" },
-  { id: "cursor", name: "Cursor Agent", detectCmd: "cursor-agent", desktopApps: ["Cursor.app"] },
+  { id: "cursor", name: "Cursor Agent", detectCmd: "cursor-agent", desktopApps: ["Cursor.app"], codingAgent: true },
   { id: "aider", name: "Aider", detectCmd: "aider" },
   { id: "opencode", name: "OpenCode", detectCmd: "opencode" },
   { id: "opencode2", name: "OpenCode 2", detectCmd: "opencode2" },

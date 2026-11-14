@@ -142,13 +142,19 @@ export default function GraphView() {
     const fg = fgRef.current;
     const el = wrapRef.current;
     if (!fg || !el || camInit.current) return;
-    const c = fg.screen2GraphCoords(el.clientWidth / 2, el.clientHeight / 2);
-    centerX.current.jump(c.x);
-    centerY.current.jump(c.y);
-    kRef.current = fg.zoom() || 1;
+    // The pinned agent ring is centered on the origin. Frame it before the
+    // first interaction, including when discovery has not returned yet.
+    const zoom = Math.min(2.5, Math.max(1, Math.min(el.clientWidth / 320, el.clientHeight / 260)));
+    centerX.current.jump(0);
+    centerY.current.jump(0);
+    fg.zoom(zoom);
+    fg.centerAt(0, 0);
+    kRef.current = zoom;
     zoomDispLog.current = Math.log(kRef.current);
     camInit.current = true;
   }, []);
+
+  useEffect(() => { ensureViewInit(); }, [ensureViewInit]);
 
   const startTicking = useCallback(() => {
     if (ticking.current) return;
@@ -295,24 +301,18 @@ export default function GraphView() {
         prev.label = n.label; // a renamed heading updates in place, no restructure
         prev.type = n.type;
         prev.artifactType = n.artifactType;
-        return prev; // keep x/y/vx/vy
+        if (n.fx != null) {
+          prev.x = n.x;
+          prev.y = n.y;
+          prev.fx = n.fx;
+          prev.fy = n.fy;
+        }
+        return prev; // retain the simulation object and its visual state
       }
       cache.set(n.id, n);
       bornAt.current.set(n.id, performance.now());
       return n;
     });
-
-    // Seed each new node at its parent's position so it eases out from there
-    // rather than flying in from the origin.
-    const byId = new Map(nodes.map((n) => [n.id, n]));
-    for (const link of built.links) {
-      const target = byId.get(link.target);
-      const source = byId.get(link.source);
-      if (target && target.x == null && source && source.x != null) {
-        target.x = source.x + (Math.random() - 0.5) * 8;
-        target.y = source.y + (Math.random() - 0.5) * 8;
-      }
-    }
 
     return { nodes, links: built.links };
   }, [notes, agents, tasks]);
@@ -411,8 +411,8 @@ export default function GraphView() {
     const fg = fgRef.current;
     if (!fg) return;
     fg.d3Force("collide", forceCollide((n: any) => HIT[n.type as GNode["type"]] + 4).strength(1).iterations(2));
-    fg.d3Force("charge")?.strength(-120);
-    fg.d3Force("link")?.distance(44);
+    fg.d3Force("charge")?.strength(0);
+    fg.d3Force("link")?.distance(24);
   }, []);
 
   // Reheat only when the set of nodes changes (add/remove), so a new node finds

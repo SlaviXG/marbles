@@ -40,7 +40,7 @@ describe("agent detection", () => {
     });
     expect(await detect()).toEqual([{
       id: "kimi", instanceName: "test-user-kimi", name: "Kimi", kind: "cli",
-      command: "kimi-code", path: path.join(bin, "kimi-code"), version: null, available: true,
+      command: "kimi-code", path: path.join(bin, "kimi-code"), version: null, available: true, codingAgent: false,
     }]);
     await command(bin, "claude");
     // A fresh detector sees the required command; the original stays cached briefly.
@@ -56,10 +56,14 @@ describe("agent detection", () => {
     const catalog = agentCatalog.filter(({ id }) => id === "cursor");
     const desktop = createAgentDetector({ catalog, pathEnv: bin, homeDir: home, platform: "darwin", readVersions: false, desktopRoots: [applications] });
     expect((await desktop())[0]).toMatchObject({ id: "cursor", kind: "desktop", command: null,
-      path: path.join(applications, "Cursor.app"), available: true });
+      path: path.join(applications, "Cursor.app"), available: true, codingAgent: true });
     await command(bin, "cursor-agent");
     const cli = createAgentDetector({ catalog, pathEnv: bin, homeDir: home, platform: "darwin", readVersions: false, desktopRoots: [applications] });
     expect((await cli())[0]).toMatchObject({ id: "cursor", kind: "cli", command: "cursor-agent" });
+  });
+
+  it("marks only the three canvas coding agents in the catalog", () => {
+    expect(agentCatalog.filter(({ codingAgent }) => codingAgent).map(({ id }) => id)).toEqual(["claude", "codex", "cursor"]);
   });
 
   it("uses only --version, times out, and caches the result", async () => {

@@ -26,13 +26,43 @@ describe("buildGraph", () => {
 import { composeGraph } from '../core/graph';
 
 describe('agent canvas mapping', () => {
-  it('maps detected agents independently of notes and links tasks and files', () => {
-    const graph = composeGraph(notes, [{ id: 'codex', instanceName: 'pushkar-codex', name: 'Codex', kind: 'cli', command: 'codex', path: '/bin/codex', version: null, available: true }], [{ id: 't1', agentId: 'pushkar-codex', prompt: 'make file', status: 'completed', createdAt: '', updatedAt: '', stdout: '', stderr: '', artifacts: [{ path: 'pushkar-codex/t1/out.pdf', name: 'out.pdf', type: 'pdf' }] }]);
-    expect(graph.nodes).toContainEqual({ id: 'agent:pushkar-codex', label: 'pushkar-codex', type: 'agent' });
-    expect(graph.nodes).toContainEqual({ id: 'task:t1', label: 'make file', type: 'task' });
-    expect(graph.nodes).toContainEqual({ id: `artifact:t1:${encodeURIComponent('pushkar-codex/t1/out.pdf')}`, label: 'out.pdf', type: 'artifact', artifactType: 'pdf' });
+  const agent = (id: string, codingAgent: boolean) => ({
+    id, instanceName: `pushkar-${id}`, name: id, kind: 'cli' as const,
+    command: id, path: `/bin/${id}`, version: null, available: true, codingAgent,
+  });
+  const task = { id: 't1', agentId: 'pushkar-codex', prompt: 'make file', status: 'completed' as const,
+    createdAt: '', updatedAt: '', stdout: '', stderr: '', artifacts: [{ path: 'pushkar-codex/t1/out.pdf', name: 'out.pdf', type: 'pdf' as const }] };
+
+  it('starts with coding agents only, clustered near the center', () => {
+    const graph = composeGraph(notes, [agent('cursor', true), agent('openclaw', false), agent('codex', true), agent('claude', true)], []);
+    expect(graph.nodes.map(n => n.id)).toEqual(['agent:pushkar-claude', 'agent:pushkar-codex', 'agent:pushkar-cursor']);
+    expect(graph.links).toEqual([]);
+    for (const node of graph.nodes) {
+      expect(Math.hypot(node.x!, node.y!)).toBeLessThanOrEqual(42.1);
+      expect([node.fx, node.fy]).toEqual([node.x, node.y]);
+    }
+  });
+
+  it('adds a task and only its generated files close to their parents', () => {
+    const graph = composeGraph(notes, [agent('codex', true), agent('openclaw', false)], [task]);
+    const agentNode = graph.nodes.find(n => n.id === 'agent:pushkar-codex')!;
+    const taskNode = graph.nodes.find(n => n.id === 'task:t1')!;
+    const artifactNode = graph.nodes.find(n => n.type === 'artifact')!;
+    expect(taskNode).toMatchObject({ label: 'make file', type: 'task' });
+    expect(artifactNode).toMatchObject({ label: 'out.pdf', type: 'artifact', artifactType: 'pdf' });
     expect(graph.links).toContainEqual({ source: 'agent:pushkar-codex', target: 'task:t1' });
     expect(graph.links).toContainEqual({ source: 'task:t1', target: `artifact:t1:${encodeURIComponent('pushkar-codex/t1/out.pdf')}` });
+    expect(Math.hypot(taskNode.x! - agentNode.x!, taskNode.y! - agentNode.y!)).toBeLessThanOrEqual(25);
+    expect(Math.hypot(artifactNode.x! - taskNode.x!, artifactNode.y! - taskNode.y!)).toBeLessThanOrEqual(20);
     expect(graph.nodes.filter(n => n.type === 'agent')).toHaveLength(1);
+  });
+
+  it('keeps the vault graph available behind the flag', () => {
+    expect(composeGraph(notes, [], [], true).nodes.some(n => n.type === 'note')).toBe(true);
+  });
+
+  it('omits tasks belonging to agents filtered from the canvas', () => {
+    const hidden = { ...task, agentId: 'pushkar-openclaw' };
+    expect(composeGraph(notes, [agent('openclaw', false)], [hidden]).nodes).toEqual([]);
   });
 });

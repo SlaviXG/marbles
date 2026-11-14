@@ -10,6 +10,7 @@ export interface DetectedAgent {
   path: string; // Executable or desktop bundle path.
   version: string | null;
   available: boolean;
+  codingAgent: boolean; // Catalog eligibility for the agent canvas.
 }
 export type AgentInfo = DetectedAgent;
 export interface ArtifactInfo { path: string; name: string; type: 'pdf' | 'spreadsheet' | 'docx' | 'image' | 'code' | 'other' }

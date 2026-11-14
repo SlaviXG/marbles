@@ -6,19 +6,55 @@ export interface GNode {
   label: string;
   type: "note" | "section" | "url" | "agent" | "task" | "artifact";
   artifactType?: string;
+  x?: number;
+  y?: number;
+  fx?: number;
+  fy?: number;
 }
 
-export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[]) {
-  const graph = buildGraph(notes);
+const AGENT_RADIUS = 42;
+const TAU = 2 * Math.PI;
+
+function pinned(id: string, label: string, type: GNode["type"], x: number, y: number, artifactType?: string): GNode {
+  return { id, label, type, x, y, fx: x, fy: y, ...(artifactType ? { artifactType } : {}) };
+}
+
+// Small, stable slots keep new children adjacent to their parent. Every third
+// child starts another shallow ring, so later tasks do not move existing ones.
+function childPosition(parent: GNode, index: number, outward: number, distance: number) {
+  const angle = outward + [0, -0.75, 0.75][index % 3];
+  const ring = Math.floor(index / 3);
+  const radius = distance + ring * 20;
+  return { x: parent.x! + Math.cos(angle) * radius, y: parent.y! + Math.sin(angle) * radius };
+}
+
+export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false) {
+  const graph = includeVaultNodes ? buildGraph(notes) : { nodes: [] as GNode[], links: [] as GLink[] };
   const nodes = [...graph.nodes];
   const links = [...graph.links];
-  for (const agent of agents) nodes.push({ id: `agent:${agent.instanceName}`, label: agent.instanceName, type: 'agent' });
-  for (const task of tasks.slice(0, 30)) {
-    nodes.push({ id: `task:${task.id}`, label: task.prompt.slice(0, 48), type: 'task' });
+  const visibleAgents = agents.filter((agent) => agent.codingAgent).sort((a, b) => a.instanceName.localeCompare(b.instanceName));
+  const agentNodes = new Map<string, GNode>();
+  visibleAgents.forEach((agent, index) => {
+    const angle = -Math.PI / 2 + index * TAU / visibleAgents.length;
+    const node = pinned(`agent:${agent.instanceName}`, agent.name, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
+    nodes.push(node);
+    agentNodes.set(agent.instanceName, node);
+  });
+  const childCounts = new Map<string, number>();
+  for (const task of tasks.slice(0, 30).reverse()) {
+    const parent = agentNodes.get(task.agentId);
+    if (!parent) continue;
+    const index = childCounts.get(task.agentId) ?? 0;
+    childCounts.set(task.agentId, index + 1);
+    const outward = Math.atan2(parent.y!, parent.x!);
+    const point = childPosition(parent, index, outward, 24);
+    const taskNode = pinned(`task:${task.id}`, task.prompt.slice(0, 48), 'task', point.x, point.y);
+    nodes.push(taskNode);
     links.push({ source: `agent:${task.agentId}`, target: `task:${task.id}` });
-    for (const artifact of task.artifacts) {
+    for (const [artifactIndex, artifact] of task.artifacts.entries()) {
       const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
-      nodes.push({ id, label: artifact.name, type: 'artifact', artifactType: artifact.type });
+      const artifactPoint = childPosition(taskNode, artifactIndex, outward, 19);
+      nodes.push(pinned(id, artifact.name, 'artifact', artifactPoint.x, artifactPoint.y, artifact.type));
       links.push({ source: `task:${task.id}`, target: id });
     }
   }

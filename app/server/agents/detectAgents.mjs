@@ -120,6 +120,7 @@ export function createAgentDetector(options = {}) {
           path: cliPath || desktopPath,
           version: cliPath && options.readVersions !== false ? await readVersion(cliPath, options.versionTimeoutMs ?? VERSION_TIMEOUT_MS) : null,
           available: true,
+          codingAgent: agent.codingAgent === true,
         };
       }));
       return found.filter(Boolean);
