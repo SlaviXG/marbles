@@ -90,8 +90,6 @@ export {
   PALM_OFF,
   UP_ON,
   UP_OFF,
-  LEN_ON,
-  LEN_OFF,
   type HandPose,
 } from "./palm";
 
