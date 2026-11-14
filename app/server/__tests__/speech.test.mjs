@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { speechHandler } from '../transport/speech.mjs';
+import { SPEECH_VOICES } from '../../shared/speechVoices.mjs';
 
 class Response extends EventEmitter {
   code = 200; data = null; headers = {};
@@ -22,7 +23,23 @@ describe('speech synthesis', () => {
     expect(res.data.toString()).toBe('audio');
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(fetchApi.mock.calls[0][1].headers.Authorization).toBe('Bearer test-key');
-    expect(JSON.parse(fetchApi.mock.calls[0][1].body)).toMatchObject({ model: 'gpt-4o-mini-tts', input: 'Done.', response_format: 'mp3' });
+    expect(JSON.parse(fetchApi.mock.calls[0][1].body)).toMatchObject({ model: 'gpt-4o-mini-tts', voice: 'coral', input: 'Done.', response_format: 'mp3' });
+  });
+  it.each(SPEECH_VOICES)('passes the selected %s voice upstream', async voice => {
+    const fetchApi = vi.fn(async () => ({ ok: true, body: [Buffer.from('audio')] }));
+    const req = request('Hello.'); req.body.voice = voice;
+    const res = new Response();
+    await speechHandler({ apiKey: 'test', fetchApi })(req, res);
+    expect(res.code).toBe(200);
+    expect(JSON.parse(fetchApi.mock.calls[0][1].body).voice).toBe(voice);
+  });
+  it.each(['unknown', '', null, { id: 'custom' }])('rejects unsupported voice %j before calling OpenAI', async voice => {
+    const fetchApi = vi.fn();
+    const req = request('Hello.'); req.body.voice = voice;
+    const res = new Response();
+    await speechHandler({ apiKey: 'test', fetchApi })(req, res);
+    expect(res.code).toBe(400);
+    expect(fetchApi).not.toHaveBeenCalled();
   });
   it('rejects untrusted origins, oversized text, and missing keys', async () => {
     const fetchApi = vi.fn();

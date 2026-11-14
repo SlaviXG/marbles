@@ -1,4 +1,5 @@
 import { wakeMatch } from './wakePhrase';
+import { DEFAULT_SPEECH_VOICE, isSpeechVoice, type SpeechVoice } from '../../shared/speechVoices.mjs';
 
 export function spokenText(text: string): string {
   let plain = text.replace(/```[\s\S]*?```/g, ' Code is in the message. ')
@@ -31,12 +32,13 @@ export class ReplySpeaker {
   private audio?: HTMLAudioElement;
   private url?: string;
   private generation = 0;
+  private voice: SpeechVoice = DEFAULT_SPEECH_VOICE;
 
   constructor(private events: SpeakerEvents) {}
 
   enqueue(id: string, text: string) {
     const plain = spokenText(text);
-    const key = `${id}:${plain}`;
+    const key = `${this.voice}:${id}:${plain}`;
     if (!plain || !this.enabled || this.disposed || this.seen.has(key)) return;
     this.seen.add(key);
     if (this.seen.size > 200) this.seen.delete(this.seen.values().next().value!);
@@ -47,6 +49,12 @@ export class ReplySpeaker {
   setEnabled(enabled: boolean) {
     this.enabled = enabled;
     if (!enabled) this.interrupt();
+  }
+
+  setVoice(voice: SpeechVoice) {
+    if (!isSpeechVoice(voice) || voice === this.voice) return;
+    this.interrupt();
+    this.voice = voice;
   }
 
   setUserSpeaking(speaking: boolean) {
@@ -60,22 +68,24 @@ export class ReplySpeaker {
     if (this.busy || !this.enabled || this.speaking || this.disposed || !this.queue.length) return;
     this.busy = true;
     const text = this.queue.shift()!;
+    const voice = this.voice;
+    const cacheKey = `${voice}:${text}`;
     const generation = ++this.generation;
     const abort = new AbortController();
     this.abort = abort;
     const timer = setTimeout(() => abort.abort(), 30_000);
     try {
-      let blob = this.cache.get(text);
+      let blob = this.cache.get(cacheKey);
       if (!blob) {
         const response = await fetch('/api/voice/speech', { method: 'POST',
-          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }), signal: abort.signal });
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, voice }), signal: abort.signal });
         if (!response.ok) throw new Error('Could not generate speech. Read the message or retry audio.');
         blob = await response.blob();
       }
       if (generation !== this.generation || abort.signal.aborted || this.disposed) return;
       clearTimeout(timer);
       if (!blob.size || !blob.type.startsWith('audio/')) throw new Error('The speech response was not audio.');
-      this.cache.set(text, blob);
+      this.cache.set(cacheKey, blob);
       if (this.cache.size > 3) this.cache.delete(this.cache.keys().next().value!);
       this.url = URL.createObjectURL(blob);
       const audio = new Audio(this.url);

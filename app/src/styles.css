@@ -91,6 +91,10 @@
 .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
 .voice-dock.error .voice-halo { background: radial-gradient(circle, oklch(70% 0.15 30 / 0.3), transparent 68%); opacity: 1; }
 .voice-caption { font-size: 0.85rem; font-weight: 500; margin-top: 2px; text-shadow: 0 1px 5px var(--bg); }
+.voice-choice { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.72rem; color: var(--muted); pointer-events: auto; }
+.voice-choice select { min-width: 100px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; background: var(--panel); color: var(--text); font: inherit; color-scheme: dark; }
+.voice-choice select:focus-visible { outline: 2px solid var(--teal); outline-offset: 3px; }
+.voice-choice .voice-off { padding: 6px; }
 .voice-help {
   font-size: 0.72rem;
   line-height: 1.5;
@@ -123,7 +127,7 @@
 @media (max-width: 650px) {
   .voice-dock { bottom: 98px; width: min(380px, calc(100vw - 32px)); }
   .voice-help { font-size: 0.68rem; }
-  .voice-conversation { bottom: 250px; left: 14px; width: min(310px, calc(100vw - 28px)); max-height: calc(100dvh - 340px); }
+  .voice-conversation { bottom: 360px; left: 14px; width: min(310px, calc(100vw - 28px)); max-height: calc(100dvh - 440px); }
   .voice-message p { max-height: 16dvh; }
 }
 @media (prefers-reduced-motion: reduce) {

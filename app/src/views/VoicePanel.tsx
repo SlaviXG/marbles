@@ -7,11 +7,22 @@ import VoiceConversation from "./VoiceConversation";
 import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
+import { DEFAULT_SPEECH_VOICE, SPEECH_VOICES, isSpeechVoice, type SpeechVoice } from '../../shared/speechVoices.mjs';
+
+const VOICE_STORAGE_KEY = 'marbles.speechVoice';
+function savedVoice(): SpeechVoice {
+  try {
+    const voice = localStorage.getItem(VOICE_STORAGE_KEY);
+    if (isSpeechVoice(voice)) return voice;
+  } catch { /* Storage may be disabled; voice selection still works. */ }
+  return DEFAULT_SPEECH_VOICE;
+}
 
 export default function VoicePanel() {
   const session = useRef<VoiceSession>();
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies, setVoiceReplies] = useState(true);
+  const [speechVoice, setSpeechVoice] = useState<SpeechVoice>(savedVoice);
   const [replyPlaying, setReplyPlaying] = useState(false);
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
@@ -41,6 +52,7 @@ export default function VoicePanel() {
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
+    speaker.current.setVoice(speechVoice);
     // Delay one event loop so StrictMode's initial cleanup cancels its trial
     // mount before requesting microphone access or loading the wake model.
     const startup = setTimeout(start, 0);
@@ -177,6 +189,21 @@ export default function VoicePanel() {
         </button>
       </div>
       <div className="voice-caption" role="status">{caption}</div>
+      <div className="voice-choice">
+        <label htmlFor="speech-voice">Voice</label>
+        <select id="speech-voice" value={speechVoice} onChange={event => {
+          const voice = event.target.value;
+          if (!isSpeechVoice(voice)) return;
+          setSpeechVoice(voice); speaker.current?.setVoice(voice);
+          try { localStorage.setItem(VOICE_STORAGE_KEY, voice); } catch { /* Keep the in-memory choice. */ }
+        }}>
+          {SPEECH_VOICES.map(voice => <option key={voice} value={voice}>{voice[0].toUpperCase() + voice.slice(1)}</option>)}
+        </select>
+        <button className="voice-off" type="button" onClick={() => {
+          speaker.current?.interrupt(); speaker.current?.setEnabled(true); setVoiceReplies(true);
+          speaker.current?.enqueue(crypto.randomUUID(), 'Hello, I’m ready to help with your next task.');
+        }}>Preview</button>
+      </div>
       <button className="voice-off" type="button" aria-pressed={voiceReplies} onClick={() => {
         const enabled = !voiceReplies; setVoiceReplies(enabled); speaker.current?.setEnabled(enabled);
       }}>{voiceReplies ? 'AI voice on' : 'AI voice muted'}</button>
