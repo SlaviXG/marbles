@@ -13,6 +13,7 @@ Use the supplied conversation and live context to resolve "it", "that", and foll
 Choose sensible, reversible defaults for format, scope, structure, filenames, and implementation.
 State important assumptions briefly; do not ask users to make routine choices or approve a plan.
 For a task, build a concrete plan of 1-3 steps, clear acceptance criteria, then delegate immediately.
+A request can hold several separate tasks: count them, and when there are two or more call delegate_many with one plan per task so none is dropped. If every agent is busy, delegate anyway; the app queues the work and starts it when an agent is free.
 Default to one idle agent. Use a swarm when explicitly requested or when independent work/review materially helps; avoid duplicated work.
 Use inspection tools to answer questions about any agent, task, log, note, or asset before asking the user. Use read_note/read_asset for actual contents; metadata is not file contents. Delegate binary document analysis to a worker.
 Use cancel_work only for a user's explicit request to stop managed work; inspect the target first. Only ask ONE short question when an essential source, target, or authorization is truly missing.
@@ -39,6 +40,8 @@ export const COORDINATOR_TOOLS = [
   { name: 'inspect_context', description: 'Refresh available agents, recent work, and the selected item before planning. Read only.', input_schema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'delegate_work', description: 'Delegate a concrete plan now. Prefer one idle worker; the app reserves the agent atomically. Assumptions are defaults, not fabricated facts.',
     input_schema: { type: 'object', properties: fields, required: Object.keys(fields), additionalProperties: false } },
+  { name: 'delegate_many', description: 'Delegate several separate tasks from ONE request, each with its own complete plan. Use whenever the user asks for two or more distinct deliverables or jobs in the same breath ("do X, and also Y, then Z"). Every task the user named must appear; never keep only the first. Tasks that cannot start at once wait in the queue.',
+    input_schema: { type: 'object', properties: { tasks: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'object', properties: fields, required: Object.keys(fields), additionalProperties: false } } }, required: ['tasks'], additionalProperties: false } },
   { name: 'respond', description: 'Finish with a plain spoken answer under 25 words, without Markdown or lists. Summarize instead of enumerating document sections. May ignore background speech or ask one essential blocking question. Does not start work.',
     input_schema: { type: 'object', properties: { decision: { type: 'string', enum: ['reply', 'clarify', 'ignore'] }, reply: text(240) }, required: ['decision', 'reply'], additionalProperties: false } },
 ];

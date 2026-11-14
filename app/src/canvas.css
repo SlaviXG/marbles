@@ -239,7 +239,9 @@
 .canvas-app .presentation-sender { display: flex; align-items: center; gap: 10px; margin: 0 0 7px; color: var(--teal); font: 500 .66rem/1 var(--hud); letter-spacing: .26em; text-transform: uppercase; }
 .presentation-sender span { color: var(--muted); }
 .presentation-close { top: 20px; right: 20px; }
-.presentation-queue { flex: none; min-width: 34px; padding: 7px 9px; text-align: center; color: var(--amber); border: 1px solid oklch(84% .14 72 / .5); border-radius: 999px; font: 600 .7rem/1 var(--hud); letter-spacing: .08em; animation: blink 2s ease-in-out infinite; }
+.canvas-app .presentation-next { flex: none; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 8px 0 16px; color: var(--amber); background: oklch(80% .12 72 / .08); border: 1px solid oklch(84% .14 72 / .5); border-radius: 999px; font: 600 .66rem/1 var(--hud); letter-spacing: .22em; text-transform: uppercase; animation: rise-in .6s .6s var(--out) both; transition: background .25s, transform .4s var(--out); }
+.presentation-next span { display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; color: oklch(20% .04 70); background: var(--amber); border-radius: 999px; letter-spacing: 0; }
+.canvas-app .presentation-next:hover:not(:disabled) { background: oklch(80% .12 72 / .2); transform: translateX(3px); }
 .presentation-reader { flex: 1; min-height: 0; overflow: auto; padding: 26px 32px 34px; overscroll-behavior: contain; scrollbar-color: oklch(55% .07 218 / .7) transparent; scrollbar-width: thin; -webkit-mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 26px), transparent); mask-image: linear-gradient(transparent, #000 22px, #000 calc(100% - 26px), transparent); }
 .presentation-content { zoom: var(--reader-zoom, 1); max-width: 980px; margin: 0 auto; animation: print-in 1.05s .46s cubic-bezier(.45, 0, .2, 1) both; }
 @keyframes print-in { from { clip-path: inset(0 0 100% 0); opacity: .3; } 70% { opacity: 1; } to { clip-path: inset(0 0 -200% 0); opacity: 1; } }
@@ -324,8 +326,6 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 .media-focus figcaption { margin-top: 14px; color: var(--text); font-size: .9rem; }
 .media-focus figcaption span { display: block; margin-top: 4px; color: var(--muted); font: 500 .64rem/1.4 var(--hud); letter-spacing: .2em; text-transform: uppercase; }
 @keyframes focus-in { from { opacity: 0; transform: scale(.94); filter: blur(10px); } }
-.media-video { max-width: min(960px, calc((100vh - 430px) * 16 / 9)); margin: 0 auto; }
-.media-video .preview-frame { margin: 0; border: 1px solid var(--border); border-radius: 3px; box-shadow: 0 0 70px oklch(72% .13 210 / .22); }
 .media-letter dl { display: flex; gap: 16px; margin: 0 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
 .media-letter dt { color: var(--muted); font: 500 .66rem/1.9 var(--hud); letter-spacing: .24em; text-transform: uppercase; }
 .media-letter dd { margin: 0; color: var(--teal); overflow-wrap: anywhere; }
@@ -344,6 +344,27 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 .canvas-app .media-status { flex: 1; margin: 0; color: var(--muted); font: 500 .66rem/1.5 var(--hud); letter-spacing: .2em; text-transform: uppercase; }
 .canvas-app .media-status.done { color: var(--teal); } .canvas-app .media-status.failed { color: var(--amber); letter-spacing: .04em; text-transform: none; font-size: .8rem; }
 .media-actions .holo-chip { animation: none; text-transform: none; padding: 0 22px; }
+
+/* Anything projected can be picked up by its title bar and put somewhere else. */
+.window-grip { cursor: grab; touch-action: none; user-select: none; }
+.window-dragging { transition: none !important; box-shadow: 0 0 0 1px var(--bright), 0 0 80px oklch(75% .14 208 / .4), 0 50px 110px oklch(4% .02 248 / .8) !important; }
+.window-dragging .window-grip { cursor: grabbing; }
+.window-dragging iframe { pointer-events: none; } /* a video must not swallow the drag */
+.detail-grip { position: absolute; top: 0; left: 0; right: 76px; z-index: 3; display: flex; justify-content: center; align-items: center; gap: 5px; height: 26px; }
+.detail-grip i, .video-window-grip i { width: 4px; height: 4px; border-radius: 50%; background: oklch(80% .08 212 / .55); }
+
+/* A video keeps to its own corner and blocks nothing. */
+.video-window { position: fixed; left: 40px; bottom: 40px; z-index: 44; width: min(420px, calc(100vw - 80px)); color: var(--text); background: var(--glass); border: 1px solid oklch(84% .1 208 / .5); border-radius: 3px; box-shadow: 0 0 0 1px oklch(8% .02 245 / .6), 0 0 50px oklch(72% .14 210 / .2), 0 30px 70px oklch(4% .02 248 / .7); animation: video-in .7s var(--out) both; transition: width .5s var(--out); }
+.video-window.large { width: min(860px, calc(100vw - 80px)); }
+@keyframes video-in { from { opacity: 0; transform: translateY(30px) scale(.86); filter: blur(10px); } }
+.video-window-bar { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 4px 0 14px; cursor: grab; touch-action: none; user-select: none; }
+.video-window-grip { display: flex; gap: 4px; margin-right: 8px; }
+.canvas-app .video-window-bar p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; font-weight: 500; }
+.canvas-app .video-window-bar button { flex: none; display: grid; place-items: center; width: 40px; min-height: 40px; padding: 0; color: var(--muted); background: transparent; border: 0; border-radius: 50%; transition: color .2s, background .2s; }
+.canvas-app .video-window-bar button:hover { color: var(--bright); background: oklch(60% .1 212 / .2); }
+.video-window-bar button span { font-size: 1.4rem; font-weight: 300; line-height: 1; }
+.video-window .preview-frame { margin: 0; border-radius: 0 0 2px 2px; animation: none; }
+@media (max-width: 600px) { .video-window { left: 20px; bottom: 210px; width: calc(100vw - 40px); } }
 
 /* Maths, pictures and slides inside a document. */
 .tex.block { display: block; margin: 1.3em 0; padding: 14px 8px; overflow-x: auto; text-align: center; font-size: 1.12em; background: linear-gradient(90deg, transparent, oklch(60% .1 212 / .09), transparent); }

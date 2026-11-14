@@ -8,10 +8,15 @@ export type Display =
   | { kind: 'video'; query: string; videoId: string; title: string; channel: string }
   | { kind: 'email'; to: string; name: string; subject: string; body: string }
   | { kind: 'call'; number: string; name: string };
+export type Video = Extract<Display, { kind: 'video' }>;
 export type DisplayStatus = 'idle' | 'working' | 'done' | 'failed';
 
 interface DisplayState {
-  display: Display | null;
+  display: Exclude<Display, Video> | null; // the one thing on the main stage
+  video: Video | null; // plays in its own side window, alongside anything else
+  videoLarge: boolean;
+  closeVideo: () => void;
+  resizeVideo: (large: boolean) => void;
   index: number | null; // which picture is enlarged, if any
   status: DisplayStatus;
   note: string;
@@ -30,8 +35,10 @@ async function post(path: string, body: unknown) {
 }
 
 export const useDisplay = create<DisplayState>((set, get) => ({
-  display: null, index: null, status: 'idle', note: '',
-  show: display => set({ display, index: null, status: 'idle', note: '' }),
+  display: null, index: null, status: 'idle', note: '', video: null, videoLarge: false,
+  show: display => set(display.kind === 'video' ? { video: display } : { display, index: null, status: 'idle', note: '' }),
+  closeVideo: () => set({ video: null, videoLarge: false }),
+  resizeVideo: videoLarge => set({ videoLarge }),
   close: () => set({ display: null, index: null, status: 'idle', note: '' }),
   focus: index => set({ index }),
   step: delta => set(state => state.display?.kind !== 'images' ? state

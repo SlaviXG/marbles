@@ -25,3 +25,11 @@ Email and calls are never automatic. Hermes prepares a card (recipient, subject,
 Documents read as documents: Markdown with typeset LaTeX and inline pictures, `.tex` sources, presentations as slides, workbooks as tables. Workers build real `.pptx` and `.xlsx` files with `app/scripts/make-office.mjs`.
 
 A working agent shows real progress only: a dial that laps once a minute of actual elapsed time, a timer, and the latest readable line the worker printed. No invented percentages.
+
+## Moving things, and waiting your turn
+
+Everything projected can be picked up: pinch (or press) a window's title bar and move it; pinch a teammate or a file on the canvas, hold, and carry it, with its files following. A short pinch still opens; only a held move carries.
+
+A video plays in a small side window that blocks nothing and can be dragged or enlarged, so work continues around it.
+
+Work queues instead of failing or being dropped. One sentence can hold several tasks and each is delegated; tasks that cannot start wait at the centre of the canvas ("2 queued") and start in order as agents free up. Finished results queue too: a result on screen is never replaced or closed by a stray pinch on the canvas. It closes on its button, Escape or by voice, and the waiting one is a "Next" away.

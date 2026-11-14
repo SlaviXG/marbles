@@ -1,24 +1,23 @@
 import { useEffect, useRef } from 'react';
-import { useDisplay, type Display } from '../state/display';
+import { useDisplay, type Display, type Video } from '../state/display';
+
+type Stage = Exclude<Display, Video>;
 import { useVault } from '../state/store';
 import { cameraPointer, registerActionHandler, PRIORITY } from '../input';
 import { useDragScroll } from '../hooks/useDragScroll';
-import YouTubePlayer from './preview/YouTubePlayer';
+import { useDragMove } from '../hooks/useDragMove';
 
 // Anything Marbles shows you that is not a teammate's file lands here: pictures
 // from the web, a video, or an email / call waiting for a yes. It opens out of
 // the voice core the same way a result opens out of its agent.
-const heading = (display: Display) => display.kind === 'images' ? display.query
-  : display.kind === 'video' ? display.title || display.query
+const heading = (display: Stage) => display.kind === 'images' ? display.query
   : display.kind === 'email' ? display.subject : display.name || display.number;
-const label = (display: Display) => display.kind === 'images' ? `Web / ${display.images.length} pictures`
-  : display.kind === 'video' ? `YouTube${display.channel ? ` / ${display.channel}` : ''}`
+const label = (display: Stage) => display.kind === 'images' ? `Web / ${display.images.length} pictures`
   : display.kind === 'email' ? 'Email / draft' : 'Call';
 
-function Glyph({ kind }: { kind: Display['kind'] }) {
+function Glyph({ kind }: { kind: Stage['kind'] }) {
   return <svg className="media-glyph" viewBox="0 0 40 40" width="38" height="38" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {kind === 'images' ? <><rect x="5" y="8" width="30" height="24" rx="2" /><circle cx="14" cy="16" r="2.6" /><path d="m7 30 9-10 6 6 4-4 8 8" /></>
-      : kind === 'video' ? <><rect x="5" y="9" width="30" height="22" rx="4" /><path d="m17 15 8 5-8 5Z" /></>
       : kind === 'email' ? <><rect x="5" y="9" width="30" height="22" rx="2" /><path d="m6 11 14 11 14-11" /></>
       : <path d="M13 6h-4a2 2 0 0 0-2 2c0 14 11 25 25 25a2 2 0 0 0 2-2v-4l-7-3-3 3c-4-2-7-5-9-9l3-3Z" />}
   </svg>;
@@ -33,6 +32,9 @@ export default function MediaStage() {
   const body = useRef<HTMLDivElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   useDragScroll(body);
+  const screen = useRef<HTMLElement>(null);
+  const bar = useRef<HTMLElement>(null);
+  useDragMove(screen, bar, display);
 
   // Opening a teammate or a file takes the stage back.
   useEffect(() => { if (selectedId) useDisplay.getState().close(); }, [selectedId]);
@@ -62,8 +64,8 @@ export default function MediaStage() {
   const shown = display.kind === 'images' && index != null ? display.images[index] : null;
   const settled = status === 'done';
   return <div className={`media-stage ${display.kind}${shown ? ' focused' : ''}`}>
-    <section className="presentation-screen media-screen" role="dialog" aria-label={`${label(display)}: ${heading(display)}`}>
-      <header className="presentation-header">
+    <section className="presentation-screen media-screen" ref={screen} role="dialog" aria-label={`${label(display)}: ${heading(display)}`}>
+      <header className="presentation-header window-grip" ref={bar}>
         <Glyph kind={display.kind} />
         <div className="presentation-title">
           <p className="presentation-sender">{label(display)}</p>
@@ -82,7 +84,6 @@ export default function MediaStage() {
           <img src={shown.url} alt={shown.title} referrerPolicy="no-referrer" draggable={false} />
           <figcaption>{shown.title}{shown.credit && <span>{shown.credit}</span>}</figcaption>
         </figure>}
-        {display.kind === 'video' && <div className="media-video"><div className="preview-frame"><YouTubePlayer key={display.videoId} id={display.videoId} autoplay /></div></div>}
         {display.kind === 'email' && <div className="media-letter">
           <dl><dt>To</dt><dd>{display.name && <strong>{display.name}</strong>}{display.to}</dd></dl>
           <p>{display.body}</p>

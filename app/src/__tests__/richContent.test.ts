@@ -20,7 +20,11 @@ describe('spoken answers to what is on screen', () => {
   it('steps through pictures and closes anything', () => {
     expect(mediaCommand('next', images)?.action).toBe('next');
     expect(mediaCommand('Go back', images)?.action).toBe('previous');
-    expect(mediaCommand('close the video', { kind: 'video', query: '', videoId: 'x', title: '', channel: '' })?.action).toBe('close');
+    expect(mediaCommand('close the video', images, true)?.action).toBe('closeVideo');
+    expect(mediaCommand('close', images, true)?.action).toBe('close');
+    expect(mediaCommand('close', null, true)?.action).toBe('closeVideo');
+    expect(mediaCommand('make it bigger', null, true)?.action).toBe('bigger');
+    expect(mediaCommand('close', null, false)).toBeNull();
   });
 });
 
@@ -41,4 +45,9 @@ it('turns LaTeX source into readable structure and keeps the maths', () => {
   const out = texToMarkdown('\\documentclass{article}\\title{Energy}\\begin{document}\\maketitle\\section{Result} % note\nWe find \\textbf{mass} matters.\\begin{equation}E = mc^2\\end{equation}\\begin{itemize}\\item One\\end{itemize}\\end{document}');
   expect(out).toContain('# Energy'); expect(out).toContain('# Result'); expect(out).toContain('**mass**');
   expect(out).toMatch(/\$\$\nE = mc\^2\n\$\$/); expect(out).toContain('- One'); expect(out).not.toContain('note');
+});
+
+it('asks for the next waiting result only when one is waiting', () => {
+  expect(canvasCommand('Next result', [], [], [], 'artifact:t9:a.md')?.select).toBe('artifact:t9:a.md');
+  expect(canvasCommand('Next result', [], [], [], null)).toBeNull();
 });

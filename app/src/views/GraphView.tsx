@@ -1,4 +1,4 @@
-import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawTether } from "./drawHologram";
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawProgressDial, drawQueue, drawTether } from "./drawHologram";
 import { HUD_FONT, voiceSignal } from "../state/hud";
 import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
 import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
@@ -113,6 +113,11 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
   const presentationPhase = usePresentation(s => s.phase);
   const activityAt = useRef(new Map<string, { key: string; at: number }>());
   const stepAt = useRef(new Map<string, { text: string; at: number }>());
+  // Where the user has put things: offsets from each item's assigned place.
+  const moved = useRef(new Map<string, { x: number; y: number }>());
+  const parentOf = useRef(new Map<string, string>());
+  const carry = useRef<{ id: string; sx: number; sy: number; ox: number; oy: number; moving: boolean } | null>(null);
+  const queuedCount = useRef(0);
   const sceneEnergy = useRef(0);
   const sceneLevel = useRef(0);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -324,8 +329,20 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
     return () => el.removeEventListener("wheel", onWheel);
   }, [onWheel]);
 
+  // Put a pinned item at its assigned place plus wherever it has been dragged.
+  // Agents ease to their new home on the same spring that docks them.
+  const place = useCallback((node: any) => {
+    const own = moved.current.get(node.id), parent = moved.current.get(parentOf.current.get(node.id) ?? '');
+    node.homeX = node.baseX + (own?.x ?? 0) + (parent?.x ?? 0);
+    node.homeY = node.baseY + (own?.y ?? 0) + (parent?.y ?? 0);
+    if (!nodeMotions.current.has(node.id)) { node.x = node.fx = node.homeX; node.y = node.fy = node.homeY; }
+  }, []);
+
   const data = useMemo(() => {
     const built = composeGraph(notes, agents, tasks, false, swarms);
+    queuedCount.current = tasks.filter(task => task.status === 'queued').length;
+    // Files and tasks travel with the teammate they belong to.
+    parentOf.current = new Map(built.links.filter(link => String(link.source).startsWith('agent:') || String(link.source).startsWith('swarm:')).map(link => [String(link.target), String(link.source)]));
     const cache = nodeCache.current;
     const liveIds = new Set(built.nodes.map((n) => n.id));
     for (const id of [...cache.keys()]) {
@@ -352,21 +369,18 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         prev.artifactReady = n.artifactReady;
         prev.startedAt = n.startedAt;
         prev.step = n.step;
-        if (n.fx != null) {
-          prev.homeX = n.x;
-          prev.homeY = n.y;
-          if (!nodeMotions.current.has(n.id)) { prev.x = n.x; prev.y = n.y; prev.fx = n.fx; prev.fy = n.fy; }
-        }
+        if (n.fx != null) { prev.baseX = n.x; prev.baseY = n.y; place(prev); }
         return prev; // retain the simulation object and its visual state
       }
-      Object.assign(n, { homeX: n.x, homeY: n.y });
+      Object.assign(n, { baseX: n.x, baseY: n.y });
+      if (n.fx != null) place(n); else Object.assign(n, { homeX: n.x, homeY: n.y });
       cache.set(n.id, n);
       bornAt.current.set(n.id, performance.now());
       return n;
     });
 
     return { nodes, links: built.links };
-  }, [notes, agents, tasks, swarms]);
+  }, [notes, agents, tasks, swarms, place]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -605,6 +619,9 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         panVel.current = { x: 0, y: 0 };
         dragging.current = false;
         downNode.current = pick(e.clientX, e.clientY)?.id ?? null;
+        const held = downNode.current ? moved.current.get(downNode.current) : undefined;
+        carry.current = downNode.current && nodeCache.current.get(downNode.current)?.baseX != null
+          ? { id: downNode.current, sx: e.clientX, sy: e.clientY, ox: held?.x ?? 0, oy: held?.y ?? 0, moving: false } : null;
         if (DEBUG)
           console.debug(`[graph] pointerdown at ${e.clientX.toFixed(0)},${e.clientY.toFixed(0)} node=`, downNode.current);
         ensureViewInit();
@@ -629,7 +646,21 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           // promise: if it is lit, pressing opens that node, and no amount of
           // hand drift reinterprets the gesture as relocating the canvas.
           // Panning is for empty background, where there is nothing to open.
-          if (downNode.current) return;
+          if (downNode.current) {
+            // ...but it can be carried: hold the pinch and move, and the item
+            // (with anything attached to it) goes where the hand goes. A hand
+            // needs a generous threshold, or every pinch would nudge things.
+            const held = carry.current;
+            if (!held) return;
+            const dx = e.clientX - held.sx, dy = e.clientY - held.sy;
+            if (!held.moving && Math.hypot(dx, dy) < clickSlop(DRAG_THRESHOLD) * 2.5) return;
+            held.moving = true;
+            el.style.cursor = "grabbing";
+            moved.current.set(held.id, { x: held.ox + dx / kRef.current, y: held.oy + dy / kRef.current });
+            for (const node of nodeCache.current.values()) if (node.baseX != null && (node.id === held.id || parentOf.current.get(node.id) === held.id)) place(node);
+            requestRedraw();
+            return;
+          }
           // Let a pinch settle before interpreting its small drift as a pan.
           // Follow the last pointer so crossing the threshold starts smoothly.
           if (
@@ -678,8 +709,11 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         dragging.current = false;
         const d = downRef.current;
         const pressed = downNode.current;
+        const carried = carry.current?.moving;
+        carry.current = null;
         downRef.current = null;
         downNode.current = null;
+        if (carried) { if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
         if (wasDrag) {
           // Fling: throw the center with the release velocity; the spring settles it.
           const { x: vx, y: vy } = panVel.current;
@@ -704,6 +738,9 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         // long drag was a pan and already returned above.
         if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > clickSlop(DRAG_THRESHOLD)) return;
         if (DEBUG) console.debug("[graph] click: (background)");
+        // A stray pinch beside a result must not close it: results close on
+        // their own button, Escape or by voice, and then the queue moves on.
+        if (usePresentation.getState().active) return;
         clear();
       }}
       onPointerCancel={() => {
@@ -711,6 +748,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         // the press state without selecting anything and without touching
         // hover: no click was completed, and the pointer has not gone anywhere.
         dragging.current = false;
+        carry.current = null;
         downRef.current = null;
         downNode.current = null;
         lastPtr.current = null;
@@ -740,6 +778,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           ctx.save();
           if (presenting) ctx.globalAlpha = .45;
           drawHolographicSpace(ctx, { time: still ? 0 : time, scale, reduced: still, energy: sceneEnergy.current, level: still ? 0 : sceneLevel.current });
+          if (queuedCount.current > 0) drawQueue(ctx, queuedCount.current, { time, scale, reduced: still });
           for (const node of nodeCache.current.values()) {
             if (node.type !== 'agent' || node.x == null || node.status === 'unavailable') continue;
             if (Math.hypot(node.x - node.homeX, node.y - node.homeY) > 4) continue; // away presenting

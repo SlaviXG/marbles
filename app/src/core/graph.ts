@@ -77,7 +77,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     if (latestSwarm) node.progress = `${node.activity === 'working' ? 'Working' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Team task'}: ${latestSwarm.goal}`;
     if (status === 'running') {
       const live = swarms.find(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ?? (latest && ['running', 'cancelling'].includes(latest.status) ? latest : undefined);
-      const began = live ? Date.parse((live as { createdAt?: string }).createdAt ?? '') : NaN;
+      const began = live ? Date.parse((live as { startedAt?: string; createdAt?: string }).startedAt ?? (live as { createdAt?: string }).createdAt ?? '') : NaN;
       if (Number.isFinite(began)) node.startedAt = began;
       node.step = latestStep(latest && ['running', 'cancelling'].includes(latest.status) ? latest.stdout : '');
     }

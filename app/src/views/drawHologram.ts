@@ -114,6 +114,26 @@ export function drawTether(ctx: CanvasRenderingContext2D, x: number, y: number, 
   ctx.restore();
 }
 
+/** Work waiting for a free agent: small sheets stacked at the centre, with a count. */
+export function drawQueue(ctx: CanvasRenderingContext2D, count: number, motion: { time: number; scale: number; reduced: boolean }) {
+  const shown = Math.min(count, 4), w = 15, h = 19, gap = 5;
+  const bob = motion.reduced ? 0 : Math.sin(motion.time * 1.6) * 1.2;
+  ctx.save(); ctx.translate(-((shown - 1) * (w + gap)) / 2, -34 + bob);
+  for (let i = 0; i < shown; i++) {
+    const pulse = motion.reduced ? .6 : .45 + .35 * Math.sin(motion.time * 2.4 - i * .9);
+    ctx.fillStyle = `oklch(40% .08 215 / ${.4 + pulse * .25})`; ctx.strokeStyle = `oklch(86% .1 208 / ${.5 + pulse * .5})`;
+    ctx.lineWidth = Math.max(.6, 1 / motion.scale); ctx.setLineDash([2.5, 2]); ctx.lineDashOffset = -motion.time * 5;
+    ctx.beginPath(); ctx.roundRect(i * (w + gap) - w / 2, -h / 2, w, h, 2); ctx.fill(); ctx.stroke();
+  }
+  ctx.setLineDash([]); ctx.restore();
+  ctx.save();
+  ctx.font = `500 ${9.5 / motion.scale}px "DIN Alternate", "Bahnschrift", ui-sans-serif, system-ui, sans-serif`;
+  if ('letterSpacing' in ctx) (ctx as any).letterSpacing = `${1.9 / motion.scale}px`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillStyle = 'oklch(84% .11 208)';
+  ctx.fillText(`${count} QUEUED`, 0, 26);
+  ctx.restore();
+}
+
 /** A dial around a working agent: one lap a minute of real elapsed time, with a
  * bright band running ahead of it so it never looks stalled. */
 export function drawProgressDial(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, motion: { time: number; seconds: number; scale: number; reduced: boolean }) {

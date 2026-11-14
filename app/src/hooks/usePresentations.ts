@@ -3,6 +3,7 @@ import { CompletionTracker, resolvePresentation, artifactSelection, PRESENTATION
 import { useAgents } from '../state/agents';
 import { usePresentation } from '../state/presentation';
 import { useVault } from '../state/store';
+import { useDisplay } from '../state/display';
 
 export function usePresentations() {
   const tracker = useRef(new CompletionTracker());
@@ -14,6 +15,7 @@ export function usePresentations() {
   const active = usePresentation(s => s.active);
   const phase = usePresentation(s => s.phase);
   const queue = usePresentation(s => s.queue);
+  const showing = useDisplay(s => !!s.display);
   useEffect(() => {
     const ready = [ ...(tasksLoaded ? tracker.current.observe('task', tasks) : []), ...(swarmsLoaded ? tracker.current.observe('swarm', swarms) : []) ];
     if (ready.length) usePresentation.getState().enqueue(ready);
@@ -24,7 +26,8 @@ export function usePresentations() {
     const selection = resolvePresentation(selectedId, tasks, swarms);
     if (state.phase === 'idle') {
       if (selection) state.begin(selection.item, selection.index);
-      else if (!selectedId && state.queue.length) {
+      // A waiting result never takes the stage from something being looked at.
+      else if (!selectedId && !showing && state.queue.length) {
         const next = state.queue[0];
         const fresh = resolvePresentation(artifactSelection(next), tasks, swarms)?.item ?? next;
         useVault.getState().select(artifactSelection(next));
@@ -36,7 +39,7 @@ export function usePresentations() {
         if (selection.index !== state.index) state.choose(selection.index);
       } else if (selectedId !== artifactSelection(state.active, state.index)) state.dismiss();
     }
-  }, [selectedId, active, phase, queue, tasks, swarms]);
+  }, [selectedId, active, phase, queue, tasks, swarms, showing]);
 
   useEffect(() => {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;

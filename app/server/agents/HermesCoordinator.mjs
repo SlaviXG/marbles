@@ -27,9 +27,30 @@ export class HermesCoordinator {
   }
   async run({ transcript, history = [], selectedId, readOnly = false, statusContext } = {}) {
     let context = await this.context(selectedId);
-    const tools = readOnly ? COORDINATOR_TOOLS.filter(tool => !['delegate_work', 'cancel_work'].includes(tool.name)) : COORDINATOR_TOOLS;
+    const tools = readOnly ? COORDINATOR_TOOLS.filter(tool => !['delegate_work', 'delegate_many', 'cancel_work'].includes(tool.name)) : COORDINATOR_TOOLS;
     const observations = [];
     let receipt, action;
+    const delegate = async (intent, solo = false) => {
+      if (!solo && /\b(swarm|as a team|all (?:the )?agents|everyone|agents? (?:to )?work together)\b/i.test(transcript)) intent.collaboration = 'swarm';
+      const routing = { mode: intent.collaboration, reason: `Hermes plan: ${intent.summary}`, signals: (await routeTask({ goal: transcript })).signals };
+      const prompt = buildVoicePrompt(transcript, intent, { selected: context.selected, inspected: observations, ...context }, history);
+      if (intent.collaboration === 'swarm') {
+        if (!this.swarmService) throw new Error('Swarm service is unavailable.');
+        const swarm = await this.swarmService.start({ goal: prompt, mode: 'swarm', routing });
+        Object.assign(swarm, { source: 'voice', transcript, intent, title: intent.objective });
+        return { swarm, intent };
+      }
+      const metadata = { source: 'voice', transcript, intent, title: intent.objective, routing };
+      // A busy team is not a failure: the work waits its turn.
+      if (this.taskService.startOrQueue) return { task: await this.taskService.startOrQueue(prompt, metadata, intent.agentId), intent };
+      let task;
+      if (intent.agentId !== 'auto' && context.agents.some(agent => agent.id === intent.agentId && agent.status === 'idle')) {
+        try { task = await this.taskService.start(intent.agentId, prompt, metadata); }
+        catch (error) { if (error.code !== 'AGENT_BUSY') throw error; }
+      }
+      task ??= await this.taskService.startIdle(prompt, metadata);
+      return { task, intent };
+    };
     const execute = async (name, input) => {
       if (!tools.some(tool => tool.name === name)) throw new Error('Unsupported coordinator tool.');
       if (name === 'inspect_context') { context = await this.context(selectedId); return { result: redactSecrets(JSON.stringify(context)) }; }
@@ -48,33 +69,30 @@ export class HermesCoordinator {
         if (observations.length > 3) observations.shift();
         if (name !== 'cancel_work') return { result: redactSecrets(JSON.stringify(data)) };
         receipt = { state: 'reply', reply: ['cancelling', 'cancelled'].includes(data.status) ? 'Stop requested.' : `This work is already ${data.status}.` };
+      } else if (name === 'delegate_many') {
+        if (!Array.isArray(input?.tasks) || input.tasks.length < 2 || input.tasks.length > 4) throw new Error('Supply two to four task plans.');
+        const plans = input.tasks.map(validatePlan);
+        const started = [];
+        // One after another: each takes the next free agent, the rest wait in line.
+        for (const intent of plans) started.push(await delegate({ ...intent, collaboration: 'solo' }, true));
+        const tasks = started.map(item => item.task);
+        const queued = tasks.filter(task => task.status === 'queued').length;
+        const count = n => ['No', 'One', 'Two', 'Three', 'Four'][n];
+        receipt = { state: 'assigned', task: tasks[0], tasks, intent: started[0].intent, intents: started.map(item => item.intent),
+          reply: conciseReply(queued === tasks.length ? `${count(tasks.length)} tasks queued until an agent is free.`
+            : queued ? `${count(tasks.length - queued)} started, ${count(queued).toLowerCase()} queued.` : `${count(tasks.length)} tasks under way.`) };
       } else {
-        const intent = validatePlan(input);
-        if (/\b(swarm|as a team|all (?:the )?agents|everyone|agents? (?:to )?work together)\b/i.test(transcript)) intent.collaboration = 'swarm';
-        const routing = { mode: intent.collaboration, reason: `Hermes plan: ${intent.summary}`, signals: (await routeTask({ goal: transcript })).signals };
-        const prompt = buildVoicePrompt(transcript, intent, { selected: context.selected, inspected: observations, ...context }, history);
-        if (intent.collaboration === 'swarm') {
-          if (!this.swarmService) throw new Error('Swarm service is unavailable.');
-          const swarm = await this.swarmService.start({ goal: prompt, mode: 'swarm', routing });
-          Object.assign(swarm, { source: 'voice', transcript, intent, title: intent.objective });
-          receipt = { state: 'swarm', swarm, intent, reply: conciseReply(`${intent.summary} ${swarm.agents.join(' and ')} are on it.`) };
-        } else {
-          const metadata = { source: 'voice', transcript, intent, title: intent.objective, routing };
-          let task;
-          if (intent.agentId !== 'auto' && context.agents.some(agent => agent.id === intent.agentId && agent.status === 'idle')) {
-            try { task = await this.taskService.start(intent.agentId, prompt, metadata); }
-            catch (error) { if (error.code !== 'AGENT_BUSY') throw error; }
-          }
-          task ??= await this.taskService.startIdle(prompt, metadata);
-          receipt = { state: 'assigned', task, intent, reply: task.status === 'failed'
-            ? `${task.agentId} could not start. Open the task for details.` : conciseReply(`${intent.summary} ${task.agentId} is on it.`) };
-        }
+        const done = await delegate(validatePlan(input));
+        receipt = done.swarm
+          ? { state: 'swarm', swarm: done.swarm, intent: done.intent, reply: conciseReply(`${done.intent.summary} ${done.swarm.agents.join(' and ')} are on it.`) }
+          : { state: 'assigned', task: done.task, intent: done.intent, reply: done.task.status === 'failed' ? `${done.task.agentId} could not start. Open the task for details.`
+            : done.task.status === 'queued' ? conciseReply(`Queued. ${done.intent.summary}`) : conciseReply(`${done.intent.summary} ${done.task.agentId} is on it.`) };
       }
       return { result: { state: receipt.state, id: receipt.task?.id ?? receipt.swarm?.id, reply: receipt.reply }, terminal: true };
     };
     const onTool = (name, input) => {
       if (receipt) return Promise.resolve({ result: { state: receipt.state, reply: receipt.reply }, terminal: true });
-      if (!['delegate_work', 'cancel_work', 'respond', ...DISPLAY_TOOL_NAMES].includes(name)) return execute(name, input);
+      if (!['delegate_work', 'delegate_many', 'cancel_work', 'respond', ...DISPLAY_TOOL_NAMES].includes(name)) return execute(name, input);
       // Multiple parallel Hermes callbacks cannot launch duplicate actions.
       action ??= execute(name, input).catch(error => { action = undefined; throw error; });
       return action;

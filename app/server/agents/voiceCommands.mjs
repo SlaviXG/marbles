@@ -61,7 +61,7 @@ export class VoiceCommands {
       if (result.state !== 'ignore') {
         conversation.history = [...conversation.history, { role: 'user', content: transcript.trim().slice(0, 1800) },
           { role: 'assistant', content: JSON.stringify({ reply: result.reply, objective: result.intent?.objective, plan: result.intent?.plan,
-            assumptions: result.intent?.assumptions, taskId: result.task?.id, swarmId: result.swarm?.id,
+            assumptions: result.intent?.assumptions, taskId: result.task?.id, taskIds: result.tasks?.map(task => task.id), objectives: result.intents?.map(intent => intent.objective), swarmId: result.swarm?.id,
             shown: result.display && { kind: result.display.kind, id: result.display.id, query: result.display.query, to: result.display.to ?? result.display.number } }).slice(0, 1800) }].slice(-6);
       }
       return result;
@@ -84,7 +84,7 @@ export class VoiceCommands {
     if (!validId(id) || !validId(conversationId) || !['task', 'swarm'].includes(kind)) throw new Error('Invalid result reference.');
     const record = kind === 'task' ? this.taskService.snapshot().find(task => task.id === id) : this.swarmService?.get(id);
     if (!record || record.source !== 'voice') throw new Error('Voice task not found.');
-    if (['running', 'evaluating', 'cancelling'].includes(record.status)) throw new Error('Task is still running.');
+    if (['queued', 'running', 'evaluating', 'cancelling'].includes(record.status)) throw new Error('Task is still running.');
     const key = `${kind}:${id}`;
     if (!this.summaries.has(key)) {
       const summary = this.coordinator.summarize(record, kind).then(reply => {

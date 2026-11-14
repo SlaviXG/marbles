@@ -99,3 +99,51 @@ it('tells a worker how to build real slides or a workbook only when asked for on
   expect(buildVoicePrompt('Make a presentation about Q3', intent)).toContain('make-office.mjs');
   expect(buildVoicePrompt('Write a summary', { ...intent, objective: 'Write summary.md' })).not.toContain('make-office.mjs');
 });
+
+// ---- the queue and several tasks in one request ----
+import { TaskService } from '../agents/taskService.mjs';
+import { EventEmitter } from 'node:events';
+import os from 'node:os';
+import path from 'node:path';
+
+function queueService() {
+  const children = [];
+  const spawnProcess = () => { const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => true; children.push(child); return child; };
+  const service = new TaskService({ root: path.join(os.tmpdir(), `marbles-queue-${process.pid}-${Math.round(performance.now())}`), spawnProcess,
+    agentDetector: async () => [{ id: 'codex', name: 'Codex', kind: 'cli', command: 'codex', available: true, codingAgent: true }] });
+  return { service, children };
+}
+
+it('queues work when every agent is busy and starts it, in order, as agents free up', async () => {
+  const { service, children } = queueService();
+  const first = await service.startOrQueue('Write the brief', { title: 'Brief' });
+  const second = await service.startOrQueue('Build the budget', { title: 'Budget' });
+  const third = await service.startOrQueue('Draft the deck', { title: 'Deck' });
+  expect([first.status, second.status, third.status]).toEqual(['running', 'queued', 'queued']);
+  expect(service.snapshot().map(task => task.title)).toEqual(['Deck', 'Budget', 'Brief']);
+  children[0].emit('close', 0);
+  await vi.waitFor(() => expect(second.status).toBe('running'));
+  expect(second.agentId).toBe('codex'); expect(second.startedAt).toBeTruthy(); expect(third.status).toBe('queued');
+  expect(service.cancel(third.id).status).toBe('cancelled');
+  children[1].emit('close', 0);
+  await vi.waitFor(() => expect(second.status).toBe('completed'));
+  expect(children).toHaveLength(2); expect(service.pending).toHaveLength(0);
+});
+
+it('delegates every task named in one request, not just the first', async () => {
+  const plan = n => ({ problem: '', objective: `Deliverable ${n}`, summary: `I’ll make deliverable ${n}.`, plan: ['Do it'], assumptions: [], constraints: [], successCriteria: ['Exists'], collaboration: 'solo', agentId: 'auto' });
+  let n = 0;
+  const startOrQueue = vi.fn(async (_prompt, metadata) => ({ id: `task-000${++n}`, agentId: n === 1 ? 'codex' : '', status: n === 1 ? 'running' : 'queued', title: metadata.title, artifacts: [] }));
+  const runner = vi.fn(async (payload, call) => {
+    expect(payload.tools.map(tool => tool.name)).toContain('delegate_many');
+    expect((await call('delegate_many', { tasks: [plan(1), plan(2), plan(3)] })).terminal).toBe(true);
+    return { interrupted: true, runtime: { runtime: 'Hermes' } };
+  });
+  const coordinator = new HermesCoordinator({ taskService: { ...taskService, startOrQueue }, apiKey: 'k', runner });
+  const result = await coordinator.run({ transcript: 'Write the brief, build the budget and draft the deck' });
+  expect(startOrQueue).toHaveBeenCalledTimes(3);
+  expect(result.state).toBe('assigned'); expect(result.tasks.map(task => task.title)).toEqual(['Deliverable 1', 'Deliverable 2', 'Deliverable 3']);
+  expect(result.reply).toBe('One started, two queued.');
+  await expect(new HermesCoordinator({ taskService: { ...taskService, startOrQueue }, apiKey: 'k',
+    runner: async (_payload, call) => { await call('delegate_many', { tasks: [plan(1)] }); } }).run({ transcript: 'x' })).rejects.toThrow();
+});

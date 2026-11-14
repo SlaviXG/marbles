@@ -13,6 +13,7 @@ import AssetPreview from "./preview/AssetPreview";
 import FileGlyph, { fileExtension, fileTitle } from "./FileGlyph";
 import { cameraPointer, registerActionHandler, PRIORITY } from "../input";
 import { useDragScroll } from "../hooks/useDragScroll";
+import { useDragMove } from "../hooks/useDragMove";
 
 const REDUCED_MOTION =
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -188,6 +189,8 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
     return () => window.removeEventListener("keydown", onKey);
   }, [open, clear]);
 
+  const gripRef = useRef<HTMLDivElement>(null);
+  useDragMove(frameRef, gripRef, open);
   const firstRun = useRef(true);
   useLayoutEffect(() => {
     const scrim = scrimRef.current;
@@ -225,6 +228,7 @@ export default function DetailPanel({ disabled = false }: { disabled?: boolean }
         role="region"
         aria-label="Selected item details"
       >
+        <div className="detail-grip window-grip" ref={gripRef} aria-hidden="true"><i /><i /><i /></div>
         <button className="detail-close" aria-label="Close details" onClick={clear}><span aria-hidden="true">×</span></button>
         <div className="immersive-bg" />
         <div className="immersive">
