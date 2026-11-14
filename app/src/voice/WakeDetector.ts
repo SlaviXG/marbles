@@ -7,6 +7,9 @@ export class WakeDetector {
   private audio = new Float32Array(0);
   private total = 0;
   private sinceJob = 0;
+  private lastVoiceEnd = 0;
+  private lastJobVoiceEnd = 0;
+  private lastJobEnd = 0;
   private busy = false;
   private epoch = 0;
   private disposed = false;
@@ -41,12 +44,15 @@ export class WakeDetector {
           console.warn('Local wake inference failed:', detail);
           this.failures++;
           this.retryAt = Date.now() + 1000;
+          this.lastJobEnd = this.lastJobVoiceEnd = 0;
           if (this.failures >= 3) this.error(`Wake recognition failed repeatedly: ${detail}. Use Enable microphone to retry.`);
         }
         else if (data.type === 'result') {
           this.busy = false;
           this.failures = 0;
-          if (data.epoch !== this.epoch || !Number.isFinite(data.start) || data.start < 0 || data.start > data.length / SAMPLE_RATE) return;
+          if (data.epoch !== this.epoch || !Number.isFinite(data.start) || data.start < 0 || data.start > data.length / SAMPLE_RATE) {
+            this.schedule(); return;
+          }
           const absoluteStart = data.end - data.length + Math.floor(Math.max(0, data.start - 0.1) * SAMPLE_RATE);
           const start = absoluteStart - (this.total - this.audio.length);
           // Ignore a window that fell behind the buffer rather than dispatch
@@ -67,12 +73,24 @@ export class WakeDetector {
     joined.set(this.audio); joined.set(audio, this.audio.length);
     this.audio = joined.slice(-SAMPLE_RATE * 8);
     this.total += audio.length; this.sinceJob += audio.length;
+    const rms = Math.sqrt(audio.reduce((sum, v) => sum + v * v, 0) / audio.length);
+    if (rms >= 0.0015) this.lastVoiceEnd = this.total;
+    this.schedule();
+  }
+
+  private schedule() {
+    if (this.disposed || !this.loaded || !this.lastVoiceEnd) return;
     if (this.busy || Date.now() < this.retryAt || this.audio.length < SAMPLE_RATE || this.sinceJob < SAMPLE_RATE * 0.65) return;
-    const recent = this.audio.slice(-SAMPLE_RATE);
-    const rms = Math.sqrt(recent.reduce((sum, v) => sum + v * v, 0) / recent.length);
-    if (rms < 0.004) return;
+    // Finish decoding a word even when the speaker has already gone quiet.
+    // Pin the window to speech, so a slow inference cannot replace it with
+    // seconds of silence. One final padded window is enough until new speech.
+    const end = Math.min(this.total, this.lastVoiceEnd + SAMPLE_RATE * 0.3);
+    if (end <= this.lastJobEnd || (this.lastVoiceEnd <= this.lastJobVoiceEnd && end - this.lastJobEnd < SAMPLE_RATE * 0.2)) return;
+    const bufferStart = this.total - this.audio.length;
+    if (end <= bufferStart) return;
+    const window = this.audio.slice(Math.max(0, end - SAMPLE_RATE * 4 - bufferStart), end - bufferStart);
     this.busy = true; this.sinceJob = 0;
-    const window = this.audio.slice(-SAMPLE_RATE * 4);
+    this.lastJobEnd = end; this.lastJobVoiceEnd = this.lastVoiceEnd;
     // 24 kHz -> 16 kHz area averaging, matching Whisper's input sample rate.
     const samples = new Float32Array(Math.floor(window.length * 2 / 3));
     for (let i = 0; i < samples.length; i++) {
@@ -81,9 +99,13 @@ export class WakeDetector {
       for (let j = Math.floor(start); j < Math.ceil(end); j++) sum += window[j] * (Math.min(end, j + 1) - Math.max(start, j));
       samples[i] = sum / 1.5;
     }
-    this.worker!.postMessage({ type: 'audio', audio: samples, end: this.total, length: window.length, epoch: this.epoch }, [samples.buffer]);
+    this.worker!.postMessage({ type: 'audio', audio: samples, end, length: window.length, epoch: this.epoch }, [samples.buffer]);
   }
 
-  reset() { this.audio = new Float32Array(0); this.sinceJob = 0; this.epoch++; }
+  reset() {
+    this.audio = new Float32Array(0); this.sinceJob = 0;
+    this.lastVoiceEnd = this.lastJobVoiceEnd = this.lastJobEnd = 0;
+    this.epoch++;
+  }
   dispose() { this.disposed = true; this.rejectLoad?.(new Error('Wake startup cancelled.')); this.worker?.terminate(); this.reset(); }
 }

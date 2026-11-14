@@ -93,13 +93,20 @@ are accepted. It prefers the clearest match, then the earliest occurrence,
 so later request words do not displace an exact wake word. This is text
 similarity, not a calibrated acoustic confidence score. Saying the wake
 phrase alone gets a spoken acknowledgement without launching a task.
-Word timestamps preserve
-the command after the wake phrase while dropping preceding room/playback audio.
+Segment timestamps preserve the utterance containing the wake word while dropping
+earlier room/playback audio. Missing timestamps fall back to the audible onset
+instead of rejecting an otherwise recognized wake word. OpenAI removes the wake
+prefix from the final command transcript.
 This is local ASR-based wake recognition rather than a trained keyword-only
 model; latency and accuracy depend on the device, accent, and room noise.
 An isolated inference failure retries with a fresh window after a short backoff.
-Repeated failures show the actual runtime error. Word alignment runs only after
-a possible wake phrase is detected, reducing background inference work.
+Repeated failures show the actual runtime error. Each window is decoded once with
+segment timestamps, avoiding a second word-alignment decode. The detector accepts
+quieter input (RMS 0.0015), applies bounded gain only to the local recognition copy,
+and performs a final check with 300 ms of trailing silence. If speech ends while
+inference is busy, the next window stays pinned to that speech instead of skipping
+it because the room has gone quiet. Quiet input alone still cannot open the cloud
+gate; the transcript must contain the wake word at the configured similarity.
 
 After wake-up, an adaptive sound trigger commits phrases after 700 ms of quiet
 and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
