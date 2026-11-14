@@ -62,6 +62,17 @@ Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
 marble once to enable the microphone, stay quiet briefly for calibration, then
 describe a task. Click it again or use **Turn mic off** to stop.
 
+The marble floats and glows with microphone energy. Live speech and replies
+appear as a conversation on the right, with at most three recent bubbles.
+Finished messages fade after 20 seconds; hovering or focusing the conversation
+pauses expiry. Live transcription and pending handoffs stay visible. Completion
+messages include the agent reply and a link to full task details.
+
+The graph reserves green nodes for key deliverables: Markdown, text documents,
+Word/PDF files, spreadsheets, slides, and images. Up to 18 recent files connect
+directly to their producing agents. Task history and other files stay accessible
+from the agent/task panels; dependency and build directories are omitted.
+
 The marble floats and glows with microphone energy. An adaptive local sound
 trigger learns ambient noise, requires about 140 ms of sound above that floor,
 and uses a lower release threshold to avoid cutting quiet syllables. It keeps
@@ -76,7 +87,7 @@ through the server WebSocket relay to hosted `gpt-live-transcribe`. The permanen
 API key stays in Node. Audio is sent to OpenAI and billed to the configured key;
 the app does not persist audio.
 
-After all final transcripts arrive and you pause for 1.8 seconds, the app sends
+As soon as final transcripts arrive after a speech pause, the app sends
 the complete request to `POST /api/voice/tasks`. OpenAI `gpt-4.1-mini` extracts
 the problem, objective, constraints, and success criteria as structured JSON.
 Greetings/background speech launch nothing. Unclear requests ask a question;

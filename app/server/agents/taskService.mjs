@@ -25,8 +25,12 @@ export async function scanArtifacts(dir, root = workspaceRoot()) {
   const found = [];
   async function walk(current) {
     if (found.length >= 200) return;
-    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    entries.sort((a, b) => Number(a.isDirectory()) - Number(b.isDirectory()) || a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (found.length >= 200) break;
       if (entry.name.startsWith('.')) continue;
+      if (entry.isDirectory() && ['node_modules', 'dist', 'build', 'coverage', 'target', 'vendor', '__pycache__', 'venv'].includes(entry.name)) continue;
       const full = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await walk(full);

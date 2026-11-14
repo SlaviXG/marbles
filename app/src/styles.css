@@ -30,7 +30,7 @@
   color: var(--text);
   pointer-events: none;
 }
-.voice-dock button, .voice-panel { pointer-events: auto; }
+.voice-dock button { pointer-events: auto; }
 .voice-marble-float { margin-top: 12px; animation: marble-float 5s ease-in-out infinite; }
 .voice-marble {
   position: relative;
@@ -101,30 +101,33 @@
 }
 .voice-help[role="alert"] { color: oklch(78% 0.13 30); }
 .voice-off { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.7rem; padding: 8px 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
-.voice-panel { width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
-.voice-toolbar, .voice-footer { display: flex; align-items: center; gap: 8px; }
-.voice-toolbar { margin-bottom: 10px; }
-.voice-label { font-size: 0.78rem; font-weight: 500; margin-right: auto; }
-.voice-toolbar > span, .voice-footer > span { font-size: 0.65rem; color: var(--muted); }
-.voice-panel textarea { display: block; width: 100%; height: 86px; max-height: 20vh; resize: vertical; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 0.92rem; line-height: 1.6; }
-.voice-panel textarea::placeholder { color: var(--muted); }
-.voice-footer { margin-top: 10px; }
-.voice-footer > span { margin-right: auto; }
-.voice-assignment { font-size: 0.78rem; line-height: 1.5; margin: 12px 0 8px; overflow-wrap: anywhere; }
-.voice-panel button { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 0.7rem; padding: 5px 9px; cursor: pointer; }
-.voice-dock button:focus-visible, .voice-panel textarea:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
-.voice-panel button:hover:not(:disabled), .voice-off:hover { color: var(--teal); }
+.voice-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.voice-conversation { position: fixed; top: 110px; right: 24px; z-index: 42; width: min(330px, 28vw); max-height: calc(100dvh - 220px); pointer-events: none; }
+.voice-messages { display: flex; flex-direction: column; gap: 14px; }
+.voice-message { align-self: flex-start; width: fit-content; max-width: 94%; border-radius: 17px 17px 17px 5px; padding: 11px 14px; background: oklch(24% 0.013 245); color: oklch(93% 0.008 240); box-shadow: 0 3px 14px oklch(10% 0.01 240 / 0.16); pointer-events: auto; opacity: 1; transition: opacity 1.2s ease-out; animation: voice-message-in 180ms ease-out; }
+.voice-message.user { align-self: flex-end; border-radius: 17px 17px 5px 17px; background: oklch(49% 0.14 250); }
+.voice-message.fading { opacity: 0; }
+.voice-conversation:hover .voice-message.fading, .voice-conversation:focus-within .voice-message.fading { opacity: 1; }
+.voice-message-label { display: block; font-size: 0.65rem; font-weight: 600; opacity: 0.7; margin-bottom: 4px; }
+.voice-message p { font-size: 0.84rem; line-height: 1.55; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24dvh; overflow-y: auto; }
+.voice-message.pending .voice-message-label::after { content: ' · live'; }
+.voice-message-actions { display: flex; gap: 10px; margin-top: 8px; }
+.voice-message button { color: inherit; font: inherit; font-size: 0.72rem; background: transparent; border: 0; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.voice-dock button:focus-visible, .voice-message button:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+@keyframes voice-message-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .voice-dock button:disabled { opacity: 0.5; cursor: default; }
 @keyframes marble-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
 @keyframes marble-connect { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 @media (max-width: 650px) {
   .voice-dock { bottom: 98px; width: min(380px, calc(100vw - 32px)); }
   .voice-help { font-size: 0.68rem; }
-  .voice-panel textarea { height: 68px; }
+  .voice-conversation { top: 94px; right: 14px; width: min(310px, calc(100vw - 28px)); max-height: calc(100dvh - 330px); }
+  .voice-message p { max-height: 16dvh; }
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-marble-float, .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: none; }
   .voice-sphere, .voice-halo { transition: none; transform: none; }
+  .voice-message { animation: none; transition: none; }
 }
 
 * {

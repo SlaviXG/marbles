@@ -1,5 +1,5 @@
 import type { Note } from "./types";
-import type { AgentInfo, AgentTask } from "./agentTypes";
+import type { AgentInfo, AgentTask, ArtifactInfo } from "./agentTypes";
 
 export interface GNode {
   id: string;
@@ -29,6 +29,14 @@ function childPosition(parent: GNode, index: number, outward: number, distance: 
   return { x: parent.x! + Math.cos(angle) * radius, y: parent.y! + Math.sin(angle) * radius };
 }
 
+// Surface deliverables, not implementation files or dependency/build output.
+export function isCanvasArtifact(artifact: ArtifactInfo) {
+  const parts = artifact.path.replace(/\\/g, '/').split('/');
+  if (parts.some(part => part.startsWith('.') || ['node_modules', 'dist', 'build', 'coverage', 'target', 'vendor', '__pycache__', 'venv'].includes(part))) return false;
+  if (/^(AGENTS|CLAUDE|SKILL)\.md$/i.test(artifact.name)) return false;
+  return /\.(md|markdown|mdx|pdf|doc|docx|odt|rtf|txt|xls|xlsx|ods|csv|tsv|ppt|pptx|odp|png|jpe?g|webp|svg)$/i.test(artifact.name);
+}
+
 export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], tasks: AgentTask[], includeVaultNodes = false) {
   const graph = includeVaultNodes ? buildGraph(notes) : { nodes: [] as GNode[], links: [] as GLink[] };
   const nodes = [...graph.nodes];
@@ -45,21 +53,25 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     agentNodes.set(agent.id, node);
   });
   const childCounts = new Map<string, number>();
-  for (const task of tasks.slice(0, 30).reverse()) {
+  let fileCount = 0;
+  for (const task of tasks.slice(0, 30)) {
     const parent = agentNodes.get(task.agentId);
     if (!parent) continue;
-    const index = childCounts.get(task.agentId) ?? 0;
-    childCounts.set(task.agentId, index + 1);
     const outward = Math.atan2(parent.y!, parent.x!);
-    const point = childPosition(parent, index, outward, 24);
-    const taskNode = pinned(`task:${task.id}`, (task.title ?? task.prompt).slice(0, 48), 'task', point.x, point.y);
-    nodes.push(taskNode);
-    links.push({ source: `agent:${task.agentId}`, target: `task:${task.id}` });
-    for (const [artifactIndex, artifact] of task.artifacts.entries()) {
+    for (const artifact of task.artifacts.filter(isCanvasArtifact)) {
+      if (fileCount >= 18) break;
+      fileCount++;
+      const index = childCounts.get(task.agentId) ?? 0;
+      childCounts.set(task.agentId, index + 1);
       const id = `artifact:${task.id}:${encodeURIComponent(artifact.path)}`;
-      const artifactPoint = childPosition(taskNode, artifactIndex, outward, 19);
-      nodes.push(pinned(id, artifact.name, 'artifact', artifactPoint.x, artifactPoint.y, artifact.type));
-      links.push({ source: `task:${task.id}`, target: id });
+      const artifactPoint = childPosition(parent, index, outward, 36);
+      const format = /\.(md|markdown|mdx)$/i.test(artifact.name) ? 'markdown'
+        : /\.(ppt|pptx|odp)$/i.test(artifact.name) ? 'slides'
+        : /\.(doc|docx|odt|rtf)$/i.test(artifact.name) ? 'docx'
+        : /\.(xls|xlsx|ods|csv|tsv)$/i.test(artifact.name) ? 'spreadsheet'
+        : artifact.type;
+      nodes.push(pinned(id, artifact.name, 'artifact', artifactPoint.x, artifactPoint.y, format));
+      links.push({ source: `agent:${task.agentId}`, target: id });
     }
   }
   return { nodes, links };

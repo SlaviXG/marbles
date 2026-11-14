@@ -4,6 +4,20 @@ import { AudioTurns } from '../voice/audio';
 
 afterEach(() => vi.useRealTimers());
 
+it('hands off on the next event loop after the final transcript with no extra pause', () => {
+  vi.useFakeTimers();
+  const submit = vi.fn();
+  const buffer = new CommandBuffer(submit);
+  buffer.event({ type: 'committed', item_id: 'a' });
+  buffer.event({ type: 'delta', item_id: 'a', delta: 'Write a report' });
+  vi.advanceTimersByTime(100);
+  expect(submit).not.toHaveBeenCalled();
+  buffer.event({ type: 'completed', item_id: 'a', transcript: 'Write a report' });
+  vi.advanceTimersByTime(0);
+  expect(submit).toHaveBeenCalledWith('Write a report');
+  buffer.dispose();
+});
+
 it('waits for a quiet pause and all finals, batches phrases, and deduplicates events', () => {
   vi.useFakeTimers();
   const submit = vi.fn();

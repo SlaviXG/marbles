@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { VoiceSession, type VoiceStatus } from "../voice/VoiceSession";
 import { emptyTranscript, transcriptText, updateTranscript } from "../voice/transcript";
 import { CommandBuffer } from "../voice/CommandBuffer";
-import { refreshAgents, refreshTasks } from "../state/agents";
-import { useVault } from "../state/store";
+import { refreshAgents, refreshTasks, useAgents } from "../state/agents";
+import VoiceConversation from "./VoiceConversation";
+import { upsertMessage, visibleMessages, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 
 export default function VoicePanel() {
   const session = useRef<VoiceSession>();
@@ -11,45 +12,86 @@ export default function VoicePanel() {
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
   const clarificationContext = useRef("");
-  const [assignment, setAssignment] = useState("");
-  const [retry, setRetry] = useState<{ transcript: string; requestId: string }>();
-  const [dispatching, setDispatching] = useState(false);
-  const [assignedTask, setAssignedTask] = useState<string>();
-  const transcriptView = useRef<HTMLTextAreaElement>(null);
+  const [messages, setMessages] = useState<VoiceMessage[]>([]);
+  const [now, setNow] = useState(Date.now());
+  const pausedAt = useRef<number>();
+  const draft = useRef(emptyTranscript());
+  const consumed = useRef(new Set<string>());
+  const draftId = useRef('');
+  const watching = useRef(new Map<string, string>());
+  const tasks = useAgents(state => state.tasks);
   const [status, setStatus] = useState<VoiceStatus>("idle");
   const [detail, setDetail] = useState("Enable your mic, then describe a task. OpenAI turns your words into a prompt for an idle agent.");
-  const [segments, setSegments] = useState(emptyTranscript);
   const [level, setLevel] = useState(0);
-  const [copied, setCopied] = useState(false);
   const active = ["armed", "loading", "listening", "stopping"].includes(status);
-  const transcript = transcriptText(segments);
   const caption = status === "armed" ? "Speak when ready" : status === "listening" ? "Listening to you"
     : status === "loading" ? "Connecting…" : status === "stopping" ? "Finishing…"
     : status === "error" ? "Try again" : "Tap to speak";
-  const showTranscript = Boolean(transcript) || Boolean(assignment) || status === "listening" || status === "error";
+
 
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); };
   }, []);
   useEffect(() => {
-    const view = transcriptView.current;
-    if (active && view) view.scrollTop = view.scrollHeight;
-  }, [transcript, active]);
+    const timer = window.setInterval(() => {
+      if (pausedAt.current != null) return;
+      const time = Date.now(); setNow(time);
+      setMessages(current => visibleMessages(current, time));
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    for (const task of tasks) {
+      if (!watching.current.has(task.id) || task.status === 'running') continue;
+      watching.current.delete(task.id);
+      const text = task.status === 'failed' ? `I couldn’t finish: ${task.title ?? 'the task'}. Open the task for details.`
+        : task.stdout.trim().slice(-900) || `Finished: ${task.title ?? 'your task'}.${task.artifacts.length ? ` ${task.artifacts.length} files ready.` : ''}`;
+      message({ id: `result:${task.id}`, role: 'assistant', label: task.agentId, text, taskId: task.id });
+    }
+  }, [tasks]);
+
+  function message(item: Omit<VoiceMessage, 'expiresAt'>) {
+    const time = Date.now(); setNow(time);
+    setMessages(current => upsertMessage(current, item, time));
+  }
+  function pause() { pausedAt.current ??= Date.now(); }
+  function resume() {
+    if (pausedAt.current == null) return;
+    const elapsed = Date.now() - pausedAt.current;
+    setMessages(current => current.map(item => ({ ...item, expiresAt: item.expiresAt + elapsed })));
+    pausedAt.current = undefined;
+  }
 
   function start() {
     commands.current?.dispose();
     session.current?.dispose();
-    setSegments(emptyTranscript());
-    setCopied(false);
-    commands.current = new CommandBuffer((text) => enqueue({
-      transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${text}` : text,
-      requestId: crypto.randomUUID(),
-    }));
+    draft.current = emptyTranscript();
+    consumed.current.clear();
+    draftId.current = crypto.randomUUID();
+    commands.current = new CommandBuffer(text => {
+      message({ id: draftId.current, role: 'user', text });
+      for (const id of Object.keys(draft.current.items)) consumed.current.add(id);
+      draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
+      enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${text}` : text,
+        requestId: crypto.randomUUID() });
+    });
     const next = new VoiceSession({
-      status: (state, message) => { setStatus(state); setDetail(message ?? ""); },
+      status: (state, detail) => {
+        setStatus(state); setDetail(detail ?? "");
+        if (state === 'error') {
+          const text = transcriptText(draft.current);
+          if (text) message({ id: draftId.current, role: 'user', text });
+          message({ id: 'microphone-error', role: 'assistant', text: detail ?? 'Microphone error.' });
+        }
+      },
       transcript: (event) => {
-        setSegments((current) => updateTranscript(current, event));
+        if (event.item_id && !consumed.current.has(event.item_id)) {
+          draft.current = updateTranscript(draft.current, event);
+          const text = transcriptText(draft.current);
+          if (text) message({ id: draftId.current, role: 'user', text, pending: true });
+        }
         commands.current?.event(event);
       },
       activity: (energy, speaking) => { setLevel(energy); commands.current?.activity(speaking); },
@@ -58,11 +100,12 @@ export default function VoicePanel() {
     void next.start();
   }
 
-  function enqueue(request: { transcript: string; requestId: string }) {
+  function enqueue(request: VoiceRequest) {
     requestQueue.current = requestQueue.current.then(async () => {
       if (!mounted.current) return;
-      setDispatching(true); setRetry(undefined); setAssignedTask(undefined);
-      setAssignment("Understanding your task and finding an idle agent…");
+      const id = `reply:${request.requestId}`;
+      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', text, ...extra });
+      reply('Finding the right agent…', { pending: true });
       try {
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -73,46 +116,26 @@ export default function VoicePanel() {
         if (!mounted.current) return;
         if (data.state === 'assigned') {
           clarificationContext.current = '';
-          setAssignment(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `${data.task.agentId}: ${data.intent.objective}`);
-          setAssignedTask(data.task.id);
+          watching.current.set(data.task.id, data.intent.objective);
+          reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
           await Promise.all([refreshAgents(), refreshTasks()]);
         } else if (data.state === 'clarify') {
           clarificationContext.current = request.transcript;
-          setAssignment(data.intent.clarification);
+          reply(data.intent.clarification);
         }
-        else setAssignment('No task detected. Describe what you want an agent to do.');
+        else reply('What would you like me to do?');
       } catch (error) {
         if (!mounted.current) return;
-        setAssignment(error instanceof Error ? error.message : 'Could not delegate the task.');
-        setRetry(request);
-      } finally { if (mounted.current) setDispatching(false); }
+        reply(error instanceof Error ? error.message : 'Could not delegate the task.', { retry: request });
+      }
     });
   }
 
-  async function copy() {
-    try { await navigator.clipboard.writeText(transcript); setCopied(true); }
-    catch { setDetail("Copy was blocked. Select the transcript and copy it manually."); }
-  }
-
   return (
+    <>
+    <VoiceConversation messages={messages} now={now} pause={pause} resume={resume} retry={enqueue} />
     <section className={`voice-dock ${status}`} aria-label="Voice transcription"
       style={{ "--voice-level": level } as CSSProperties}>
-      {showTranscript && <div className="voice-panel">
-        <div className="voice-toolbar">
-          <label className="voice-label" htmlFor="voice-transcript">Live transcript</label>
-          <span>OpenAI</span>
-        </div>
-        <textarea ref={transcriptView} id="voice-transcript" readOnly value={transcript}
-          placeholder="Your words will appear here…" />
-        <div className="voice-footer">
-          <span>Voice → idle agent</span>
-          <button type="button" disabled={!transcript} onClick={copy}>{copied ? "Copied" : "Copy"}</button>
-          <button type="button" disabled={!transcript || active} onClick={() => { setSegments(emptyTranscript()); setCopied(false); }}>Clear</button>
-        </div>
-        {assignment && <p className="voice-assignment" role="status">{assignment}</p>}
-        {retry && <button type="button" disabled={dispatching} onClick={() => enqueue(retry)}>Retry task</button>}
-        {assignedTask && <button type="button" onClick={() => useVault.getState().select(`task:${assignedTask}`)}>View task</button>}
-      </div>}
       <div className="voice-marble-float">
         <button type="button" className="voice-marble" disabled={status === "stopping"}
           aria-label={active ? "Turn off microphone" : "Enable voice detection"}
@@ -128,9 +151,10 @@ export default function VoicePanel() {
         </button>
       </div>
       <div className="voice-caption" role="status">{caption}</div>
-      <p id="voice-detail" className="voice-help" role={status === "error" ? "alert" : undefined}>{detail}</p>
+      <p id="voice-detail" className="voice-sr-only" role={status === "error" ? "alert" : undefined}>{detail}</p>
       {active && <button className="voice-off" type="button" disabled={status === "stopping"}
         onClick={() => session.current?.stop()}>Turn mic off</button>}
     </section>
+    </>
   );
 }

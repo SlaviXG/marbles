@@ -1,7 +1,7 @@
 import { emptyTranscript, transcriptText, updateTranscript } from './transcript';
 import type { TranscriptEvent } from './VoiceSession';
 
-// Merge phrases until all finals have arrived and the user has paused. Never
+// Submit as soon as all finals have arrived and the user has paused. Never
 // dispatch interim text or the same item twice, even with duplicate events.
 export class CommandBuffer {
   private state = emptyTranscript();
@@ -29,7 +29,7 @@ export class CommandBuffer {
       ids.forEach(id => this.consumed.add(id));
       const text = transcriptText({ order: ids, items: Object.fromEntries(ids.map(id => [id, this.state.items[id]])) });
       if (text) this.submit(text);
-    }, 1800);
+    }, 0);
   }
   dispose() { this.disposed = true; clearTimeout(this.timer); }
 }
