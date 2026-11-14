@@ -13,6 +13,7 @@ import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
 import GestureWidget from "./views/GestureWidget";
 import MediaStage from "./views/MediaStage";
+import VideoWindow from "./views/VideoWindow";
 import { useDisplay } from "./state/display";
 import { REDUCED_MOTION, useHud } from "./state/hud";
 
@@ -69,6 +70,7 @@ export default function App() {
     <DetailPanel disabled={presenting} />
     <PresentationStage />
     <MediaStage />
+    <VideoWindow />
     <GestureWidget />
     <HandCursor />
     {booting && <div className="boot" aria-hidden="true">

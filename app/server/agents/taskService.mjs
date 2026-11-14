@@ -63,6 +63,8 @@ export class TaskService {
     this.tasks = [];
     this.reservations = new Set();
     this.executions = new Map();
+    this.pending = []; // queued tasks, oldest first, waiting for a free agent
+    this.draining = false;
   }
   snapshot() { return this.tasks.slice(-50).reverse(); }
   isBusy(agentId) {
@@ -71,6 +73,11 @@ export class TaskService {
   cancel(id) {
     const task = this.tasks.find(task => task.id === id);
     if (!task) return null;
+    if (task.status === 'queued') {
+      this.pending = this.pending.filter(entry => entry.task !== task);
+      task.status = 'cancelled'; task.updatedAt = new Date().toISOString();
+      return task;
+    }
     if (task.status !== 'running') return task;
     const execution = this.executions.get(id);
     if (!execution) throw new Error('Task process is not available.');
@@ -81,6 +88,54 @@ export class TaskService {
     execution.killTimer.unref?.();
     return task;
   }
+  /** Start now if an agent is free; otherwise keep the work in line and start it
+   * as soon as one is. `agentId` 'auto' takes the first free agent; a named
+   * agent is waited for. Nothing is dropped because everyone was busy. */
+  async startOrQueue(prompt, metadata = {}, agentId = 'auto') {
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 10000) throw new Error('Enter a task under 10,000 characters');
+    const usable = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));
+    if (!usable.length) throw Object.assign(new Error('No supported CLI agents found. Install and sign in to Codex or Claude Code.'), { code: 'NO_AGENTS' });
+    const wanted = agentId !== 'auto' && usable.some(agent => agent.id === agentId) ? agentId : 'auto';
+    // Earlier queued work goes first, so a new request cannot jump the line.
+    if (!this.pending.some(entry => entry.agentId === 'auto' || entry.agentId === wanted)) {
+      try { return wanted === 'auto' ? await this.startIdle(prompt, metadata) : await this.start(wanted, prompt, metadata); }
+      catch (error) { if (error.code !== 'AGENT_BUSY') throw error; }
+    }
+    if (this.pending.length >= 20) throw Object.assign(new Error('The queue is full. Wait for some work to finish.'), { code: 'AGENT_BUSY' });
+    const now = new Date().toISOString();
+    const task = { id: randomUUID(), agentId: wanted === 'auto' ? '' : wanted, prompt: prompt.trim(), status: 'queued', createdAt: now, updatedAt: now, stdout: '', stderr: '', artifacts: [],
+      source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
+    this.tasks.push(task);
+    this.pending.push({ task, agentId: wanted });
+    this.watchQueue();
+    return task;
+  }
+  watchQueue() {
+    if (this.queueTimer || !this.pending.length) return;
+    // Agents are also freed by swarms and by processes ending; a light poll covers all of them.
+    this.queueTimer = setInterval(() => { void this.drain(); }, 1500);
+    this.queueTimer.unref?.();
+  }
+  async drain() {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      const agents = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));
+      for (const entry of [...this.pending]) {
+        const agent = agents.find(item => (entry.agentId === 'auto' || item.id === entry.agentId) && !this.isBusy(item.id));
+        if (!agent) continue;
+        this.pending = this.pending.filter(item => item !== entry);
+        try { await this.start(agent.id, entry.task.prompt, {}, entry.task); }
+        catch (error) {
+          if (error.code === 'AGENT_BUSY') { this.pending.unshift(entry); continue; }
+          entry.task.status = 'failed'; entry.task.stderr = String(error.message).slice(0, 1000); entry.task.updatedAt = new Date().toISOString();
+        }
+      }
+    } finally {
+      this.draining = false;
+      if (!this.pending.length && this.queueTimer) { clearInterval(this.queueTimer); this.queueTimer = null; }
+    }
+  }
   async startIdle(prompt, metadata = {}) {
     const agents = (await this.agentDetector()).filter(agent => agent.available !== false && !taskCapability(agent));
     if (!agents.length) throw Object.assign(new Error('No supported CLI agents found. Install and sign in to Codex or Claude Code.'), { code: 'NO_AGENTS' });
@@ -90,7 +145,7 @@ export class TaskService {
     }
     throw Object.assign(new Error('All agents are busy. Your request is kept here; retry when an agent is idle.'), { code: 'AGENT_BUSY' });
   }
-  async start(agentId, prompt, metadata = {}) {
+  async start(agentId, prompt, metadata = {}, queued) {
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 10000) throw new Error('Enter a task under 10,000 characters');
     const agent = (await this.agentDetector()).find(a => a.id === agentId);
     if (!agent) throw new Error('Agent not found');
@@ -99,11 +154,13 @@ export class TaskService {
     if (this.isBusy(agentId)) throw Object.assign(new Error('Agent is busy'), { code: 'AGENT_BUSY' });
     this.reservations.add(agentId);
     try {
-      const id = randomUUID();
+      const id = queued?.id ?? randomUUID();
       const dir = path.join(this.root, agent.id, id);
       await fs.mkdir(dir, { recursive: true });
-      const task = { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
-      this.tasks.push(task);
+      const task = queued ?? { id, agentId, prompt: prompt.trim(), status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), stdout: '', stderr: '', artifacts: [], source: metadata.source ?? 'text', transcript: metadata.transcript, intent: metadata.intent, title: metadata.title, routing: metadata.routing };
+      // A queued record keeps its identity (and its place on the canvas) when it starts.
+      if (queued) { const now = new Date().toISOString(); Object.assign(queued, { agentId, status: 'running', updatedAt: now, startedAt: now }); }
+      else this.tasks.push(task);
       const launch = launcher(agent, task.prompt, dir);
       let child;
       try { child = this.spawnProcess(launch.command, launch.args, launch.options); }
@@ -117,6 +174,7 @@ export class TaskService {
         task.status = task.status === 'cancelling' ? 'cancelled' : status;
         if (message) task.stderr = tail(task.stderr, message);
         update(); clearInterval(timer); clearTimeout(this.executions.get(id)?.killTimer); this.executions.delete(id);
+        void this.drain();
       };
       child.on('error', e => finish('failed', e.message));
       child.on('close', code => finish(code === 0 ? 'completed' : 'failed'));

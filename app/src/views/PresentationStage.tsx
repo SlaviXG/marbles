@@ -5,6 +5,7 @@ import { useAgents } from '../state/agents';
 import { useVault } from '../state/store';
 import { cameraPointer, registerActionHandler, PRIORITY } from '../input';
 import { useDragScroll } from '../hooks/useDragScroll';
+import { useDragMove } from '../hooks/useDragMove';
 import { SpringValue } from '../motion/SpringValue';
 import { subscribeFrame } from '../motion/ticker';
 import AssetPreview from './preview/AssetPreview';
@@ -21,6 +22,7 @@ export default function PresentationStage() {
   const phase = usePresentation(s => s.phase);
   const index = usePresentation(s => s.index);
   const queueCount = usePresentation(s => s.queue.length);
+  const upNext = usePresentation(s => s.queue[0]);
   const agents = useAgents(s => s.agents);
   const [size, setSize] = useState({ width: innerWidth, height: innerHeight });
   const frame = useRef<HTMLElement>(null);
@@ -41,6 +43,8 @@ export default function PresentationStage() {
   const restoreFocus = useRef<HTMLElement | null>(null);
   const layout = presentationLayout(size.width, size.height);
   useDragScroll(reader);
+  const bar = useRef<HTMLElement>(null);
+  const moved = useDragMove(frame, bar, active?.key ?? null);
   useEffect(() => {
     const resize = () => setSize({ width: innerWidth, height: innerHeight });
     window.addEventListener('resize', resize);
@@ -134,7 +138,8 @@ export default function PresentationStage() {
       }
       // The beam: a hairline core plus a cone of light fanning onto the screen edge.
       const anchor = presentationAnchor;
-      const { left, top, height } = layout.panel;
+      // The beam follows the screen wherever it has been dragged.
+      const left = layout.panel.left + moved.current.x, top = layout.panel.top + moved.current.y, height = layout.panel.height;
       const end = { x: left + 2, y: top + 84 };
       tether.current?.setAttribute('d', `M${anchor.x},${anchor.y} C${anchor.x + 50},${anchor.y} ${end.x - 60},${end.y} ${end.x},${end.y}`);
       cone.current?.setAttribute('points', `${anchor.x},${anchor.y} ${left},${top + 6} ${left},${top + height - 6}`);
@@ -176,13 +181,14 @@ export default function PresentationStage() {
     </svg>
     <section className="presentation-screen" ref={frame} role="region" aria-label={`${sender} presenting ${artifact.name}`} aria-hidden={returning}
       style={{ left: layout.panel.left, top: layout.panel.top, width: layout.panel.width, height: layout.panel.height }}>
-      <header className="presentation-header">
+      <header className="presentation-header window-grip" ref={bar}>
         <FileGlyph name={artifact.name} size={38} />
         <div className="presentation-title">
           <p className="presentation-sender">{sender}<span aria-hidden="true">/</span>{fileExtension(artifact.name)}</p>
           <h2 ref={heading} tabIndex={-1} key={artifact.path} title={artifact.name}>{fileTitle(artifact.name)}</h2>
         </div>
-        {queueCount > 0 && <span className="presentation-queue" role="status" aria-label={`${queueCount} more ${queueCount === 1 ? 'result' : 'results'} waiting`}>+{queueCount}</span>}
+        {upNext && <button className="presentation-next" disabled={returning} title={upNext.title}
+          aria-label={`Show the next result: ${upNext.title}. ${queueCount} waiting.`} onClick={() => useVault.getState().select(artifactSelection(upNext))}>Next<span aria-hidden="true">{queueCount}</span></button>}
         <button className="presentation-close" aria-label="Close preview and return agent" disabled={returning} onClick={() => useVault.getState().clear()}><span aria-hidden="true">×</span></button>
       </header>
       <div className="presentation-reader" ref={reader}><div className="presentation-content" key={artifact.path}><AssetPreview artifact={artifact} /></div></div>

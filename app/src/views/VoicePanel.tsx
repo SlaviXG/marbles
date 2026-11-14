@@ -10,6 +10,8 @@ import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
 import { mediaCommand } from '../voice/mediaCommand';
 import { useDisplay, type Display } from '../state/display';
+import { usePresentation } from '../state/presentation';
+import { artifactSelection } from '../core/presentation';
 import { useVault } from '../state/store';
 import type { AgentTask, SwarmTask } from '../core/agentTypes';
 import { useHud, voiceSignal } from '../state/hud';
@@ -56,10 +58,10 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   }, []);
   useEffect(() => {
     for (const task of tasks) {
-      if (['running', 'cancelling'].includes(task.status) && task.source === 'voice' && !watching.current.has(task.id)) {
+      if (['queued', 'running', 'cancelling'].includes(task.status) && task.source === 'voice' && !watching.current.has(task.id)) {
         watching.current.set(task.id, task.title ?? 'your task');
       }
-      if (!watching.current.has(task.id) || ['running', 'cancelling'].includes(task.status)) continue;
+      if (!watching.current.has(task.id) || ['queued', 'running', 'cancelling'].includes(task.status)) continue;
       watching.current.delete(task.id);
       void reportResult(task, 'task');
     }
@@ -108,18 +110,21 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
-      const media = mediaCommand(request, useDisplay.getState().display);
+      const media = mediaCommand(request, useDisplay.getState().display, !!useDisplay.getState().video);
       if (media) {
         const view = useDisplay.getState();
         if (media.action === 'confirm') void view.confirm();
         else if (media.action === 'close') view.close();
+        else if (media.action === 'closeVideo') view.closeVideo();
+        else if (media.action === 'bigger' || media.action === 'smaller') view.resizeVideo(media.action === 'bigger');
         else if (media.action === 'grid') view.focus(null);
         else view.step(media.action === 'next' ? 1 : -1);
         if (media.reply) message({ id: `media:${crypto.randomUUID()}`, role: 'assistant', text: media.reply });
         session.current?.rearm();
         return;
       }
-      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms, useAgents.getState().agents.filter(agent => agent.codingAgent));
+      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms, useAgents.getState().agents.filter(agent => agent.codingAgent),
+        usePresentation.getState().queue[0] ? artifactSelection(usePresentation.getState().queue[0]) : null);
       if (local) {
         if (local.close || local.select) useDisplay.getState().close();
         if (local.close) useVault.getState().clear();
@@ -176,7 +181,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         if (!mounted.current) return;
         if (data.state === 'assigned') {
           session.current?.rearm();
-          watching.current.set(data.task.id, data.intent.objective);
+          // One sentence can hold several tasks; follow every one of them.
+          for (const [n, task] of ((data.tasks ?? [data.task]) as AgentTask[]).entries()) watching.current.set(task.id, data.intents?.[n]?.objective ?? data.intent.objective);
           reply(data.reply, { taskId: data.task.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshTasks()]);
         } else if (data.state === 'swarm') {
@@ -188,6 +194,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           const shown = data.display as Display | { kind: 'select'; id: string } | { kind: 'close' };
           if (shown.kind === 'select') { useDisplay.getState().close(); useVault.getState().select(shown.id); }
           else if (shown.kind === 'close') { useDisplay.getState().close(); useVault.getState().clear(); }
+          else if (shown.kind === 'video') useDisplay.getState().show(shown); // a side window: whatever is open stays open
           else { useVault.getState().clear(); useDisplay.getState().show(shown); }
           reply(data.reply);
           session.current?.rearm();

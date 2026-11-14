@@ -19,7 +19,8 @@ export interface AgentTask {
   id: string;
   agentId: string;
   prompt: string;
-  status: 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+  startedAt?: string; // set when a queued task actually starts
   createdAt: string;
   updatedAt: string;
   stdout: string;

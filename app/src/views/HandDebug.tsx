@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { subscribeFrame } from "../motion/ticker";
 import {
   handDebug,
-  LEN_OFF,
   MOVE,
   PALM_OFF,
   UP_OFF,
@@ -68,10 +67,18 @@ export default function HandDebug() {
 
       // The active zone: the part of the frame that maps to the whole screen.
       // Drawn in mirrored space, same as the landmarks below, so the two agree.
-      const zx = params.zoneX0 * W;
-      const zy = params.zoneY0 * H;
-      const zw = (params.zoneX1 - params.zoneX0) * W;
-      const zh = (params.zoneY1 - params.zoneY0) * H;
+      // The live zone when distance compensation is resizing it, else the
+      // configured one.
+      const z = handDebug.zone ?? {
+        x0: params.zoneX0,
+        y0: params.zoneY0,
+        x1: params.zoneX1,
+        y1: params.zoneY1,
+      };
+      const zx = z.x0 * W;
+      const zy = z.y0 * H;
+      const zw = (z.x1 - z.x0) * W;
+      const zh = (z.y1 - z.y0) * H;
       ctx.strokeStyle = "rgba(140, 160, 210, 0.35)";
       ctx.setLineDash([3, 3]);
       ctx.lineWidth = 1;
@@ -123,7 +130,9 @@ export default function HandDebug() {
         const nx = (i: number) => pts[i * 2];
         const ny = (i: number) => pts[i * 2 + 1];
         const d = (a: number, b: number) => Math.hypot(nx(a) - nx(b), ny(a) - ny(b));
-        const pinch = d(4, 8);
+        // Divided by the hand's distance factor, exactly as the pinch is, so
+        // the number shown is the one the thresholds compare against.
+        const pinch = d(4, 8) / (handDebug.factor[h.hand] || 1);
 
         const hot = (live: boolean) => (live ? "rgba(45, 212, 191, 1)" : "rgba(140, 160, 210, 0.5)");
         ctx.lineWidth = 1.2;
@@ -177,12 +186,24 @@ export default function HandDebug() {
         ctx.fillText(`palm ${h.pose.palm.toFixed(2)}`, 22, poseRow);
         ctx.fillStyle = h.pose.up > UP_OFF ? ok : bad;
         ctx.fillText(`up ${h.pose.up.toFixed(2)}`, 78, poseRow);
-        ctx.fillStyle = h.pose.len > LEN_OFF ? ok : bad;
+        // len no longer gates the hand (see palm.ts): shown, never red.
+        ctx.fillStyle = ok;
         ctx.fillText(`len ${h.pose.len.toFixed(2)}`, 124, poseRow);
       }
 
       // What the arbiter is doing about a handover, and while evidence for
       // one is building or draining, how far along it is.
+      // Distance compensation: how much the zone is scaled for the hand's
+      // distance (x1.00 until the reference size has been learned).
+      if (handDebug.zone && handDebug.hands.length > 0) {
+        ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle =
+          Math.abs(handDebug.depth.ratio - 1) > 0.05 ? "rgba(210, 169, 63, 1)" : "rgba(139, 148, 158, 0.9)";
+        ctx.textAlign = "right";
+        ctx.fillText(`zone x${handDebug.depth.ratio.toFixed(2)}`, W - 4, 10);
+        ctx.textAlign = "left";
+      }
+
       if (handDebug.arbiter) {
         ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
         ctx.fillStyle =
