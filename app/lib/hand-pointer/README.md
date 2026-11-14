@@ -287,10 +287,19 @@ of the handover. `cameraPointer` wires them together.
 A wrong switch is worse than a late one, so the rules lean toward staying put.
 With both hands in frame, on every inference result:
 
-1. The other hand's motion must exceed `MOVE`, and must also exceed the
-   driving hand's motion divided by `REST_RATIO`. In words: the other hand is
-   moving, and the driving hand is moving less than 0.6 times as much. Two
-   hands moving alike, or two still hands, change nothing.
+1. The other hand's motion must exceed `MOVE`. And it must beat the driving
+   hand by comparison: each hand is scored as its motion plus its change of
+   speed (how far its motion is above its own average over the last second,
+   `BASE_TAU`), and the other hand's score must exceed the driving hand's
+   divided by `REST_RATIO`. In words: the other hand is moving, and the
+   driving hand is moving less than 0.6 times as much, or the other hand has
+   just sped up and the driving hand has not. Two hands moving alike, two
+   hands speeding up together, or two still hands, change nothing.
+
+   The change of speed is what lets you take the cursor while still drifting
+   the first hand: speeding up the other hand is enough, it does not need to
+   move 1.7 times as fast as a hand you have not quite stopped. It never
+   lifts a hand over `MOVE`, so jitter on a still hand cannot use it.
 2. While that holds, evidence builds up. It is measured in seconds, weighted
    by how far past the bar the other hand is: clearing the bar by `MOVE`
    earns one second per second, more earns faster (up to `GAIN_MAX` times),
@@ -411,7 +420,9 @@ All in `src/handArbiter.ts`.
 | Constant | Default | Meaning |
 | --- | --- | --- |
 | `MOVE` | 0.12 palm lengths | Least motion that counts as pointing |
-| `REST_RATIO` | 0.6 | The driving hand counts as resting while its motion is below this fraction of the other hand's |
+| `REST_RATIO` | 0.6 | The driving hand counts as resting while its score (motion plus change of speed) is below this fraction of the other hand's |
+| `ONSET_WEIGHT` | 1 | How much a hand's change of speed adds to its score. 0 compares motion alone |
+| `BASE_TAU` | 1 s | The averaging time a hand's change of speed is measured against |
 | `EVIDENCE` | 0.08 s | Evidence needed for a handover |
 | `GAIN_MAX` | 2 | Fastest rate evidence can build, in seconds per second |
 | `LEAK` | 1 /s | Rate evidence drains while the condition fails |

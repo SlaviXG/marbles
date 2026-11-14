@@ -86,6 +86,8 @@ export {
   MOTION_TAU,
   MAX_GAP,
   MOVE,
+  ONSET_WEIGHT,
+  BASE_TAU,
   REST_RATIO,
   GAIN_MAX,
   EVIDENCE,

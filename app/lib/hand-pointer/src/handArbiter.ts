@@ -58,6 +58,9 @@ const PALM_TAU = 0.5;
 const REVERSAL_CANCEL = 0.5;
 // ...and both are real jumps, not jitter (over this many palm lengths).
 const REVERSAL_MIN = 0.15;
+// The hand's own recent motion, for its change of speed (see onset): a slow
+// average of `value`, over about this long (s).
+export const BASE_TAU = 1;
 
 const WRIST = 0;
 const MIDDLE_MCP = 9;
@@ -77,6 +80,13 @@ export class MotionTracker {
   // This frame looks like a there-and-back glitch: the tracker put the hand
   // somewhere else for one frame and then back. See update().
   reversal = false;
+  // How much faster the hand is moving now than it has been lately: `value`
+  // above its own slow average, never negative. A hand that speeds up reads
+  // high here at once; one moving at a steady pace reads near zero, however
+  // fast. This is what lets a hand that starts moving take the cursor from
+  // one that is still drifting along (see HandArbiter).
+  onset = 0;
+  private base = 0;
 
   private lastT = NaN;
   private lagX = 0;
@@ -107,6 +117,8 @@ export class MotionTracker {
       this.palmS = palmOk ? palm : NaN;
       this.value = 0;
       this.reversal = false;
+      this.onset = 0;
+      this.base = 0;
       return 0;
     }
     if (palmOk) {
@@ -138,6 +150,10 @@ export class MotionTracker {
     // Measured BEFORE the lag moves, so the reading includes this step whole.
     this.value = unit > 0 ? Math.hypot(x - this.lagX, y - this.lagY) / unit : 0;
 
+    // Change of speed: this reading against the hand's own recent average.
+    this.onset = Math.max(0, this.value - this.base);
+    this.base += (this.value - this.base) * (1 - Math.exp(-dt / BASE_TAU));
+
     this.lagWasX = this.lagX;
     this.lagWasY = this.lagY;
     const a = 1 - Math.exp(-dt / MOTION_TAU);
@@ -157,6 +173,8 @@ export class MotionTracker {
     this.stepX = this.stepY = 0;
     this.value = 0;
     this.reversal = false;
+    this.onset = 0;
+    this.base = 0;
   }
 }
 
@@ -168,6 +186,14 @@ export class MotionTracker {
 // The least motion that counts as pointing. A deliberate move reads 0.3 or
 // more; a hand held still reads a few hundredths.
 export const MOVE = 0.12;
+// How much a hand's change of speed (MotionTracker.onset) adds to its motion
+// when the two hands are compared. With it, a hand that starts moving beats a
+// driving hand that is still drifting along at a steady pace, even one moving
+// as fast: what the user does to take the cursor is speed the other hand UP.
+// Both hands get the same treatment, so two hands speeding up together still
+// change nothing. It never helps a hand over the MOVE bar: that is judged on
+// motion alone, so jitter on a still hand cannot use it.
+export const ONSET_WEIGHT = 1;
 // The driving hand is "still by comparison" while its motion is below this
 // fraction of the other hand's. A hand held in the air sways, and the further
 // the other hand moves the less that sway should count; without the ratio a
@@ -230,6 +256,8 @@ export class HandArbiter {
   //   (omit a hand that is not).
   // reversal: MotionTracker.reversal for the same hands.
   // locked: the driving hand is pinching; never switch under it.
+  // onset: MotionTracker.onset for the same hands (optional; omitted counts
+  //   as no change of speed, which is the plain motion comparison).
   // preferred: the hand the user nominated. Used when there is nothing to go
   //   on (both hands appear together), and obeyed at once when it changes.
   // Returns the hand that should drive this frame, or null if none is in
@@ -241,6 +269,7 @@ export class HandArbiter {
     locked: boolean,
     preferred: Side,
     tSec: number,
+    onset: Partial<Record<Side, number>> = {},
   ): Side | null {
     const hasL = motion.L !== undefined;
     const hasR = motion.R !== undefined;
@@ -291,10 +320,13 @@ export class HandArbiter {
     const other: Side = this.driver === "L" ? "R" : "L";
     const theirs = motion[other]!;
     const bar = MOVE * (tSec < this.boostUntil ? 2 : 1);
-    // What the other hand has to beat: the bar, and the driving hand's own
-    // motion scaled up, so that it is the driver that is still by comparison.
-    const need = Math.max(bar, motion[this.driver]! / REST_RATIO);
-    const ex = theirs - need;
+    // What the other hand has to beat: the bar, on its motion alone; and the
+    // driving hand, with each hand scored as its motion plus its change of
+    // speed, so the driver must be still BY COMPARISON. A driver drifting at
+    // a steady pace scores its motion; a hand that has just sped up scores
+    // more than its motion, and takes the cursor even from a moving driver.
+    const score = (h: Side) => motion[h]! + ONSET_WEIGHT * (onset[h] ?? 0);
+    const ex = Math.min(theirs - bar, score(other) - score(this.driver) / REST_RATIO);
     if (locked) {
       this.e = 0;
       this.n = 0;

@@ -580,6 +580,7 @@ class CameraPointer {
     // pinches must not read as a hand that is pointing and take the cursor.
     const motion: Partial<Record<"L" | "R", number>> = {};
     const reversal: Partial<Record<"L" | "R", boolean>> = {};
+    const onset: Partial<Record<"L" | "R", number>> = {};
     // Thumb tip to index tip distance in normalized space: what the pinch
     // thresholds on.
     const gap: Partial<Record<"L" | "R", number>> = {};
@@ -595,6 +596,7 @@ class CameraPointer {
           t,
         );
         reversal[side] = tracker.reversal;
+        onset[side] = tracker.onset;
         // Distance scaling for this hand's thresholds. Every threshold below
         // is a physical size or speed expressed in frame units, and the image
         // shrinks both the hand and its gaps with distance by the same factor,
@@ -705,7 +707,7 @@ class CameraPointer {
     // one, and that must not stop it taking the cursor.
     const bothPinching = this.pinch.L && this.pinch.R;
     const pick = p.autoHand
-      ? this.arbiter.update(motion, reversal, pointerTarget.pinching || bothPinching, want, t)
+      ? this.arbiter.update(motion, reversal, pointerTarget.pinching || bothPinching, want, t, onset)
       : want;
     handDebug.arbiter = p.autoHand ? this.arbiter.why : "";
     handDebug.evidence = p.autoHand ? this.arbiter.evidence : 0;
@@ -861,6 +863,7 @@ class CameraPointer {
         handScale: this.depth.scale,
         zoneRatio: handDebug.depth.ratio,
         factor: { ...handDebug.factor },
+        onset,
       });
     }
 
