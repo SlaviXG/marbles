@@ -1,9 +1,15 @@
+import { drawHolographicAgent, drawHolographicSpace, drawLockOn, drawTether } from "./drawHologram";
+import { HUD_FONT, voiceSignal } from "../state/hud";
+import { usePresentation, registerPresentationScene, presentationAnchor } from "../state/presentation";
+import { presentationLayout, PRESENTATION_FOLD_MS } from "../core/presentation";
+import { drawAsset } from "./drawAsset";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide } from "d3-force-3d";
 import { useVault } from "../state/store";
 import { useAgents } from "../state/agents";
 import { composeGraph, type GNode } from "../core/graph";
+import { ZOOM_MAX, fieldOf, minZoom } from "../core/field";
 import { springProgress, springForSettleMs, LAYOUT, type SpringToken } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
@@ -16,6 +22,22 @@ import {
   type Action,
   type MagnetTarget,
 } from "../input";
+
+function agentStatusLabel(node: GNode) {
+  const state = usePresentation.getState();
+  if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning to team' : 'Presenting result';
+  return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Not available' : node.activity === 'done' ? 'Ready to review' : node.activity === 'failed' ? 'Needs attention' : 'Ready to help';
+}
+
+// The short status word projected under each teammate.
+function hudStatus(node: GNode) {
+  const state = usePresentation.getState();
+  if (state.active?.leadAgentId && node.id === `agent:${state.active.leadAgentId}`) return state.phase === 'returning' ? 'Returning' : 'Presenting';
+  return node.status === 'running' ? 'Working' : node.status === 'unavailable' ? 'Offline' : node.activity === 'done' ? 'Result ready' : node.activity === 'failed' ? 'Needs attention' : 'Standing by';
+}
+
+// The scene sits a little above centre, leaving the floor to the voice core.
+const SCENE_Y = 34;
 
 // Premium entrance: critically damped, no overshoot (matches the marble feel).
 const APPEAR: SpringToken = "calm";
@@ -32,12 +54,12 @@ const COLORS: Record<GNode["type"], string> = {
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 15, swarm: 12, post: 7 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 24, task: 10, artifact: 15, swarm: 20, post: 7 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 9, swarm: 8, post: 3 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 20, task: 6, artifact: 9, swarm: 14, post: 3 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -68,7 +90,7 @@ const HOVER_RING_MS = 300;
 const REDUCED_MOTION =
   typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export default function GraphView() {
+export default function GraphView({ ambientMotion = true }: { ambientMotion?: boolean }) {
   const notes = useVault((s) => s.notes);
   const agents = useAgents((s) => s.agents);
   const tasks = useAgents((s) => s.tasks);
@@ -86,7 +108,13 @@ export default function GraphView() {
   const nodeCache = useRef(new Map<string, any>());
   // When each node first appeared, for the fade/grow-in animation.
   const bornAt = useRef(new Map<string, number>());
-  const [size, setSize] = useState({ w: 800, h: 600 });
+  const nodeMotions = useRef(new Map<string, { x: SpringValue; y: SpringValue }>());
+  const presentation = usePresentation(s => s.active);
+  const presentationPhase = usePresentation(s => s.phase);
+  const activityAt = useRef(new Map<string, { key: string; at: number }>());
+  const sceneEnergy = useRef(0);
+  const sceneLevel = useRef(0);
+  const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   const [hovered, setHovered] = useState<string | null>(null);
 
   // Spring-animated selection/hover rings, advanced by the one shared ticker.
@@ -147,17 +175,24 @@ export default function GraphView() {
     if (!fg || !el || camInit.current) return;
     // The pinned agent ring is centered on the origin. Frame it before the
     // first interaction, including when discovery has not returned yet.
-    const zoom = Math.min(2.5, Math.max(1, Math.min(el.clientWidth / 320, el.clientHeight / 260)));
+    const zoom = Math.min(1.25, Math.max(.5, Math.min(el.clientWidth / 1100, (el.clientHeight - 280) / 600)));
     centerX.current.jump(0);
-    centerY.current.jump(0);
+    centerY.current.jump(SCENE_Y);
     fg.zoom(zoom);
-    fg.centerAt(0, 0);
+    fg.centerAt(0, SCENE_Y);
     kRef.current = zoom;
     zoomDispLog.current = Math.log(kRef.current);
     camInit.current = true;
   }, []);
 
-  useEffect(() => { ensureViewInit(); }, [ensureViewInit]);
+  // Reframe after the canvas receives its real dimensions. This also avoids
+  // clipping teammates when a projector or window changes aspect ratio.
+  useEffect(() => {
+    camInit.current = false;
+    ensureViewInit();
+    fgRef.current?.resumeAnimation?.();
+    fgRef.current?.d3ReheatSimulation?.();
+  }, [size.w, size.h, ensureViewInit]);
 
   const startTicking = useCallback(() => {
     if (ticking.current) return;
@@ -255,8 +290,9 @@ export default function GraphView() {
       // so a long pinch and a single notch both stay smooth.
       zoomTau.current = a.pinch ? ZOOM_TAU_GESTURE : ZOOM_TAU_FINE;
       const sensitivity = a.pinch ? 0.01 : 0.0015;
-      const min = Math.log(0.3);
-      const max = Math.log(12);
+      const field = fieldOf(nodesRef.current);
+      const min = Math.log(minZoom(field, el.clientWidth, el.clientHeight));
+      const max = Math.log(ZOOM_MAX);
       zoomTargetLog.current = Math.min(
         max,
         Math.max(min, zoomTargetLog.current - a.delta * sensitivity),
@@ -295,6 +331,7 @@ export default function GraphView() {
       if (!liveIds.has(id)) {
         cache.delete(id);
         bornAt.current.delete(id);
+        nodeMotions.current.delete(id);
       }
     }
 
@@ -305,14 +342,21 @@ export default function GraphView() {
         prev.type = n.type;
         prev.artifactType = n.artifactType;
         prev.available = n.available;
+        prev.status = n.status;
+        prev.progress = n.progress;
+        prev.activity = n.activity;
+        prev.badge = n.badge;
+        prev.activityKey = n.activityKey;
+        prev.artifactCount = n.artifactCount;
+        prev.artifactReady = n.artifactReady;
         if (n.fx != null) {
-          prev.x = n.x;
-          prev.y = n.y;
-          prev.fx = n.fx;
-          prev.fy = n.fy;
+          prev.homeX = n.x;
+          prev.homeY = n.y;
+          if (!nodeMotions.current.has(n.id)) { prev.x = n.x; prev.y = n.y; prev.fx = n.fx; prev.fy = n.fy; }
         }
         return prev; // retain the simulation object and its visual state
       }
+      Object.assign(n, { homeX: n.x, homeY: n.y });
       cache.set(n.id, n);
       bornAt.current.set(n.id, performance.now());
       return n;
@@ -331,6 +375,50 @@ export default function GraphView() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  useEffect(() => registerPresentationScene(id => {
+    const node = nodeCache.current.get(`agent:${id}`);
+    const fg = fgRef.current;
+    if (!node || !fg || !wrapRef.current) return null;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const point = fg.graph2ScreenCoords(node.x, node.y);
+    return { x: rect.left + point.x, y: rect.top + point.y };
+  }), []);
+
+  useEffect(() => {
+    if (!presentation || !['approaching', 'returning'].includes(presentationPhase)) return;
+    return subscribeFrame(() => requestRedraw());
+  }, [presentation?.key, presentationPhase, requestRedraw]);
+
+  function positionPresentingAgent() {
+    const fg = fgRef.current;
+    const element = wrapRef.current;
+    if (!fg || !element || !camInit.current) return;
+    const current = usePresentation.getState();
+    const rect = element.getBoundingClientRect();
+    const dock = presentationLayout(rect.width, rect.height).dock;
+    const dockWorld = fg.screen2GraphCoords(dock.x, dock.y);
+    const holding = current.active && (current.phase !== 'returning' || performance.now() - current.phaseAt < PRESENTATION_FOLD_MS);
+    for (const node of nodeCache.current.values()) {
+      if (node.type !== 'agent') continue;
+      let motion = nodeMotions.current.get(node.id);
+      if (!motion) {
+        motion = { x: new SpringValue({ zeta: 1, omega: 14 }, node.x), y: new SpringValue({ zeta: 1, omega: 14 }, node.y) };
+        nodeMotions.current.set(node.id, motion);
+      }
+      const presenting = holding && node.id === `agent:${current.active?.leadAgentId}`;
+      const target = presenting ? dockWorld : { x: node.homeX, y: node.homeY };
+      if (REDUCED_MOTION) { motion.x.jump(target.x); motion.y.jump(target.y); }
+      else { motion.x.setTarget(target.x); motion.y.setTarget(target.y); motion.x.update(); motion.y.update(); }
+      node.x = node.fx = motion.x.value;
+      node.y = node.fy = motion.y.value;
+      if (node.id === `agent:${current.active?.leadAgentId}`) {
+        const point = fg.graph2ScreenCoords(node.x, node.y);
+        presentationAnchor.x = rect.left + point.x;
+        presentationAnchor.y = rect.top + point.y;
+      }
+    }
+  }
 
   // Keep the provider's node list current without re-registering it each frame.
   nodesRef.current = data.nodes as any[];
@@ -427,6 +515,16 @@ export default function GraphView() {
     fgRef.current?.d3ReheatSimulation?.();
   }, [nodeIdsKey]);
 
+  useEffect(() => {
+    if (REDUCED_MOTION || !ambientMotion) { requestRedraw(); return; }
+    // The projection is alive: repaint on the shared ticker so rings, comets and
+    // scanlines move at display rate. No React updates per frame, and hidden
+    // pages do not spend time animating.
+    return subscribeFrame(() => {
+      if (!document.hidden) requestRedraw();
+    });
+  }, [requestRedraw, ambientMotion]);
+
   // Drive the rings toward present (1) / absent (0) on hover and selection.
   useEffect(() => {
     if (hovered) ringNode.current.hover = hovered;
@@ -457,17 +555,6 @@ export default function GraphView() {
     }
   }, [selectedId, startTicking, requestRedraw]);
 
-  // While a node is open the graph is fully occluded by the overlay. Pause its
-  // render loop so it stops repainting behind the scrim; otherwise every frame it
-  // cools/ticks forces the full-screen backdrop blur to recompute, which janks
-  // the open + node-to-node transitions. Resume on close.
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
-    if (selectedId) fg.pauseAnimation?.();
-    else fg.resumeAnimation?.();
-  }, [selectedId]);
-
   // Opening is a click, never a dwell. Dwell made resting the cursor a
   // commitment, which is the wrong default for a pointer that is always resting
   // somewhere, and it forced a reopen-blocking timer to stop a node reopening
@@ -495,7 +582,7 @@ export default function GraphView() {
       const dx = n.x - p.x;
       const dy = n.y - p.y;
       const d = dx * dx + dy * dy;
-      const r = HIT[n.type as GNode["type"]];
+      const r = Math.max(HIT[n.type as GNode["type"]], 40 / kRef.current);
       if (d <= r * r && d < bestD) {
         bestD = d;
         best = n;
@@ -540,6 +627,17 @@ export default function GraphView() {
           // hand drift reinterprets the gesture as relocating the canvas.
           // Panning is for empty background, where there is nothing to open.
           if (downNode.current) return;
+          // Let a pinch settle before interpreting its small drift as a pan.
+          // Follow the last pointer so crossing the threshold starts smoothly.
+          if (
+            !dragging.current &&
+            Math.hypot(e.clientX - downRef.current.x, e.clientY - downRef.current.y) <=
+              clickSlop(DRAG_THRESHOLD)
+          ) {
+            lastPtr.current = { x: e.clientX, y: e.clientY };
+            lastMoveT.current = performance.now();
+            return;
+          }
           // Drag = pan, 1:1. Move the center rigidly and track velocity for fling.
           const t = performance.now();
           const dt = Math.max(1, t - lastMoveT.current) / 1000;
@@ -619,12 +717,48 @@ export default function GraphView() {
         if (!dragging.current) setHovered(null);
       }}
     >
+      <div className="canvas-node-access" aria-label="Canvas items" onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()}>
+        {data.nodes.filter(node => node.type === 'agent' || node.type === 'artifact' || node.type === 'swarm').map(node => <button key={node.id} onClick={() => select(node.id)}>{node.label}{node.type === 'agent' ? `: ${agentStatusLabel(node)}` : ''}</button>)}
+      </div>
       <ForceGraph2D
         ref={fgRef}
         width={size.w}
         height={size.h}
         graphData={data}
-        backgroundColor="#0d1117"
+        onRenderFramePre={(ctx, scale) => {
+          positionPresentingAgent();
+          const still = REDUCED_MOTION || !ambientMotion;
+          const time = performance.now() / 1000;
+          // The room answers the voice: rings brighten while you are heard.
+          const wanted = voiceSignal.speaking || voiceSignal.status === 'armed' || voiceSignal.status === 'listening' ? 1 : voiceSignal.status === 'wake' ? .35 : 0;
+          sceneEnergy.current += (wanted - sceneEnergy.current) * (still ? 1 : .06);
+          sceneLevel.current += (voiceSignal.level - sceneLevel.current) * (still ? 1 : .2);
+          const presenting = usePresentation.getState().active;
+          ctx.save();
+          if (presenting) ctx.globalAlpha = .45;
+          drawHolographicSpace(ctx, { time: still ? 0 : time, scale, reduced: still, energy: sceneEnergy.current, level: still ? 0 : sceneLevel.current });
+          for (const node of nodeCache.current.values()) {
+            if (node.type !== 'agent' || node.x == null || node.status === 'unavailable') continue;
+            if (Math.hypot(node.x - node.homeX, node.y - node.homeY) > 4) continue; // away presenting
+            const born = bornAt.current.get(node.id) ?? 0;
+            const appear = REDUCED_MOTION ? 1 : Math.max(0, Math.min(1, (performance.now() - born - 250) / 700));
+            drawTether(ctx, node.x, node.y, Math.max(22, 36 / scale), { time, scale, working: node.status === 'running', reduced: still, alpha: appear });
+          }
+          ctx.restore();
+        }}
+        onEngineTick={() => {
+          const fg = fgRef.current;
+          // The library auto-fits newly discovered nodes at its default zoom.
+          // Keep the gesture camera authoritative, including on small screens.
+          if (fg && camInit.current) {
+            if (Math.abs(fg.zoom() - kRef.current) > 0.001) fg.zoom(kRef.current);
+            const center = fg.centerAt();
+            if (Math.abs(center.x - centerX.current.value) > 0.001 || Math.abs(center.y - centerY.current.value) > 0.001) {
+              fg.centerAt(centerX.current.value, centerY.current.value);
+            }
+          }
+        }}
+        backgroundColor="rgba(0,0,0,0)"
         // Reduced motion: pre-settle off-screen so there's little visible
         // motion, but always keep cooldown ticks so the layout actually runs.
         warmupTicks={REDUCED_MOTION ? 120 : 0}
@@ -633,67 +767,73 @@ export default function GraphView() {
         enableNodeDrag={false}
         enableZoomInteraction={false} // zoom + pan handled by the unified ticker
         enablePanInteraction={false}
-        linkColor={() => "rgba(150,176,224,0.12)"}
+        linkColor={() => "rgba(130,205,255,0.16)"}
         nodeCanvasObject={(node: any, ctx, scale) => {
           const sel = node.id === selectedId;
           const hot = node.id === hovered;
+          const still = REDUCED_MOTION || !ambientMotion;
+          const tNow = performance.now();
+          const now = tNow / 1000;
           // Entrance driven by the closed-form spring (analytic, O(1) per frame).
-          const born = bornAt.current.get(node.id) ?? 0;
-          const elapsed = (performance.now() - born) / 1000;
-          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, elapsed);
+          const age = (tNow - (bornAt.current.get(node.id) ?? 0)) / 1000;
+          const p = REDUCED_MOTION ? 1 : springProgress(APPEAR, age);
           const grow = Math.max(0, p);
-          const baseR = VIS_R[node.type as GNode["type"]] ?? 3;
+          const baseR = node.type === 'agent' ? Math.max(22, 36 / scale) : node.type === 'swarm' ? Math.max(14, 22 / scale) : node.type === 'artifact' ? Math.max(12, 20 / scale) : VIS_R[node.type as GNode["type"]] ?? 3;
           const r = baseR * (0.45 + 0.55 * grow);
-          ctx.globalAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
-          ctx.beginPath();
-          if (node.type === 'artifact') ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 3);
-          else ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-          ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
-          ctx.fill();
-          if (node.type === 'agent') {
-            ctx.strokeStyle = node.available === false ? '#ee8b83' : '#8eacc2';
-            ctx.lineWidth = 1 / scale;
-            ctx.stroke();
-            if (node.available === false) {
-              ctx.fillStyle = '#0d1117';
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r * 0.42, 0, 2 * Math.PI);
-              ctx.fill();
-            }
-          }
-          if (node.type === 'artifact') {
-            ctx.fillStyle = '#0d1117';
-            ctx.font = '5px ui-sans-serif, system-ui, sans-serif';
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', markdown: 'MD', slides: 'PPT', image: 'IMG' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
-          }
-          if (node.badge) {
-            ctx.fillStyle = '#0d1117';
-            ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
-            ctx.fillStyle = '#ffffff'; ctx.font = '3px ui-sans-serif, system-ui, sans-serif';
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(node.badge, node.x, node.y);
-          }
-          // Spring-animated ring: scales + fades in/out with carried velocity.
+          const focus = usePresentation.getState().active;
+          const focusAlpha = focus && node.id !== `agent:${focus.leadAgentId}` ? .28 : 1;
+          const entranceAlpha = (p < 0 ? 0 : p > 1 ? 1 : p) * focusAlpha;
+          // Spring-animated aim: carried velocity, so re-aiming never restarts.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;
           const hovAmt = node.id === ringNode.current.hover ? hoverRing.current.value : 0;
-          const ring = Math.max(selAmt, hovAmt);
-          const entranceAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
-          if (ring > 0.002) {
-            ctx.globalAlpha = Math.min(1, ring) * entranceAlpha;
-            ctx.lineWidth = 2 / scale;
-            ctx.strokeStyle = selAmt >= hovAmt ? "#ffffff" : "#2dd4bf";
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, r + 3 * Math.min(1.2, ring), 0, 2 * Math.PI);
-            ctx.stroke();
-            ctx.globalAlpha = entranceAlpha;
+          const aim = Math.max(selAmt, hovAmt);
+          const aimed = Math.max(0, Math.min(1, aim));
+          ctx.globalAlpha = entranceAlpha;
+          if (node.type === 'agent' || node.type === 'swarm') {
+            let activity = activityAt.current.get(node.id);
+            if (!activity || activity.key !== node.activityKey) {
+              // The first sighting is history, not news: no completion pulse on load.
+              activity = { key: node.activityKey, at: activity ? now : -100 };
+              activityAt.current.set(node.id, activity);
+            }
+            drawHolographicAgent(ctx, node.x, node.y, r, node.id.replace('agent:', ''), {
+              state: node.activity ?? 'waiting', time: now, elapsed: now - activity.at, reduced: still, focus: aimed,
+            });
+          } else if (node.type === 'artifact') {
+            drawAsset(ctx, node.x, node.y, r, node.artifactType, node.artifactReady !== false, { time: now, age, reduced: still, focus: aimed });
+          } else {
+            ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+            ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? 'oklch(65% .01 260)';
+            ctx.fill();
           }
-          if (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || node.type === 'swarm' || sel || hot) {
-            ctx.font = `${node.type === "note" ? 5 : 3.6}px ui-sans-serif, system-ui, sans-serif`;
-            ctx.fillStyle = sel || hot ? "#ffffff" : "#c9d1d9";
+          ctx.globalAlpha = entranceAlpha;
+          if (node.badge) {
+            ctx.fillStyle = 'oklch(16% .03 240)';
+            ctx.fillRect(node.x - 7, node.y - 2.4, 14, 4.8);
+            ctx.fillStyle = 'oklch(90% .05 210)'; ctx.font = `3px ${HUD_FONT}`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(node.badge.toUpperCase(), node.x, node.y);
+          }
+          drawLockOn(ctx, node.x, node.y, node.type === 'artifact' ? r * .95 : r, aim, scale, selAmt >= hovAmt && selAmt > 0);
+          if ((node.type !== 'post' || sel || hot) && (scale > 1.3 || node.type === "note" || node.type === 'agent' || node.type === 'task' || node.type === 'artifact' || node.type === 'swarm' || sel || hot)) {
+            const lead = node.type === 'agent';
+            const spacing = (value: number) => { if ('letterSpacing' in ctx) (ctx as any).letterSpacing = `${value / scale}px`; };
             ctx.textAlign = "center";
             ctx.textBaseline = "top";
-            ctx.fillText(node.label, node.x, node.y + r + 3);
+            ctx.font = `${lead ? 600 : 500} ${(lead ? 13.5 : 11.5) / scale}px ${HUD_FONT}`;
+            spacing(lead ? 2.6 : .5);
+            ctx.fillStyle = sel || hot ? "oklch(97% .02 205)" : lead ? "oklch(91% .03 215)" : "oklch(82% .04 222)";
+            const limit = node.type === 'artifact' ? 18 : 30;
+            const text = node.label.length > limit ? node.label.slice(0, limit - 1) + '…' : node.label;
+            const top = node.y + r * (lead ? 1.5 : node.type === 'artifact' ? 1.42 : 1.3) + 7 / scale;
+            ctx.fillText(lead ? text.toUpperCase() : text, node.x, top);
+            if (lead) {
+              ctx.font = `500 ${9.5 / scale}px ${HUD_FONT}`;
+              spacing(1.9);
+              ctx.fillStyle = node.activity === 'failed' ? 'oklch(82% .13 70)' : node.status === 'running' || node.activity === 'done' ? 'oklch(84% .11 208)' : 'oklch(64% .04 228)';
+              ctx.fillText(hudStatus(node).toUpperCase(), node.x, top + 20 / scale);
+            }
+            spacing(0);
           }
           ctx.globalAlpha = 1;
         }}

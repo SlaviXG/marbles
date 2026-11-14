@@ -127,4 +127,51 @@ describe("CursorDriver", () => {
     expect(r.count("move") + r.count("press")).toBe(0);
     expect(f.active).toBe(false);
   });
+
+  it("holds the dot at the press point while the hand sinks during the hold", () => {
+    const r = rig();
+    r.run(30);
+    r.primary.pinching = true;
+    r.run(2);
+    // The dip arrives AFTER the press registered: the hand sinks 12px.
+    r.primary.y += 12;
+    r.run(40);
+    r.primary.pinching = false;
+    r.run(2);
+    expect(r.count("press")).toBe(1);
+    expect(r.count("release")).toBe(1);
+    expect(r.at.release.x).toBeCloseTo(r.at.press.x, 3);
+    expect(r.at.release.y).toBeCloseTo(r.at.press.y, 3);
+  });
+
+  it("lets a real drag break the hold and end exactly on the hand", () => {
+    const r = rig();
+    r.run(30);
+    r.primary.pinching = true;
+    r.run(2);
+    r.primary.x += 300;
+    r.primary.y += 150;
+    r.run(120);
+    r.primary.pinching = false;
+    r.run(2);
+    expect(r.at.release.x).toBeCloseTo(r.primary.x, 0);
+    expect(r.at.release.y).toBeCloseTo(r.primary.y, 0);
+  });
+
+  it("never jumps when the hold breaks", () => {
+    const r = rig();
+    r.run(30);
+    r.primary.pinching = true;
+    let prev = r.run(2);
+    let px = prev.x;
+    let py = prev.y;
+    // Creep past the hold distance; the dot may speed up, but must not leap.
+    for (let i = 0; i < 60; i++) {
+      r.primary.y += 1;
+      const f = r.run(1);
+      expect(Math.hypot(f.x - px, f.y - py)).toBeLessThan(6);
+      px = f.x;
+      py = f.y;
+    }
+  });
 });

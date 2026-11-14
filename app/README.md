@@ -38,7 +38,7 @@ To use a different knowledge base (Notion, SQLite, an API), implement
 
 Vite + React. `useVaultStream` feeds SSE into a Zustand store. A force-directed
 graph (notes -> sections -> URLs, plus `[[wikilinks]]`) with manual hit-testing.
-Click a node to open a detail panel; click the background to close. `detail.ts`
+Point and pinch (or click) a marble to open its details. Use **Close details**, Escape, or a short press on empty canvas to dismiss. `detail.ts`
 resolves a node id to renderable detail via a small resolver chain.
 
 ## Run
@@ -57,23 +57,46 @@ Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
 ## Voice tasks
 
 Set `OPENAI_API_KEY` alongside `OBSIDIAN_VAULT_DIR` in the repository-root
-`.env`, then restart `npm run dev`. Use Node.js 20+ and open
-`http://localhost:5173` in a browser with AudioWorklet support. The app requests
-microphone permission and loads a local wake model automatically. Say **Marbles**, then describe your task. The marble returns to wake mode after a task
-is assigned or 20 seconds without speech. Use **Turn mic off** to stop; click the
-marble to enable it again. Browsers that require an initial audio gesture show
-**Enable microphone** once before hands-free listening can begin.
+`.env`, then restart `npm run dev`. Use Node.js 22.13+ and open
+`http://localhost:5173` in a browser with AudioWorklet support. The single canvas
+shows holographic agent cores with readable names, availability and the latest
+task state. There are no navigation tabs or typed task composer.
 
-The marble floats and glows with microphone energy. Live speech and replies
-appear as a conversation at the bottom left, with at most three recent bubbles.
-Finished messages fade after 20 seconds; hovering or focusing the conversation
-pauses expiry. Live transcription and pending handoffs stay visible. Completion
-messages include the agent reply and a link to full task details.
+The single canvas is a restrained holographic space: dark blue surfaces, cyan
+agent cores, a quiet projection plane and readable labels. Agent motion follows
+real task state: breathing halos while waiting, rotating segmented rings while
+working, a short completion pulse and checkmark when finished, and amber warning
+glyphs after failure. Reduced motion keeps static glyphs. Positions stay fixed
+for hand targeting, and hidden pages stop requesting animation repaints.
 
-The graph reserves green nodes for key deliverables: Markdown, text documents,
-Word/PDF files, spreadsheets, slides, and images. Up to 18 recent files connect
-directly to their producing agents. Task history and other files stay accessible
-from the agent/task panels; dependency and build directories are omitted.
+Touch the **glowing orb** to enable voice and hand control. The browser requests
+microphone and camera access, and the local wake model loads. Say **Marbles**,
+then describe your task. Voice returns to wake mode after assignment or 20
+seconds without speech. Touch the orb again to pause both microphone and camera.
+There are no navigation tabs, typed composer or persistent button bars.
+Mouse and keyboard remain available as accessibility fallbacks.
+
+A gesture recognition widget stays visible on the canvas. It shows camera
+status before activation, live hand outlines after tracking starts, and feedback
+for pointing, pinching, two-hand zoom and mouse takeover. Camera errors are
+visible here. The orb remains the single start/pause control for voice and hands.
+
+Live speech and replies appear at the bottom left, with at most three recent
+bubbles. They stay until newer messages replace them, rather than fading while
+someone is reading. Completion messages include the agent reply and a link to
+full task details. Agent/task details stay open when the pointer moves away;
+technical activity and diagnostics are expandable.
+
+Completed deliverables appear beside their producing agent as holographic
+file objects. Documents, spreadsheets, slides and images have distinct glyphs;
+multiple files form one stack. Point and pinch a stack to browse its files, then
+select a file to preview it inside the canvas. PDFs render as scrollable pages; images, audio and video use embedded viewers. HTML uses a sandboxed in-place view with relative styles/images. CSV/TSV and XLSX display readable tables, DOCX/ODT display document text, and PPTX/ODP display slide content. Office content previews do not reproduce every native layout or chart. Binary files receive an in-place byte preview rather than opening an external tab.
+Dependency/build output stays out of the canvas. Office previews cap tables at 2,000 rows and bound archive expansion; PDFs render pages as they approach the viewport.
+
+After waking Marbles, **show me report.pdf** opens a matching known filename
+locally, and **close the preview** returns to the canvas. These viewing commands
+never launch another agent. Duplicate filenames require selecting the intended
+file; unknown targets follow the existing task interpretation path.
 
 Standby wake recognition uses quantized `Xenova/whisper-tiny.en` in a browser
 worker via Transformers.js (Apache-2.0 model). A setup script installs the pinned
@@ -114,16 +137,20 @@ and caps continuous turns at 15 seconds. Mono 24 kHz PCM streams to hosted
 is sent to OpenAI. Initial command audio is buffered and paced, with a bounded
 backlog and visible errors if the connection cannot keep up.
 
-Final replies are read with OpenAI `gpt-4o-mini-tts`, Marin voice, through
-`POST /api/voice/speech`. Marin is used for automatic replies and **Read aloud**;
-previously saved browser voice choices are ignored. There is no voice picker.
-**AI voice on/muted** toggles automatic playback;
-**Stop reply** interrupts it; **Read aloud** replays a message. Text stays visible
+Final replies are read through `POST /api/voice/speech`. Set `ELEVENLABS_API_KEY`
+in the repository-root `.env` to use ElevenLabs for spoken replies. The default
+voice is `DODLEQrClDo8wCz460ld` with model `eleven_flash_v2_5`. Optionally set
+`ELEVENLABS_VOICE_ID` and `ELEVENLABS_MODEL_ID` to override them. The server
+streams ElevenLabs MP3 audio as it arrives. If its key is missing or synthesis
+fails before audio starts, the server automatically uses OpenAI
+`gpt-4o-mini-tts` with Marin. Keep `OPENAI_API_KEY` for speech-to-text and this
+fallback. `GET /api/voice/tts-info` reports the configured provider, ElevenLabs
+voice ID and model without returning API keys. The orb remains the single
+start/pause control, and the wake word interrupts playback. Text stays visible
 if audio fails or the browser blocks playback. Code blocks and URLs are simplified
 for speech and long replies are shortened. Up to three replies queue, with three
-clips cached in memory. The voice is AI-generated. Text-to-speech uses the same
-server-side key and incurs OpenAI API usage. This Speech API model is supported
-until its announced January 6, 2027 shutdown; migrate this endpoint before then.
+clips cached in memory. The voice is AI-generated. Text-to-speech incurs usage
+with whichever provider handles the request.
 
 While a reply plays, microphone audio is held out of cloud transcription. The
 local wake detector remains available, so **Marbles** interrupts playback and
@@ -133,25 +160,63 @@ audio object URLs and microphone resources are released. The Vite development
 server exposes the speech handler directly as well, so updating speech playback
 does not require restarting an active agent runner. Neither route exposes the key.
 
-As soon as final transcripts arrive after a speech pause, the app sends
-the complete request to `POST /api/voice/tasks`. OpenAI `gpt-4.1-mini` extracts
-the problem, objective, constraints, and success criteria as structured JSON.
-Greetings/background speech launch nothing. Unclear requests ask a question;
-the next spoken answer includes the original request as clarification context.
-A clear task becomes a prompt containing both the original wording and the
-structured interpretation.
+After speech recognition, the actual **Nous Research Hermes Agent** runtime
+coordinates the work, powered by **Claude Sonnet 5.5** through its native Anthropic
+provider. Set `ANTHROPIC_API_KEY` in the repo-root `.env`. Install Git, uv, and
+Python 3.14, then run `npm run setup:hermes` in `app`. `npm run dev` and
+`npm run server` run setup automatically, reusing the installed runtime. `MARBLES_COORDINATOR_MODEL` optionally
+overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and the
+fallback speech output; the coordinator does not send standby audio to Claude.
 
-The existing TaskService chooses an installed, supported, idle Codex, Claude, or Cursor
-CLI. Desktop-only agents and unsupported launchers are excluded. Reservations
-prevent concurrent voice/manual requests from assigning the same agent. Busy
-agents leave the request available for **Retry task**; retry IDs prevent repeated
-HTTP requests from launching a task twice. **View task** opens the canvas task
-with the transcript, understood goal, exact agent prompt, logs, and artifacts.
-Tasks run in the existing fresh per-task folders under `MARBLES_WORKSPACE_DIR`
-(default `~/marbles-workspace`), using the CLI's existing login. Mention an
-existing project's path if that is the intended target. In-memory task history,
-idle tracking, and retry IDs reset when the server restarts; idle means no active
-Marbles-managed task, not every unrelated CLI session on the machine.
+Describe the outcome in one sentence. The coordinator selects sensible,
+reversible defaults, creates a 1–3 step plan, states key assumptions, and delegates
+immediately. It asks one question only for a real missing source, target, or
+required authorization. Conversation memory preserves follow-ups and clarification
+answers without repeating the original request. Selecting a note, agent, task,
+swarm, or artifact supplies its known context, so “use this spreadsheet” can refer
+to the actual selected file.
+
+Claude can inspect available agents and their latest session logs, inspect managed
+task/swarm output and blackboards, search and read registered vault notes, find
+workspace assets, read text/CSV/code files, and request cancellation of managed
+work when asked. Binary documents return metadata and a verified path for a worker
+to analyze. Asset reads are limited to the task workspace; hidden/credential files,
+traversal, and escaping symlinks are rejected. Log credentials are redacted.
+Unmanaged CLI session logs are labeled separately from Marbles-managed work.
+
+Hermes `run_agent.AIAgent` owns the reasoning, provider calls, retries, and tool
+loop. A small Python stdio adapter registers Marbles tools in Hermes and forwards
+their execution to the existing TaskService/SwarmService. There is no custom
+JavaScript LLM loop. The source is pinned in `server/hermes/runtime.json`; setup
+uses the upstream uv lockfile and Anthropic extra. Its checkout, Python environment,
+and dedicated Hermes profile live under gitignored `app/.hermes-runtime/`; the
+user’s global Hermes profile is untouched. The small app toolset is directly
+visible, with Hermes tool-search deferral disabled for this profile.
+One idle worker is the default; explicit team requests and useful collaborative
+plans use the existing swarm runner. Reservations prevent voice/manual/swarm races.
+Cancellation keeps a worker busy until its process exits. New work uses the
+existing per-task workspace under `MARBLES_WORKSPACE_DIR` (default
+`~/marbles-workspace`); changing an external project still requires a real target
+and the worker's existing access.
+
+After an accepted delegation or final response tool, the adapter requests a
+Hermes interrupt at the tool boundary and acknowledges the actual app receipt.
+A provider/process failure after acceptance cannot duplicate the work. Spoken assignment and completion notices are limited to 25
+words. Full plans and assumptions are under
+**Plan & assumptions** and in task details; raw worker logs stay in task details.
+Completed voice tasks/swarms get one cached Hermes/Claude result summary, with a short
+local fallback if that call fails.
+
+Hermes is bounded to six iterations and a 40-second run budget. The Node bridge
+bounds tool calls to twelve and terminates a stuck runtime after 50 seconds; the
+voice UI allows 55 seconds for the response. At most four voice requests are
+in flight. Summary turns expose no execution tools. Status/log requests remove
+delegation/cancellation tools from both Hermes’s schema and the app dispatcher.
+Request IDs deduplicate retries, including accepted work, and follow-ups serialize
+within each conversation. Memory is kept for up to 50 conversations with six recent
+messages each; requests and result summaries retain up to 200 entries. These are
+in-memory and reset on server restart. CLI execution uses each worker's existing
+login; coordinator and speech API usage are billed separately by their providers.
 
 To enable Cursor tasks, install its headless CLI with
 `curl https://cursor.com/install -fsS | bash` and run `cursor-agent login`.
@@ -174,12 +239,28 @@ Before sharing this server, add authentication and explicit origin configuration
 Keep the frontend on port 5173. The key, audio, and local configuration are never
 committed; transcripts and generated prompts remain in the server task history.
 
+Runtime reference: [Hermes programmatic integration](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/programmatic-integration.md).
+
 API references: [live transcription](https://developers.openai.com/api/docs/guides/realtime-transcription)
-and [structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs).
+and [Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works).
 
 ## Next
 
 Richer parsing (remark AST, frontmatter), search/focus, graph layout polish.
+
+## Floating result presentations
+
+When a live task or swarm completes, its lead agent moves beside a floating
+screen and presents the generated files in place. If files are discovered after
+the completion status, the presentation waits for them. Old completed history
+does not replay on page load.
+
+Use the screen’s arrows or voice to open another known file. Close with the
+corner control, Escape, or **Marbles, close it**. The screen folds back toward
+the agent before the agent glides to its home slot. Files remain on the canvas
+and can be reopened. Simultaneous completions queue and never replace an active
+presentation or an unrelated detail surface being read. Gesture pan and zoom
+apply to the open reader; motion preferences disable animated transitions.
 
 ## Scenarios
 
@@ -206,7 +287,7 @@ returns the cheap solo or swarm decision; `POST /api/tasks/auto` applies it.
 
 ## Swarm mode
 
-Use **Start swarm** in the canvas or ask by voice for agents to work together. A
+Ask by voice for agents to work together, for example: “Marbles, work as a team to prepare this report.” A
 swarm runs 1–4 supported CLI agents in one workspace under
 `MARBLES_WORKSPACE_DIR/swarms/<id>/`. They receive the same prompt, coordinate
 through a server merged blackboard, and place joint deliverables in `shared/`.

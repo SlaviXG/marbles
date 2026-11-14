@@ -41,6 +41,60 @@ export {
 
 export { VirtualPointer } from "./virtualPointer";
 
+export { PinchGuard, nextPinch, PINCH_SETTLE } from "./pinchGuard";
+export { AimPoint, type AimParams } from "./aimPoint";
+
+export {
+  HandRecorder,
+  installHandRecorder,
+  summarize,
+  RECORDING_VERSION,
+  DEFAULT_CAP,
+  type HandRow,
+  type HandRowInput,
+  type RecordedHand,
+  type HandMark,
+  type RecordingDocument,
+  type RecordingMeta,
+  type RecordingSummary,
+  type HandRecorderOptions,
+  type InstallOptions,
+  type HandRecorderConsole,
+} from "./handRecorder";
+
+export {
+  HandArbiter,
+  HandoffOffset,
+  MotionTracker,
+  PinchLatch,
+  palmSpan,
+  MOTION_TAU,
+  MAX_GAP,
+  MOVE,
+  REST_RATIO,
+  GAIN_MAX,
+  EVIDENCE,
+  LEAK,
+  MIN_FRAMES,
+  REFRACTORY,
+  DRIVER_GRACE,
+} from "./handArbiter";
+
+export {
+  handPose,
+  poseUsable,
+  palmFacing,
+  fingersUp,
+  palmLength,
+  PALM_ON,
+  PALM_OFF,
+  UP_ON,
+  UP_OFF,
+  LEN_ON,
+  LEN_OFF,
+  type HandPose,
+} from "./palm";
+
 export {
   dispatchAction,
   registerActionHandler,

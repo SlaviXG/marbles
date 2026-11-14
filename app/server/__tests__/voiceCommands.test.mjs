@@ -3,58 +3,72 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { VoiceCommands, interpretSpeech, buildVoicePrompt, classifyQuery } from '../agents/voiceCommands.mjs';
+import { VoiceCommands } from '../agents/voiceCommands.mjs';
 import { TaskService } from '../agents/taskService.mjs';
 
-const intent = { decision: 'task', collaboration: 'solo', intent: 'task', targetAgents: [], problem: 'Missing greeting', objective: 'Write hello.txt', constraints: ['Use plain text'], successCriteria: ['Contains hello'], clarification: '' };
-const request = { transcript: 'Please write hello.txt with hello.', requestId: 'request-123' };
+const request = { transcript: 'Make a demo plan.', requestId: 'request-123', conversationId: 'conversation-123' };
+const result = { state: 'assigned', task: { id: 'task-123' }, intent: { objective: 'Demo plan', plan: ['Draft and verify the plan'], assumptions: ['One page'] }, reply: 'I’ll draft a one-page plan.' };
+function setup() {
+  const run = vi.fn(async () => result);
+  const summarize = vi.fn(async () => 'The plan is ready in demo.md.');
+  const record = { id: 'task-1234', source: 'voice', status: 'completed', title: 'Demo plan' };
+  const commands = new VoiceCommands({ taskService: { snapshot: () => [record] }, coordinator: { run, summarize } });
+  return { commands, run, summarize, record };
+}
 
-describe('voice task understanding', () => {
-  it('uses server-side structured output and preserves original wording', async () => {
-    const fetchApi = vi.fn(async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify(intent) }] }] }) }));
-    expect(await interpretSpeech(request.transcript, { apiKey: 'secret', fetchApi })).toEqual(intent);
-    const options = fetchApi.mock.calls[0][1];
-    const payload = JSON.parse(options.body);
-    expect(options.headers.Authorization).toBe('Bearer secret');
-    expect(payload.text.format.strict).toBe(true);
-    expect(payload.text.format.schema.properties.collaboration.enum).toEqual(['solo', 'swarm']);
-    expect(payload.text.format.schema.properties.intent.enum).toEqual(['task', 'swarm', 'status', 'log']);
-    expect(payload.text.format.schema.required).toContain('targetAgents');
-    expect(payload.input).toBe(request.transcript);
-    expect(payload.store).toBe(false);
-    expect(buildVoicePrompt(request.transcript, intent)).toContain(request.transcript);
-    expect(buildVoicePrompt(request.transcript, intent)).toContain('Missing greeting');
-  });
-  it.each(['incomplete', 'failed'])('does not execute an %s model result', async status => {
-    await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ status }) }) })).rejects.toThrow('did not finish');
-  });
-  it('rejects malformed output and sanitizes provider failures', async () => {
-    await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: false }) })).rejects.toThrow('OpenAI could not interpret');
-    await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [] }) }) })).rejects.toThrow('rephrase');
-    await expect(interpretSpeech('task', { apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ status: 'completed', output: [{ content: [{ type: 'output_text', text: JSON.stringify({ ...intent, targetAgents: ['unknown'] }) }] }] }) }) })).rejects.toThrow('Invalid');
-  });
-  it('deduplicates simultaneous retries and records voice provenance', async () => {
-    const startIdle = vi.fn(async () => ({ id: 'task-1' }));
-    const interpret = vi.fn(async () => intent);
-    const commands = new VoiceCommands({ taskService: { startIdle }, interpret });
+describe('coordinator memory and receipts', () => {
+  it('deduplicates simultaneous retries and rejects changed requests', async () => {
+    const { commands, run } = setup();
     const results = await Promise.all([commands.dispatch(request), commands.dispatch(request)]);
-    expect(results[0]).toEqual(results[1]);
-    expect(interpret).toHaveBeenCalledOnce();
-    expect(startIdle).toHaveBeenCalledOnce();
-    expect(startIdle.mock.calls[0][1]).toMatchObject({ source: 'voice', transcript: request.transcript, title: intent.objective });
-    expect(() => commands.dispatch({ ...request, transcript: 'different' })).toThrow('different transcript');
+    expect(results[0]).toEqual(results[1]); expect(run).toHaveBeenCalledOnce();
+    expect(() => commands.dispatch({ ...request, transcript: 'Different task' })).toThrow('different request');
+    expect(() => commands.dispatch({ ...request, selectedId: 'new-note' })).toThrow('different request');
   });
-  it.each(['ignore', 'clarify'])('does not launch for %s', async decision => {
-    const startIdle = vi.fn();
-    const commands = new VoiceCommands({ taskService: { startIdle }, interpret: async () => ({ ...intent, decision }) });
-    expect((await commands.dispatch(request)).state).toBe(decision);
-    expect(startIdle).not.toHaveBeenCalled();
+  it('remembers a blocking question so a short answer needs no repeated request', async () => {
+    const { commands, run } = setup();
+    run.mockResolvedValueOnce({ state: 'clarify', reply: 'Which project?' });
+    await commands.dispatch(request);
+    await commands.dispatch({ ...request, transcript: '/projects/demo', requestId: 'request-124' });
+    const next = run.mock.calls[1][0];
+    expect(next.transcript).toBe('/projects/demo');
+    expect(next.history[0].content).toBe(request.transcript);
+    expect(next.history[1].content).toContain('Which project?');
   });
-  it('allows retry after all agents were busy', async () => {
-    const startIdle = vi.fn().mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'AGENT_BUSY' })).mockResolvedValue({ id: 'task' });
-    const commands = new VoiceCommands({ taskService: { startIdle }, interpret: async () => intent });
+  it('serializes follow-ups in one conversation without mixing another conversation', async () => {
+    const { commands, run } = setup();
+    let finish;
+    run.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const one = commands.dispatch(request);
+    const two = commands.dispatch({ ...request, requestId: 'request-124', transcript: 'Use Markdown.' });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    finish(result); await Promise.all([one, two]);
+    expect(run.mock.calls[1][0].history).toHaveLength(2);
+    await commands.dispatch({ ...request, requestId: 'request-125', conversationId: 'different-chat' });
+    expect(run.mock.calls[2][0].history).toEqual([]);
+  });
+  it('allows a retry if no work was accepted', async () => {
+    const { commands, run } = setup();
+    run.mockRejectedValueOnce(new Error('All agents are busy.'));
     await expect(commands.dispatch(request)).rejects.toThrow('busy');
-    expect((await commands.dispatch(request)).state).toBe('assigned');
+    expect((await commands.dispatch(request)).state).toBe('assigned'); expect(run).toHaveBeenCalledTimes(2);
+  });
+  it('keeps memory bounded and ignores background speech', async () => {
+    const { commands, run } = setup();
+    for (let i = 0; i < 8; i++) await commands.dispatch({ ...request, requestId: `request-${i}00` });
+    expect(commands.conversations.get(request.conversationId).history).toHaveLength(6);
+    run.mockResolvedValueOnce({ state: 'ignore', reply: '' });
+    await commands.dispatch({ ...request, requestId: 'ignored-123' });
+    expect(commands.conversations.get(request.conversationId).history).toHaveLength(6);
+  });
+  it('summarizes each completed voice result once and remembers the outcome', async () => {
+    const { commands, summarize, record } = setup();
+    await commands.dispatch(request);
+    const payload = { id: record.id, conversationId: request.conversationId };
+    const replies = await Promise.all([commands.summarize(payload), commands.summarize(payload)]);
+    expect(replies[0]).toEqual(replies[1]); expect(summarize).toHaveBeenCalledOnce();
+    expect(commands.conversations.get(request.conversationId).history.at(-1).content).toContain('demo.md');
+    record.status = 'running'; expect(() => commands.summarize(payload)).toThrow('still running');
+    record.source = 'text'; expect(() => commands.summarize(payload)).toThrow('not found');
   });
 });
 

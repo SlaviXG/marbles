@@ -4,3 +4,4 @@ dist
 public/models/
 public/wake-runtime/
 scenario-results/*.jsonl
+.hermes-runtime/

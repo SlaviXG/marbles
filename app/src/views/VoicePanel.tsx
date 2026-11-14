@@ -1,37 +1,44 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { VoiceSession, type VoiceStatus } from "../voice/VoiceSession";
 import { emptyTranscript, transcriptText, updateTranscript } from "../voice/transcript";
 import { CommandBuffer } from "../voice/CommandBuffer";
 import { refreshAgents, refreshTasks, refreshSwarms, useAgents } from "../state/agents";
 import VoiceConversation from "./VoiceConversation";
-import { upsertMessage, visibleMessages, statusMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
+import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/messages";
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
+import { canvasCommand } from '../voice/canvasCommand';
+import { useVault } from '../state/store';
+import type { AgentTask, SwarmTask } from '../core/agentTypes';
+import { useHud, voiceSignal } from '../state/hud';
+import VoiceCore from './VoiceCore';
 
-export default function VoicePanel() {
+export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: () => void; onDeactivate?: () => void } = {}) {
   const session = useRef<VoiceSession>();
   const speaker = useRef<ReplySpeaker>();
-  const [voiceReplies, setVoiceReplies] = useState(true);
+  const [voiceReplies] = useState(true);
   const [replyPlaying, setReplyPlaying] = useState(false);
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
   const requestQueue = useRef(Promise.resolve());
-  const clarificationContext = useRef("");
+  const conversationId = useRef(crypto.randomUUID());
   const [messages, setMessages] = useState<VoiceMessage[]>([]);
-  const [now, setNow] = useState(Date.now());
-  const pausedAt = useRef<number>();
   const draft = useRef(emptyTranscript());
   const consumed = useRef(new Set<string>());
   const draftId = useRef('');
   const watching = useRef(new Map<string, string>());
+  const watchingSwarms = useRef(new Set<string>());
   const tasks = useAgents(state => state.tasks);
+  const swarms = useAgents(state => state.swarms);
   const [status, setStatus] = useState<VoiceStatus>("idle");
-  const [detail, setDetail] = useState("Enable your mic, then describe a task. OpenAI turns your words into a prompt for an idle agent.");
-  const [level, setLevel] = useState(0);
+  const [detail, setDetail] = useState("Describe the outcome. Marbles plans it and delegates to an idle agent.");
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
-  const caption = replyPlaying ? 'Speaking · AI voice' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "What can I do for you?" : status === "listening" ? "Listening to you"
-    : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model:') : 'Starting voice…' : status === "stopping" ? "Finishing…"
-    : status === "error" ? "Enable microphone" : "Microphone off";
+  const caption = replyPlaying ? '' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "Go ahead" : status === "listening" ? "Listening"
+    : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model') : 'Waking up' : status === "stopping" ? "Standing down"
+    : status === "error" ? "Tap to retry" : "Tap to wake";
+  useEffect(() => { useHud.getState().setVoice(status); }, [status]);
+  useEffect(() => { useHud.getState().setSpeaking(replyPlaying); }, [replyPlaying]);
+  useEffect(() => () => { voiceSignal.level = 0; useHud.getState().setVoice('idle'); useHud.getState().setSpeaking(false); }, []);
 
 
   useEffect(() => {
@@ -41,46 +48,46 @@ export default function VoicePanel() {
       error: text => message({ id: 'speech-error', role: 'assistant', text }),
     });
     speaker.current.setEnabled(voiceReplies);
-    // Delay one event loop so StrictMode's initial cleanup cancels its trial
-    // mount before requesting microphone access or loading the wake model.
-    const startup = setTimeout(start, 0);
-    return () => { clearTimeout(startup); mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); };
+    return () => { mounted.current = false; commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
   }, []);
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (pausedAt.current != null) return;
-      const time = Date.now(); setNow(time);
-      setMessages(current => visibleMessages(current, time));
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, []);
-
   useEffect(() => {
     for (const task of tasks) {
-      if (task.status === 'running' && task.source === 'voice' && !watching.current.has(task.id)) {
+      if (['running', 'cancelling'].includes(task.status) && task.source === 'voice' && !watching.current.has(task.id)) {
         watching.current.set(task.id, task.title ?? 'your task');
       }
-      if (!watching.current.has(task.id) || task.status === 'running') continue;
+      if (!watching.current.has(task.id) || ['running', 'cancelling'].includes(task.status)) continue;
       watching.current.delete(task.id);
-      const text = task.status === 'failed' ? `I couldn’t finish: ${task.title ?? 'the task'}. Open the task for details.`
-        : task.stdout.trim().slice(-900) || `Finished: ${task.title ?? 'your task'}.${task.artifacts.length ? ` ${task.artifacts.length} files ready.` : ''}`;
-      message({ id: `result:${task.id}`, role: 'assistant', label: task.agentId, text, taskId: task.id });
+      void reportResult(task, 'task');
     }
   }, [tasks]);
 
+  useEffect(() => {
+    for (const swarm of swarms) {
+      if (['running', 'evaluating'].includes(swarm.status) && swarm.source === 'voice') watchingSwarms.current.add(swarm.id);
+      if (!watchingSwarms.current.has(swarm.id) || ['running', 'evaluating'].includes(swarm.status)) continue;
+      watchingSwarms.current.delete(swarm.id);
+      void reportResult(swarm, 'swarm');
+    }
+  }, [swarms]);
+
+  async function reportResult(record: AgentTask | SwarmTask, kind: 'task' | 'swarm') {
+    let text = record.status === 'cancelled' ? `Stopped: ${(record.title ?? 'your task').slice(0, 100)}.`
+      : record.status === 'completed' ? `Finished: ${(record.title ?? 'your task').slice(0, 100)}. Open the task for the result.`
+      : `Couldn’t finish: ${(record.title ?? 'your task').slice(0, 100)}. Open the task for details.`;
+    try {
+      const response = await fetch('/api/voice/result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: record.id, kind, conversationId: conversationId.current }), signal: AbortSignal.timeout(55_000) });
+      if (response.ok) { const data = await response.json(); if (typeof data.reply === 'string' && data.reply.trim()) text = data.reply; }
+    } catch { /* A short local notice keeps results usable if synthesis fails. */ }
+    if (mounted.current) message({ id: `result:${kind}:${record.id}`, role: 'assistant', label: 'Marbles · Hermes', text,
+      ...(kind === 'task' ? { taskId: record.id } : { swarmId: record.id }) });
+  }
+
   function message(item: Omit<VoiceMessage, 'expiresAt'>) {
-    const time = Date.now(); setNow(time);
+    const time = Date.now();
     setMessages(current => upsertMessage(current, item, time));
     if (item.role === 'assistant' && !item.pending && item.id !== 'speech-error') speaker.current?.enqueue(item.id, item.text);
   }
-  function pause() { pausedAt.current ??= Date.now(); }
-  function resume() {
-    if (pausedAt.current == null) return;
-    const elapsed = Date.now() - pausedAt.current;
-    setMessages(current => current.map(item => ({ ...item, expiresAt: item.expiresAt + elapsed })));
-    pausedAt.current = undefined;
-  }
-
   function start() {
     commands.current?.dispose();
     speaker.current?.interrupt();
@@ -94,11 +101,18 @@ export default function VoicePanel() {
       draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
       const request = withoutWakePhrase(text);
       if (!request) {
-        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: "I’m listening. What would you like me to do?" });
-        return; // A standalone wake phrase gets a reply without launching a task.
+        message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
+        return;
       }
-      enqueue({ transcript: clarificationContext.current ? `${clarificationContext.current}\nAdditional clarification: ${request}` : request,
-        requestId: crypto.randomUUID() });
+      const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms);
+      if (local) {
+        if (local.close) useVault.getState().clear();
+        if (local.select) useVault.getState().select(local.select);
+        message({ id: `canvas:${crypto.randomUUID()}`, role: 'assistant', text: local.reply });
+        session.current?.rearm();
+        return;
+      }
+      enqueue({ transcript: request, requestId: crypto.randomUUID(), conversationId: conversationId.current, selectedId: useVault.getState().selectedId });
     });
     const next = new VoiceSession({
       status: (state, detail) => {
@@ -117,7 +131,7 @@ export default function VoicePanel() {
         }
         commands.current?.event(event);
       },
-      activity: (energy, speaking) => { setLevel(energy); commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
+      activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
     }, { wake: true });
     session.current = next;
@@ -128,35 +142,31 @@ export default function VoicePanel() {
     requestQueue.current = requestQueue.current.then(async () => {
       if (!mounted.current) return;
       const id = `reply:${request.requestId}`;
-      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', text, ...extra });
-      reply('Finding the right agent…', { pending: true });
+      const reply = (text: string, extra: Partial<VoiceMessage> = {}) => message({ id, role: 'assistant', label: 'Marbles · Hermes', text, ...extra });
+      reply('Planning…', { pending: true });
       try {
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request), signal: AbortSignal.timeout(30_000),
+          body: JSON.stringify(request), signal: AbortSignal.timeout(55_000),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not delegate the task.');
         if (!mounted.current) return;
         if (data.state === 'assigned') {
           session.current?.rearm();
-          clarificationContext.current = '';
           watching.current.set(data.task.id, data.intent.objective);
-          reply(data.task.status === 'failed' ? `${data.task.agentId} could not start. Open the task for details.` : `Handed to ${data.task.agentId}: ${data.intent.objective}`, { taskId: data.task.id });
+          reply(data.reply, { taskId: data.task.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshTasks()]);
         } else if (data.state === 'swarm') {
-          session.current?.rearm(); clarificationContext.current = '';
-          reply(`Started a swarm with ${data.swarm.agents.join(' and ')}: ${data.intent.objective}`, { swarmId: data.swarm.id });
+          session.current?.rearm(); watchingSwarms.current.add(data.swarm.id);
+          reply(data.reply, { swarmId: data.swarm.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshSwarms()]);
-        } else if (data.state === 'status' || data.state === 'log') {
-          session.current?.rearm(); clarificationContext.current = '';
-          const item = statusMessage(id, data);
-          if (item) message(item);
-        } else if (data.state === 'clarify') {
-          clarificationContext.current = request.transcript;
-          reply(data.intent.clarification);
+        } else if (data.state === 'ignore') {
+          setMessages(current => current.filter(item => item.id !== id)); session.current?.rearm();
+        } else {
+          reply(data.reply);
+          if (data.state !== 'clarify') session.current?.rearm();
         }
-        else reply('What would you like me to do?');
       } catch (error) {
         if (!mounted.current) return;
         reply(error instanceof Error ? error.message : 'Could not delegate the task.', { retry: request });
@@ -166,32 +176,20 @@ export default function VoicePanel() {
 
   return (
     <>
-    <VoiceConversation messages={messages} now={now} pause={pause} resume={resume} retry={enqueue}
-      read={text => { speaker.current?.setEnabled(true); setVoiceReplies(true); speaker.current?.enqueue(crypto.randomUUID(), text); }} />
-    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice transcription"
-      style={{ "--voice-level": level } as CSSProperties}>
-      <div className="voice-marble-float">
-        <button type="button" className="voice-marble" disabled={status === "stopping"}
-          aria-label={active ? "Turn off microphone" : "Enable voice detection"}
-          aria-pressed={active} aria-describedby="voice-detail"
-          onClick={() => active ? session.current?.stop() : start()}>
-          <span className="voice-halo" aria-hidden="true" />
-          <span className="voice-sphere" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="9" y="3" width="6" height="12" rx="3" />
-              <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" />
-            </svg>
-          </span>
-        </button>
-      </div>
-      <div className="voice-caption" role="status">{caption}</div>
-      <button className="voice-off" type="button" aria-pressed={voiceReplies} onClick={() => {
-        const enabled = !voiceReplies; setVoiceReplies(enabled); speaker.current?.setEnabled(enabled);
-      }}>{voiceReplies ? 'AI voice on' : 'AI voice muted'}</button>
-      {replyPlaying && <button className="voice-off" type="button" onClick={() => speaker.current?.interrupt()}>Stop reply</button>}
-      <p id="voice-detail" className="voice-sr-only" role={status === "error" ? "alert" : undefined}>{detail}</p>
-      {active && <button className="voice-off" type="button" disabled={status === "stopping"}
-        onClick={() => session.current?.stop()}>Turn mic off</button>}
+    <VoiceConversation messages={messages} retry={enqueue} />
+    <section className={`voice-dock ${status}${replyPlaying ? ' reply-speaking' : ''}`} aria-label="Voice control">
+      <button type="button" className="voice-marble" disabled={status === "stopping"}
+        aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
+        aria-pressed={active} aria-describedby="voice-detail"
+        onClick={() => { if (active) { session.current?.stop(); voiceSignal.level = 0; onDeactivate?.(); } else { start(); onActivate?.(); } }}>
+        <VoiceCore />
+        <svg className="voice-mic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" />
+        </svg>
+      </button>
+      <div className="voice-caption" role="status" key={caption}>{caption}</div>
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
     </>
   );

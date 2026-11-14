@@ -14,15 +14,20 @@ export default defineConfig(({ mode }) => ({
       // runner. This code and the key stay in Vite's Node process. The regular
       // backend exposes the same handler for production / non-Vite clients.
       const root = fileURLToPath(new URL('..', import.meta.url));
-      const apiKey = process.env.OPENAI_API_KEY || loadEnv(mode, root, 'OPENAI_API_KEY').OPENAI_API_KEY;
+      const env = loadEnv(mode, root, '');
+      const apiKey = process.env.OPENAI_API_KEY || env.OPENAI_API_KEY;
+      const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_KEY;
+      const voiceId = process.env.ELEVENLABS_VOICE_ID || env.ELEVENLABS_VOICE_ID;
+      const modelId = process.env.ELEVENLABS_MODEL_ID || env.ELEVENLABS_MODEL_ID;
       const app = express();
-      app.post('/', express.json({ limit: '8kb' }), speechHandler({ apiKey }));
+      app.post('/', express.json({ limit: '8kb' }), speechHandler({ apiKey, elevenLabsApiKey, voiceId, modelId }));
       server.middlewares.use('/api/voice/speech', app);
     },
   }],
   server: {
     port: 5173,
     strictPort: true,
+    watch: { ignored: ['**/.hermes-runtime/**'] },
     proxy: {
       "/api/voice": {
         target: "ws://127.0.0.1:5174",

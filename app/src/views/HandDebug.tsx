@@ -2,6 +2,10 @@ import { useEffect, useRef } from "react";
 import { subscribeFrame } from "../motion/ticker";
 import {
   handDebug,
+  LEN_OFF,
+  MOVE,
+  PALM_OFF,
+  UP_OFF,
   loadParams,
   subscribeParams,
   usePointerStore,
@@ -82,8 +86,18 @@ export default function HandDebug() {
         const px = (i: number) => (1 - pts[i * 2]) * W;
         const py = (i: number) => pts[i * 2 + 1] * H;
 
-        const accent = h.primary ? "rgba(45, 212, 191, 1)" : "rgba(140, 160, 210, 0.75)";
-        ctx.strokeStyle = h.primary ? "rgba(45, 212, 191, 0.75)" : "rgba(140, 160, 210, 0.45)";
+        // A hand that failed the palm gate (seen from the back) is drawn dim
+        // red: tracked, but not used as input.
+        const accent = !h.active
+          ? "rgba(248, 113, 113, 0.75)"
+          : h.primary
+            ? "rgba(45, 212, 191, 1)"
+            : "rgba(140, 160, 210, 0.75)";
+        ctx.strokeStyle = !h.active
+          ? "rgba(248, 113, 113, 0.45)"
+          : h.primary
+            ? "rgba(45, 212, 191, 0.75)"
+            : "rgba(140, 160, 210, 0.45)";
         ctx.lineWidth = h.primary ? 1.5 : 1;
         ctx.beginPath();
         for (const [a, b] of BONES) {
@@ -130,8 +144,10 @@ export default function HandDebug() {
         ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
         ctx.fillStyle = "rgba(139, 148, 158, 0.9)";
         ctx.fillText(`${h.hand}${h.primary ? "·" : " "}`, 4, row);
-        ctx.fillStyle = hot(pinch < params.pinchOn);
-        ctx.fillText(`pin ${pinch.toFixed(2)}`, 22, row);
+        // Red "fast": the hand is moving too quickly for a pinch to start.
+        const fast = handDebug.fast[h.hand];
+        ctx.fillStyle = fast ? "rgba(248, 113, 113, 1)" : hot(pinch < params.pinchOn);
+        ctx.fillText(fast ? "pin fast" : `pin ${pinch.toFixed(2)}`, 22, row);
         // Articulation: how fast this hand is changing shape. The candidate
         // signal for choosing a primary hand automatically. Watch whether the
         // two hands separate here during real use before trusting it.
@@ -139,6 +155,40 @@ export default function HandDebug() {
         const busier = art > handDebug.articulation[h.hand === "L" ? "R" : "L"];
         ctx.fillStyle = busier ? "rgba(210, 169, 63, 1)" : "rgba(139, 148, 158, 0.7)";
         ctx.fillText(`art ${art.toFixed(1)}`, 74, row);
+        // Motion: how far this hand is from where it recently was, in palm
+        // lengths. Decides which hand drives when both are in frame; gold
+        // once it counts as moving.
+        const mov = handDebug.motion[h.hand];
+        ctx.fillStyle = !h.active
+          ? "rgba(248, 113, 113, 1)"
+          : mov > MOVE
+            ? "rgba(210, 169, 63, 1)"
+            : "rgba(139, 148, 158, 0.7)";
+        ctx.fillText(h.active ? `mov ${mov.toFixed(2)}` : "ignored", 124, row);
+
+        // Pose gate, on its own row: palm facing, fingers up, palm length (see
+        // palm.ts). A value below its OFF threshold is what is keeping the
+        // hand out, and shows red.
+        const poseRow = H - 6 - readouts * 11;
+        readouts++;
+        const ok = "rgba(139, 148, 158, 0.9)";
+        const bad = "rgba(248, 113, 113, 1)";
+        ctx.fillStyle = h.pose.palm > PALM_OFF ? ok : bad;
+        ctx.fillText(`palm ${h.pose.palm.toFixed(2)}`, 22, poseRow);
+        ctx.fillStyle = h.pose.up > UP_OFF ? ok : bad;
+        ctx.fillText(`up ${h.pose.up.toFixed(2)}`, 78, poseRow);
+        ctx.fillStyle = h.pose.len > LEN_OFF ? ok : bad;
+        ctx.fillText(`len ${h.pose.len.toFixed(2)}`, 124, poseRow);
+      }
+
+      // What the arbiter is doing about a handover, and while evidence for
+      // one is building or draining, how far along it is.
+      if (handDebug.arbiter) {
+        ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle =
+          handDebug.arbiter === "switched" ? "rgba(45, 212, 191, 1)" : "rgba(210, 169, 63, 1)";
+        const pct = Math.round(handDebug.evidence * 100);
+        ctx.fillText(`swap: ${handDebug.arbiter}${pct > 0 ? ` ${pct}%` : ""}`, 4, 10);
       }
 
       if (handDebug.hands.length === 0) {

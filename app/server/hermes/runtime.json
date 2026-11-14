@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/NousResearch/hermes-agent.git",
+  "revision": "968a1bdf7e7ec23e9b9ee2d2f0dee67e2d18d123",
+  "directories": ["agent", "tools", "hermes_cli", "gateway", "pm", "hermes_agent", "hermes_platform", "cron", "providers", "plugins", "locales", "owned"]
+}
