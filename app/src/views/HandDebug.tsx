@@ -2,7 +2,6 @@ import { useEffect, useRef } from "react";
 import { subscribeFrame } from "../motion/ticker";
 import {
   handDebug,
-  LEN_OFF,
   MOVE,
   PALM_OFF,
   UP_OFF,
@@ -177,7 +176,8 @@ export default function HandDebug() {
         ctx.fillText(`palm ${h.pose.palm.toFixed(2)}`, 22, poseRow);
         ctx.fillStyle = h.pose.up > UP_OFF ? ok : bad;
         ctx.fillText(`up ${h.pose.up.toFixed(2)}`, 78, poseRow);
-        ctx.fillStyle = h.pose.len > LEN_OFF ? ok : bad;
+        // len no longer gates the hand (see palm.ts): shown, never red.
+        ctx.fillStyle = ok;
         ctx.fillText(`len ${h.pose.len.toFixed(2)}`, 124, poseRow);
       }
 
