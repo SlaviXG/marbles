@@ -47,7 +47,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   visibleAgents.forEach((agent, index) => {
     const angle = AGENT_ANGLES[agent.id] ?? -Math.PI / 2 + index * 2 * Math.PI / Math.max(visibleAgents.length, 1);
     const status = agent.status ?? (!agent.available || agent.kind !== 'cli' || !['codex', 'claude', 'cursor'].includes(agent.id)
-      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && task.status === 'running') || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
+      ? 'unavailable' : tasks.some(task => task.agentId === agent.id && ['running', 'cancelling'].includes(task.status)) || swarms.some(swarm => swarm.agents.includes(agent.id) && ['running', 'evaluating'].includes(swarm.status)) ? 'running' : 'idle');
     const node = pinned(`agent:${agent.id}`, `${agent.name} · ${status}`, 'agent', Math.cos(angle) * AGENT_RADIUS, Math.sin(angle) * AGENT_RADIUS);
     node.available = agent.available;
     nodes.push(node);
@@ -61,7 +61,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
     const outward = Math.atan2(parent.y!, parent.x!);
     if (task.routing) {
       const point = childPosition(parent, childCounts.get(task.agentId) ?? 0, outward, 34);
-      const node = pinned(`task:${task.id}`, task.prompt.slice(0, 30), 'task', point.x, point.y);
+      const node = pinned(`task:${task.id}`, (task.title ?? task.prompt).slice(0, 30), 'task', point.x, point.y);
       node.badge = task.routing.mode; nodes.push(node); links.push({source:parent.id,target:node.id});
       childCounts.set(task.agentId,(childCounts.get(task.agentId) ?? 0)+1);
     }
@@ -84,7 +84,7 @@ export function composeGraph(notes: Record<string, Note>, agents: AgentInfo[], t
   for (const swarm of swarms.slice(0, 20)) {
     const anchor = swarm.agents.map(id => agentNodes.get(id)).find(Boolean);
     const x = anchor?.x ?? 0, y = anchor?.y ?? 0;
-    const parent = pinned(`swarm:${swarm.id}`, swarm.goal.slice(0, 36), 'swarm', x + 30, y + 30);
+    const parent = pinned(`swarm:${swarm.id}`, (swarm.title ?? swarm.goal).slice(0, 36), 'swarm', x + 30, y + 30);
     parent.badge = swarm.routing?.mode;
     nodes.push(parent);
     for (const agentId of swarm.agents) if (agentNodes.has(agentId)) links.push({ source: parent.id, target: `agent:${agentId}` });
