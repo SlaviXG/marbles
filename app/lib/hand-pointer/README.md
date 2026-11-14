@@ -17,6 +17,9 @@ and drag handlers work unchanged. No dependencies, no bundler setup.
 | Pinch with both hands, move together | `pan` action |
 | Move the real mouse | Mouse takes the cursor back. A deliberate hand move reclaims it |
 
+A hand only counts while it is held up with its palm toward the camera. See
+[Which hands count](#which-hands-count).
+
 ## Quick start
 
 ```ts
@@ -112,10 +115,95 @@ with a shaky hand.
 
 | Object | Covers |
 | --- | --- |
-| `PointerParams` (`loadParams`, `saveParams`) | Jitter filter, active zone of the camera frame, deadzone, inference rate, pinch thresholds |
+| `PointerParams` (`loadParams`, `saveParams`) | Jitter filter, active zone of the camera frame, deadzone, inference rate, pinch thresholds, pose gate on or off (`requirePalm`) |
 | `CursorParams` (`DEFAULT_CURSOR_PARAMS`) | Cursor smoothing, pinch anchor, magnet feel, zoom gain |
 
+| Constants in `src/palm.ts` | Pose gate thresholds (see below) |
+
 Add `?debug` to the page URL for a per-second pipeline heartbeat in the console.
+
+## Which hands count
+
+A hand seen in a bad pose produces pinches nobody meant, so the library ignores
+it before reading any gesture. An ignored hand is treated as not in frame: no
+cursor, no press, no two-hand zoom. Three measurements decide, all taken from
+the wrist and knuckle landmarks, which do not move when the fingers bend.
+
+| Measurement | Meaning | Typical values | Rejects |
+| --- | --- | --- | --- |
+| `palm` | Which side of the hand shows, and how square-on it is | About 0.6 or more for a flat palm, the same negative for the back, 0 edge-on | Back of the hand, hand turned sideways |
+| `up` | Cosine of the angle between the wrist-to-knuckle line and straight up | 1 fingers up, 0 lying level, negative hanging down | Wrist level with or above the knuckles |
+| `len` | Palm length (wrist to middle knuckle) divided by width across the knuckles | About 1.4 for a flat hand, falling to 0 as the fingers point at the lens | Hand tipped forward toward the camera |
+
+Each measurement has two thresholds. A hand must be above every `ON` value to
+start counting, and keeps counting until one measurement falls below its `OFF`
+value. The gap stops a hand held near a limit from flickering in and out.
+
+| Constant | Default | Roughly corresponds to |
+| --- | --- | --- |
+| `PALM_ON` / `PALM_OFF` | 0.4 / 0.3 | Turned 55 / 65 degrees away from facing the camera |
+| `UP_ON` / `UP_OFF` | 0.5 / 0.35 | Fingers 60 / 70 degrees from straight up |
+| `LEN_ON` / `LEN_OFF` | 0.9 / 0.75 | Tipped 50 / 58 degrees toward the camera |
+
+Set `requirePalm: false` in `PointerParams` to switch the gate off and accept a
+hand in any pose.
+
+### Estimating the thresholds
+
+The defaults were worked out from hand proportions, not measured on a camera.
+The angles in the table assume a flat hand reads `palm` 0.6 and `len` 1.4; if
+your hand and camera read differently, the same thresholds cut in at different
+angles. Measure before trusting them.
+
+**1. See the numbers.** `handDebug.hands` holds, for every hand in frame, its
+`pose` (`palm`, `up`, `len`) and whether it is `active`. In the marbles app the
+skeleton button draws them: a second row per hand shows the three values, with
+the one keeping the hand out in red.
+
+**2. Record three poses per measurement.** Hold each for a couple of seconds
+and note the value, for both hands and at your usual distance.
+
+| Pose | What to note |
+| --- | --- |
+| Flat, upright, square to the camera | The baseline for `palm` and `len` |
+| Your normal pointing and pinching pose, including the most relaxed version you would still expect to work | The lowest value that must still count |
+| The pose where gestures start to misfire (turn, lower or tip the hand until pinches trigger by accident or the skeleton jumps) | The highest value that must be rejected |
+
+**3. Place the thresholds between the last two.** Put `OFF` just above the
+misfire value and `ON` above that, with both below the lowest value from normal
+use. Keep a gap of at least 0.1 between `ON` and `OFF` (0.15 for `len`, which
+has a wider range), or the hand will flicker at the limit.
+
+If normal use and misfires overlap, the measurement cannot separate them on its
+own. Prefer rejecting: a hand that must be straightened slightly is a smaller
+problem than an accidental click.
+
+**4. Or work from an angle.** A limit in degrees converts to a threshold once
+you know the flat value:
+
+| Measurement | Threshold for a limit angle |
+| --- | --- |
+| `up` | `cos(angle)` |
+| `len` | `flat × cos(angle)` |
+| `palm` | `sin(atan(tan(asin(flat)) × cos(angle)))` |
+
+For example, with a measured flat `len` of 1.5, rejecting hands tipped more
+than 45 degrees means `LEN_OFF = 1.5 × cos(45°) ≈ 1.06`. `palm` is the sine of
+an angle on the palm rather than a length, so it falls more slowly than a plain
+cosine: with a flat value of 0.6, a 60 degree turn reads about 0.35, not 0.3.
+
+**5. Check the sign.** If a palm reads negative and the back positive, the
+left and right labels from the tracker are swapped for your setup. Flip
+`RIGHT_PALM_SIGN` in `src/palm.ts`.
+
+Known weak spots:
+
+- Pointing at the screen tips the hand forward, which lowers `len`. This is the
+  threshold most likely to need loosening.
+- `len` rises when the hand turns sideways (the width shrinks), so it is only
+  meaningful while `palm` passes.
+- The values depend on the tracker's landmarks, which get noisy at the edges of
+  the frame and in poor light. Measure where you will actually use it.
 
 ## Limits
 
