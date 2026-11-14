@@ -41,6 +41,8 @@ export {
 
 export { VirtualPointer } from "./virtualPointer";
 
+export { palmFacing, palmOpen, PALM_ON, PALM_OFF } from "./palm";
+
 export {
   dispatchAction,
   registerActionHandler,

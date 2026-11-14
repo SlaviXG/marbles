@@ -82,8 +82,18 @@ export default function HandDebug() {
         const px = (i: number) => (1 - pts[i * 2]) * W;
         const py = (i: number) => pts[i * 2 + 1] * H;
 
-        const accent = h.primary ? "rgba(45, 212, 191, 1)" : "rgba(140, 160, 210, 0.75)";
-        ctx.strokeStyle = h.primary ? "rgba(45, 212, 191, 0.75)" : "rgba(140, 160, 210, 0.45)";
+        // A hand that failed the palm gate (seen from the back) is drawn dim
+        // red: tracked, but not used as input.
+        const accent = !h.active
+          ? "rgba(248, 113, 113, 0.75)"
+          : h.primary
+            ? "rgba(45, 212, 191, 1)"
+            : "rgba(140, 160, 210, 0.75)";
+        ctx.strokeStyle = !h.active
+          ? "rgba(248, 113, 113, 0.45)"
+          : h.primary
+            ? "rgba(45, 212, 191, 0.75)"
+            : "rgba(140, 160, 210, 0.45)";
         ctx.lineWidth = h.primary ? 1.5 : 1;
         ctx.beginPath();
         for (const [a, b] of BONES) {
@@ -139,6 +149,9 @@ export default function HandDebug() {
         const busier = art > handDebug.articulation[h.hand === "L" ? "R" : "L"];
         ctx.fillStyle = busier ? "rgba(210, 169, 63, 1)" : "rgba(139, 148, 158, 0.7)";
         ctx.fillText(`art ${art.toFixed(1)}`, 74, row);
+        // Palm-facing score: positive = palm toward the camera, negative = back.
+        ctx.fillStyle = h.active ? "rgba(45, 212, 191, 1)" : "rgba(248, 113, 113, 1)";
+        ctx.fillText(`${h.active ? "palm" : "back"} ${h.palm.toFixed(2)}`, 118, row);
       }
 
       if (handDebug.hands.length === 0) {

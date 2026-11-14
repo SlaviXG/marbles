@@ -3,6 +3,7 @@ import { OneEuro } from "./oneEuro";
 import { loadParams, subscribeParams, type PointerParams } from "./pointerParams";
 import { createHandWorker, type HandAssets, type HandOut, type WorkerOut } from "./handWorker";
 import { ArticulationTracker } from "./articulation";
+import { palmFacing, palmOpen } from "./palm";
 import { DEFAULT_CURSOR_PARAMS } from "./cursorDriver";
 
 // The camera pointer: webcam -> worker (hand landmarks) -> One Euro filter ->
@@ -103,7 +104,10 @@ export const secondaryHand = {
 // zone and whether a hand has drifted outside it. `version` ticks on every
 // inference result so the renderer can skip redraws between them.
 export const handDebug = {
-  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean }[],
+  // `palm` is the palm-facing score (see palm.ts) and `active` whether the hand
+  // passed the palm gate and is being used as input. Hands that fail it are
+  // still listed, so the overlay can show a hand that is seen but ignored.
+  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean; palm: number; active: boolean }[],
   version: 0,
   // Live tap-gesture state for the overlay, so a click that does not fire can be
   // told apart from a gesture that was never recognised.
@@ -185,6 +189,9 @@ class CameraPointer {
     L: new ArticulationTracker(),
     R: new ArticulationTracker(),
   };
+  // Whether each physical hand currently counts as showing its palm. Kept
+  // between frames for the hysteresis in palmOpen.
+  private palm: Record<"L" | "R", boolean> = { L: false, R: false };
   private busy = false; // worker has a frame in flight (backpressure)
   private lastSent = 0;
   private rafId = 0;
@@ -397,7 +404,21 @@ class CameraPointer {
     // a result arrived: the worker is free for the next frame
     this.busy = false;
     this.dbg.tips++;
-    if (msg.hands.length === 0) {
+    // Palm gate: only a hand showing its palm to the camera is input. One seen
+    // from the back is dropped here, before any gesture is read from it, and
+    // from then on is treated exactly like a hand that is not in frame.
+    for (const side of ["L", "R"] as const) {
+      if (!msg.hands.some((c) => c.hand === side)) this.palm[side] = false;
+    }
+    const score = new Map<HandOut, number>();
+    const hands = msg.hands.filter((c) => {
+      const s = palmFacing(c.pts, c.hand);
+      score.set(c, s);
+      this.palm[c.hand] = palmOpen(s, this.palm[c.hand]);
+      return !this.params.requirePalm || this.palm[c.hand];
+    });
+
+    if (hands.length === 0) {
       // A missed detection is not a missing hand: a pinched hand occludes its
       // own landmarks, so single misses are common exactly mid-drag. Hold
       // presence and pinch through the GONE_MS grace (lastSeen ages naturally)
@@ -410,7 +431,13 @@ class CameraPointer {
         secondaryHand.present = false;
         secondaryHand.pinching = false;
       }
-      handDebug.hands = [];
+      handDebug.hands = msg.hands.map((c) => ({
+        hand: c.hand,
+        pts: c.pts,
+        primary: false,
+        palm: score.get(c) ?? 0,
+        active: false,
+      }));
       handDebug.version++;
       this.artic.L.reset();
       this.artic.R.reset();
@@ -424,18 +451,24 @@ class CameraPointer {
     // one it is. The choice only bites when BOTH hands are visible, which is
     // exactly when an arbitrary pick would feel broken.
     const want = pointerStore.getState().priority;
-    const h = msg.hands.find((c) => c.hand === want) ?? msg.hands[0];
+    const h = hands.find((c) => c.hand === want) ?? hands[0];
     const p = this.params;
     const t = msg.t / 1000;
 
-    handDebug.hands = msg.hands.map((c) => ({ hand: c.hand, pts: c.pts, primary: c === h }));
+    handDebug.hands = msg.hands.map((c) => ({
+      hand: c.hand,
+      pts: c.pts,
+      primary: c === h,
+      palm: score.get(c) ?? 0,
+      active: hands.includes(c),
+    }));
     handDebug.version++;
 
     // Articulation per physical hand, and reset for whichever hand is absent so
     // a hand that leaves and returns does not read its re-entry as a gesture.
     const tSec = msg.t / 1000;
     for (const side of ["L", "R"] as const) {
-      const seen = msg.hands.find((c) => c.hand === side);
+      const seen = hands.find((c) => c.hand === side);
       if (seen) handDebug.articulation[side] = this.artic[side].update(seen.pts, tSec);
       else {
         this.artic[side].reset();
@@ -444,7 +477,7 @@ class CameraPointer {
     }
 
     // The other hand, if there is one. Tracked for two-handed gestures only.
-    const o = msg.hands.find((c) => c !== h);
+    const o = hands.find((c) => c !== h);
     if (o) {
       const od = Math.hypot(o.x - o.thumbX, o.y - o.thumbY);
       secondaryHand.pinching = secondaryHand.pinching ? od < p.pinchOff : od < p.pinchOn;
