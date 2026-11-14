@@ -57,3 +57,39 @@ it('keeps written replies usable if autoplay is blocked and allows cached replay
   expect(fetchApi).toHaveBeenCalledOnce();
   speaker.dispose();
 });
+
+it('switches voice immediately and keeps cached speech separate for each voice', async () => {
+  const { speaker, clips, fetchApi } = setup();
+  speaker.enqueue('reply', 'Done');
+  await vi.waitFor(() => expect(clips).toHaveLength(1));
+  speaker.enqueue('queued', 'Do not play this');
+  speaker.setVoice('cedar');
+  expect(clips[0].pause).toHaveBeenCalled();
+  speaker.enqueue('reply', 'Done');
+  await vi.waitFor(() => expect(clips).toHaveLength(2));
+  expect(fetchApi.mock.calls.map(call => JSON.parse((call as any)[1].body))).toEqual([
+    { text: 'Done', voice: 'marin' }, { text: 'Done', voice: 'cedar' },
+  ]);
+  speaker.setVoice('marin');
+  speaker.enqueue('replay', 'Done');
+  await vi.waitFor(() => expect(clips).toHaveLength(3));
+  expect(fetchApi).toHaveBeenCalledTimes(2);
+  speaker.dispose();
+});
+
+it('ignores an old synthesis response after switching voices', async () => {
+  const { speaker, clips, fetchApi } = setup();
+  let finishOld!: (value: any) => void;
+  fetchApi.mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }));
+  speaker.enqueue('reply', 'Done');
+  const oldSignal = (fetchApi.mock.calls[0] as any)[1].signal;
+  speaker.setVoice('cedar');
+  expect(oldSignal.aborted).toBe(true);
+  speaker.enqueue('reply', 'Done');
+  await vi.waitFor(() => expect(clips).toHaveLength(1));
+  finishOld({ ok: true, blob: async () => new Blob(['old'], { type: 'audio/mpeg' }) });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(clips).toHaveLength(1);
+  expect(clips[0].pause).not.toHaveBeenCalled();
+  speaker.dispose();
+});
