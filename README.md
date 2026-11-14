@@ -8,6 +8,43 @@ marbles is a multi-purpose extension that uses multi-agent swarms to automate ta
 - **Multi-agent swarms:** Coordinate multiple agents to work on tasks.
 - **Multi-purpose:** Support a range of tasks through one extension.
 
+## Try the UI
+
+Runs locally. Use Chrome or Edge: the folder picker and the hand cursor rely on
+APIs that Firefox and Safari lack.
+
+```sh
+git clone https://github.com/SlaviXG/marbles && cd marbles/app
+npm install
+npm run client     # UI only, http://localhost:5173
+```
+
+> **Test nodes.** Four dummy notes titled `[TEST] Alpha`, `[TEST] Beta`,
+> `[TEST] Gamma` and `[TEST] Delta` are hardcoded so the graph is never empty.
+> They are not real data and appear next to any vault or folder you load (the
+> status pill counts them separately as `· 4 test`). They live in
+> [`app/src/core/testNodes.ts`](app/src/core/testNodes.ts); set
+> `SHOW_TEST_NODES = false` there to hide them.
+
+### What to test
+
+- **Graph:** click a node to open its detail panel, click another node to switch, click the background to close. `[TEST] Beta` and `[TEST] Delta` share a URL node, which should list both.
+- **Your own notes:** click **open folder** (bottom right, above the hand button) and pick any folder of `.md` files. Edit a file and the graph updates within a couple of seconds.
+- **Hand cursor:** click the hand button (bottom right) and allow the camera. Point with your index finger, pinch to click, pinch and move to drag, pinch with both hands to zoom or pan. **R/L** picks the primary hand; the skeleton button shows tracked landmarks. Moving the mouse takes the cursor back.
+- **Hand library alone:** `cd app/lib/hand-pointer && npm install && npm run demo`.
+- **Unit tests:** `npm test` (and `npm run typecheck`) in `app/`.
+
+### With an Obsidian vault (live server)
+
+```sh
+cp .env.example .env   # in the repo root; set OBSIDIAN_VAULT_DIR to an absolute vault path
+cd app && npm run dev  # server :5174 + client :5173
+```
+
+`npm run dev` needs a valid `OBSIDIAN_VAULT_DIR`; without one the server exits
+and stops the client with it, so use `npm run client` instead. More detail in
+[`app/README.md`](app/README.md).
+
 ## Plan
 
 ### Roadmap (from the team's task list)

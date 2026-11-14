@@ -6,11 +6,14 @@ import HandCursor from "./views/HandCursor";
 import HandDebug from "./views/HandDebug";
 import { cameraPointer, usePointerStore } from "./input";
 import { useLocalFolder } from "./knowledge/useLocalFolder";
+import { isTestId } from "./core/testNodes";
 
 export default function App() {
   useVaultStream();
   const connected = useVault((s) => s.connected);
-  const count = useNoteIds().length;
+  const ids = useNoteIds();
+  const testCount = ids.filter(isTestId).length;
+  const count = ids.length - testCount;
 
   // Hide the native cursor only while the hand actually owns the cursor. If the
   // user grabs the mouse (mouse mode), the native cursor returns and takes over.
@@ -27,6 +30,7 @@ export default function App() {
 
       <span className={`status ${connected ? "up" : "down"}`}>
         {connected ? "live" : "offline"} · {count} notes
+        {testCount > 0 && ` · ${testCount} test`}
       </span>
 
       <DetailPanel />
