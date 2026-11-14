@@ -8,6 +8,7 @@ import HandCursor from "./views/HandCursor";
 import HandDebug from "./views/HandDebug";
 import { cameraPointer, usePointerStore } from "./input";
 import { useLocalFolder } from "./knowledge/useLocalFolder";
+import VoicePanel from "./views/VoicePanel";
 
 export default function App() {
   useVaultStream();
@@ -34,6 +35,7 @@ export default function App() {
       <button className="agent-refresh" onClick={() => { void refreshAgents(); void refreshTasks(); }}>Refresh agents</button>
 
       <DetailPanel />
+      <VoicePanel />
       <HandCursor />
       <FolderButton />
       <HandDebug />
