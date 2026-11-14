@@ -38,7 +38,6 @@ export default function App() {
       <FolderButton />
       <HandDebug />
       <HandDebugToggle />
-      <HandPriorityToggle />
       <HandCursorToggle />
     </div>
   );
@@ -140,26 +139,6 @@ function HandDebugToggle() {
           <circle cx="18" cy="6" r="2" />
         </g>
       </svg>
-    </button>
-  );
-}
-
-// Which hand owns the cursor when both are in frame. Sits immediately left of
-// the hand-cursor square and shares its chrome, so the pair reads as one
-// control. Stays usable while tracking is off so the choice can be preset.
-function HandPriorityToggle() {
-  const priority = usePointerStore((s) => s.priority);
-  const setPriority = usePointerStore((s) => s.setPriority);
-  const on = usePointerStore((s) => s.status === "tracking");
-  const next = priority === "R" ? "L" : "R";
-  return (
-    <button
-      className={`sq-btn hand-side-btn${on ? " on" : ""}`}
-      title={`Primary hand: ${priority === "R" ? "right" : "left"}. Click for ${next === "R" ? "right" : "left"}.`}
-      aria-label={`Primary hand: ${priority === "R" ? "right" : "left"}`}
-      onClick={() => setPriority(next)}
-    >
-      {priority}
     </button>
   );
 }

@@ -3,6 +3,7 @@ import ForceGraph2D from "react-force-graph-2d";
 import { forceCollide } from "d3-force-3d";
 import { useVault } from "../state/store";
 import { buildGraph, type GNode } from "../core/graph";
+import { ZOOM_MAX, fieldOf, minZoom } from "../core/field";
 import { springProgress, springForSettleMs, LAYOUT, type SpringToken } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
@@ -240,8 +241,12 @@ export default function GraphView() {
       // so a long pinch and a single notch both stay smooth.
       zoomTau.current = a.pinch ? ZOOM_TAU_GESTURE : ZOOM_TAU_FINE;
       const sensitivity = a.pinch ? 0.01 : 0.0015;
-      const min = Math.log(0.3);
-      const max = Math.log(12);
+      // Zoom-out stops where the whole field fits the view (core/field.ts),
+      // instead of at a fixed scale that left a big graph cut off and let a
+      // small one shrink to dots.
+      const field = fieldOf(nodesRef.current);
+      const min = Math.log(minZoom(field, el.clientWidth, el.clientHeight));
+      const max = Math.log(ZOOM_MAX);
       zoomTargetLog.current = Math.min(
         max,
         Math.max(min, zoomTargetLog.current - a.delta * sensitivity),
@@ -529,6 +534,21 @@ export default function GraphView() {
           // hand drift reinterprets the gesture as relocating the canvas.
           // Panning is for empty background, where there is nothing to open.
           if (downNode.current) return;
+          // A press is a click until it has travelled past the click slop;
+          // only then is it a pan. Without this the first pixel of movement
+          // started a pan, so a hand's pinch (which always wobbles a little)
+          // could never click the background, only nudge the canvas. lastPtr
+          // keeps following, so the pan begins from where the slop was
+          // crossed and the canvas does not lurch to catch up.
+          if (
+            !dragging.current &&
+            Math.hypot(e.clientX - downRef.current.x, e.clientY - downRef.current.y) <=
+              clickSlop(DRAG_THRESHOLD)
+          ) {
+            lastPtr.current = { x: e.clientX, y: e.clientY };
+            lastMoveT.current = performance.now();
+            return;
+          }
           // Drag = pan, 1:1. Move the center rigidly and track velocity for fling.
           const t = performance.now();
           const dt = Math.max(1, t - lastMoveT.current) / 1000;

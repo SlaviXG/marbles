@@ -25,10 +25,27 @@ export interface PointerParams {
   // The only press gesture: drag, scroll, click, and (with both hands) zoom.
   pinchOn: number;
   pinchOff: number;
+  // A pinch cannot start while the palm moves faster than this (frame heights
+  // per second), or just after: a fast sweep blurs the fingertips together
+  // and reads as a pinch nobody made (see pinchGuard.ts). A pinch already
+  // held is not affected, so drags can be fast. 0 turns the guard off.
+  pinchMaxSpeed: number;
+  // The cursor aims from the index knuckle plus a remembered finger offset,
+  // frozen while the fingers close, so a pinch does not drag the cursor down
+  // with the fingertip (see aimPoint.ts for each of these). aimTau 0 goes back
+  // to the raw fingertip.
+  aimTau: number;
+  aimFreezeDist: number;
+  aimFreezeRate: number;
+  aimHoldMs: number;
   // Only use a hand held up with its palm facing the camera; one seen from the
   // back, turned sideways, not upright or tipped toward the lens is ignored
   // (see palm.ts). Turn off to accept a hand in any orientation.
   requirePalm: boolean;
+  // With both hands in frame, let the cursor follow whichever one is moving
+  // while the other rests (see handArbiter.ts). Off: the nominated primary
+  // hand always drives when both are visible.
+  autoHand: boolean;
 }
 
 // Defaults seeded from the desk-distance prototype (CPU, ~83ms infer, ~11px
@@ -48,7 +65,19 @@ export const DEFAULT_PARAMS: PointerParams = {
   // stops a pinch flickering at the threshold; do not close it further.
   pinchOn: 0.04,
   pinchOff: 0.07,
+  // Estimated, not measured: crossing the whole screen takes about 0.7 frame
+  // heights, so this refuses a pinch only when the hand is on course to cross
+  // it in under half a second.
+  pinchMaxSpeed: 1.5,
+  // Estimated from a simulated pinch, not measured on a camera. aimFreezeDist
+  // sits just above pinchOff; it must stay below the gap of an open pointing
+  // hand, or the finger offset never updates.
+  aimTau: 0.15,
+  aimFreezeDist: 0.09,
+  aimFreezeRate: 0.25,
+  aimHoldMs: 150,
   requirePalm: true,
+  autoHand: true,
 };
 
 const KEY = "marbles.pointer.params";

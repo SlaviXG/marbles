@@ -227,6 +227,11 @@ export default function DetailPanel() {
   return (
     <div className={`immersive-root${open ? " open" : ""}`}>
       <div className="immersive-scrim" ref={scrimRef} onClick={clear} />
+      {/* Where to move a hand to leave: the window closes when the cursor
+          leaves its frame, which nothing on screen otherwise says. Shown only
+          while a hand is driving (see styles.css); never catches the pointer. */}
+      <ExitHint side="left" />
+      <ExitHint side="right" />
       {/* Hover zone is the whole window frame, so the feathered side margins are a
           resting buffer: parking the cursor there keeps it open. Only leaving the
           frame (into the dimmed scrim) counts as hovering out. */}
@@ -263,6 +268,17 @@ export default function DetailPanel() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ExitHint({ side }: { side: "left" | "right" }) {
+  return (
+    <div className={`exit-hint ${side}`} aria-hidden>
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {side === "left" ? <path d="M19 12H5M11 6l-6 6 6 6" /> : <path d="M5 12h14M13 6l6 6-6 6" />}
+      </svg>
+      <span>close</span>
     </div>
   );
 }
