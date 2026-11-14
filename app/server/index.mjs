@@ -6,6 +6,7 @@ import { ChokidarWatcher } from "./watch/FileWatcher.mjs";
 import { ObsidianVaultSource } from "./source/ObsidianVaultSource.mjs";
 import { VaultService } from "./VaultService.mjs";
 import { createApp } from "./transport/createApp.mjs";
+import { createAgentDetector } from "./agents/detectAgents.mjs";
 
 // Composition root: build the object graph and wire the layers together.
 async function main() {
@@ -32,7 +33,7 @@ async function main() {
 
   console.log(`Parsed ${service.snapshot().notes.length} note(s) from ${config.vaultDir}`);
 
-  createApp(service).listen(config.port, () =>
+  createApp(service, { agentDetector: createAgentDetector({ owner: config.agentOwner }) }).listen(config.port, () =>
     console.log(`vault-viz server: http://localhost:${config.port}`),
   );
 }

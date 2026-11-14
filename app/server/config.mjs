@@ -16,5 +16,9 @@ export function loadConfig() {
       `OBSIDIAN_VAULT_DIR missing or not found: ${vaultDir}\nSet it in the repo-root .env (see .env.example).`,
     );
   }
-  return { vaultDir, port: Number(process.env.VAULT_VIZ_PORT) || 5174 };
+  return {
+    vaultDir,
+    port: Number(process.env.VAULT_VIZ_PORT) || 5174,
+    agentOwner: process.env.MARBLES_AGENT_OWNER,
+  };
 }

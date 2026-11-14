@@ -1,5 +1,9 @@
 # Agent voting for Marbles (v1)
 
+## Step 1: agent detection (done)
+
+The server now discovers known agent CLIs on PATH and, on macOS, selected desktop bundles. `GET /api/agents` returns cached public discovery results with stable `<owner>-<agentId>` instance names. Set `MARBLES_AGENT_OWNER` to override the OS username. Discovery only checks executables and optionally runs `--version`; it does not start tasks or voting.
+
 ## Goal and boundary
 
 Turn one user request into one owned execution. Eligible agent nodes (Codex, Claude Code, and later adapters) each submit a short bid; the server chooses one winner and runs that agent. The canvas shows who bid, who won, what the winner is doing, and the result. A task has at most one executing agent. There is no decomposition, delegation, agent-to-agent handoff, or multi-agent orchestration in v1. Losing agents do not execute or review the task.

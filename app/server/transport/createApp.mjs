@@ -1,11 +1,20 @@
 import express from "express";
+import { detectAgents } from "../agents/detectAgents.mjs";
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service) {
+export function createApp(service, { agentDetector = detectAgents } = {}) {
   const app = express();
 
   app.get("/api/vault", (_req, res) => res.json(service.snapshot()));
+  app.get("/api/agents", async (_req, res) => {
+    try {
+      res.json(await agentDetector());
+    } catch (error) {
+      console.error("Agent detection failed:", error);
+      res.status(500).json({ error: "Agent detection failed" });
+    }
+  });
 
   app.get("/api/stream", (req, res) => {
     res.set({
