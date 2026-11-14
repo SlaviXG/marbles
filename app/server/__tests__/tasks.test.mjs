@@ -4,12 +4,21 @@ import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launcher, validateArtifactPath, resolveArtifact, TaskService } from '../agents/taskService.mjs';
+import { launcher, validateArtifactPath, resolveArtifact, TaskService, scanArtifacts } from '../agents/taskService.mjs';
 import { parseLog } from '../agents/logs.mjs';
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const codex = { id: 'codex', kind: 'cli', path: '/bin/codex' };
 const claude = { id: 'claude', kind: 'cli', path: '/bin/claude' };
 describe('task launcher', () => {
+  it('keeps dependency files from crowding real deliverables out of artifact discovery', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-files-'));
+    try {
+      await mkdir(path.join(root, 'node_modules', 'library'), { recursive: true });
+      await writeFile(path.join(root, 'node_modules', 'library', 'README.md'), 'dependency');
+      await writeFile(path.join(root, 'report.md'), 'deliverable');
+      expect((await scanArtifacts(root, root)).map(file => file.name)).toEqual(['report.md']);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('starts empty and only reports files from a newly instructed task', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-task-'));
     const previous = path.join(root, 'codex', 'previous');

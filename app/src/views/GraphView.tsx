@@ -25,17 +25,17 @@ const COLORS: Record<GNode["type"], string> = {
   section: "#2dd4bf",
   url: "#6b7280",
   agent: "#ffffff",
-  task: "#39d98a",
-  artifact: "#65a9ff",
+  task: "#8b949e",
+  artifact: "#39d98a",
 };
 
 // Graph-unit hit radius per node type (generous; nearest node wins).
-const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 13 };
+const HIT: Record<GNode["type"], number> = { note: 11, section: 8, url: 7, agent: 11, task: 10, artifact: 15 };
 
 // Drawn node radius per type, in graph units (matches nodeCanvasObject). Times
 // the zoom `k` this is how big the node reads on screen, which sets the magnet's
 // capture field: a node the size of a few px still gets a comfortable target.
-const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 6 };
+const VIS_R: Record<GNode["type"], number> = { note: 7, section: 4.5, url: 3, agent: 7, task: 6, artifact: 9 };
 
 // Magnet field geometry (screen px). Capture grows with the node's on-screen
 // size but never shrinks below MIN_CAPTURE (so a tiny node at low zoom is still
@@ -643,7 +643,7 @@ export default function GraphView() {
           const r = baseR * (0.45 + 0.55 * grow);
           ctx.globalAlpha = p < 0 ? 0 : p > 1 ? 1 : p;
           ctx.beginPath();
-          if (node.type === 'artifact') ctx.roundRect(node.x - 7, node.y - 6, 14, 12, 2);
+          if (node.type === 'artifact') ctx.roundRect(node.x - r, node.y - r, r * 2, r * 2, 3);
           else ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
           ctx.fillStyle = COLORS[node.type as GNode["type"]] ?? "#999";
           ctx.fill();
@@ -662,7 +662,7 @@ export default function GraphView() {
             ctx.fillStyle = '#0d1117';
             ctx.font = '5px ui-sans-serif, system-ui, sans-serif';
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', image: 'IMG', code: '</>' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
+            ctx.fillText(({ pdf: 'PDF', spreadsheet: 'XLS', docx: 'DOC', markdown: 'MD', slides: 'PPT', image: 'IMG' } as Record<string, string>)[node.artifactType] ?? 'FILE', node.x, node.y);
           }
           // Spring-animated ring: scales + fades in/out with carried velocity.
           const selAmt = node.id === ringNode.current.select ? selectRing.current.value : 0;

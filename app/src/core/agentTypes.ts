@@ -10,6 +10,7 @@ export interface DetectedAgent {
   version: string | null;
   available: boolean;
   codingAgent: boolean; // Catalog eligibility for the agent canvas.
+  status?: 'idle' | 'running' | 'unavailable';
 }
 export type AgentInfo = DetectedAgent;
 export interface ArtifactInfo { path: string; name: string; type: 'pdf' | 'spreadsheet' | 'docx' | 'image' | 'code' | 'other' }
@@ -23,6 +24,10 @@ export interface AgentTask {
   stdout: string;
   stderr: string;
   artifacts: ArtifactInfo[];
+  source?: 'text' | 'voice';
+  transcript?: string;
+  title?: string;
+  intent?: { problem: string; objective: string; constraints: string[]; successCriteria: string[] };
 }
 export interface AgentLog {
   available: boolean;

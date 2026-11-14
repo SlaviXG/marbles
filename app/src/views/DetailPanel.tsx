@@ -448,7 +448,10 @@ function AgentBody({ agent, tasks, select }: { agent: AgentInfo; tasks: AgentTas
   </>;
 }
 function TaskBody({ task, select }: { task: AgentTask; select: (id: string) => void }) {
-  return <><div className="sec">{task.status} · {task.updatedAt}</div><p>{task.prompt}</p>
+  return <><div className="sec">{task.status} · {task.updatedAt} {task.source === 'voice' && '· Voice request'}</div>
+    {task.transcript && <><div className="sec">What you said</div><p>{task.transcript}</p></>}
+    {task.intent && <><div className="sec">Understood task</div><p>{task.intent.objective}</p>{task.intent.problem && <p>{task.intent.problem}</p>}</>}
+    <details><summary>Agent prompt</summary><pre className="content">{task.prompt}</pre></details>
     <button className="rowlink" onClick={() => select(`agent:${task.agentId}`)}>{task.agentId}</button>
     {task.artifacts.length > 0 && <div className="sec">Files</div>}
     {task.artifacts.map((a) => <button key={a.path} className="rowlink" onClick={() => select(`artifact:${task.id}:${encodeURIComponent(a.path)}`)}>{a.name}</button>)}

@@ -15,6 +15,123 @@
   --immersive-inset: 7%;
 }
 
+/* The voice marble floats above the graph; luminosity follows mic energy. */
+.voice-dock {
+  --voice-level: 0;
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 41;
+  width: min(420px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--text);
+  pointer-events: none;
+}
+.voice-dock button { pointer-events: auto; }
+.voice-marble-float { margin-top: 12px; animation: marble-float 5s ease-in-out infinite; }
+.voice-marble {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100px;
+  height: 100px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  isolation: isolate;
+}
+.voice-halo {
+  position: absolute;
+  inset: -32px;
+  border-radius: 50%;
+  background: radial-gradient(circle, oklch(79% 0.13 178 / 0.3), oklch(63% 0.13 190 / 0.1) 42%, transparent 70%);
+  opacity: calc(0.4 + var(--voice-level) * 0.6);
+  transform: scale(calc(1 + var(--voice-level) * 0.45));
+  transition: transform 120ms ease-out, opacity 120ms ease-out;
+  z-index: -1;
+}
+.voice-sphere {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  border-radius: 50%;
+  color: oklch(93% 0.025 175 / 0.8);
+  background:
+    radial-gradient(ellipse at 28% 21%, oklch(98% 0.015 165 / 0.95), transparent 22%),
+    radial-gradient(ellipse at 72% 80%, oklch(63% 0.13 180 / 0.7), transparent 48%),
+    conic-gradient(from 35deg at 42% 60%, oklch(31% 0.06 195), oklch(73% 0.08 170), oklch(37% 0.06 210), oklch(84% 0.045 175), oklch(31% 0.06 195));
+  box-shadow: inset -10px -14px 18px oklch(14% 0.035 215 / 0.85),
+    inset 2px 3px 5px oklch(95% 0.025 170 / 0.65),
+    0 0 24px oklch(72% 0.13 177 / 0.24), 0 12px 26px oklch(10% 0.015 200 / 0.6);
+  transform: scale(calc(1 + var(--voice-level) * 0.12));
+  transition: transform 120ms ease-out;
+}
+.voice-sphere::before {
+  content: "";
+  position: absolute;
+  inset: 12px -20px;
+  border: 1px solid oklch(90% 0.05 175 / 0.5);
+  border-radius: 48%;
+  transform: rotate(-38deg);
+  box-shadow: 0 3px 5px oklch(89% 0.05 175 / 0.24), inset 0 3px 8px oklch(95% 0.02 175 / 0.25);
+}
+.voice-sphere svg { position: relative; filter: drop-shadow(0 1px 3px oklch(15% 0.03 190)); }
+.voice-dock.armed .voice-halo { opacity: 0.8; }
+.voice-dock.wake .voice-halo { opacity: 0.6; }
+.voice-dock.reply-speaking .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
+.voice-dock.listening .voice-sphere { color: oklch(98% 0.015 170); }
+.voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo { animation: marble-connect 1.4s ease-in-out infinite; }
+.voice-dock.error .voice-halo { background: radial-gradient(circle, oklch(70% 0.15 30 / 0.3), transparent 68%); opacity: 1; }
+.voice-caption { font-size: 0.85rem; font-weight: 500; margin-top: 2px; text-shadow: 0 1px 5px var(--bg); }
+.voice-help {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--muted);
+  max-width: 38ch;
+  margin: 6px 0 0;
+  text-wrap: pretty;
+  text-shadow: 0 1px 4px var(--bg);
+}
+.voice-help[role="alert"] { color: oklch(78% 0.13 30); }
+.voice-off { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.7rem; padding: 8px 12px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.voice-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.voice-conversation { position: fixed; bottom: 24px; left: 24px; z-index: 42; width: min(330px, 28vw); max-height: calc(100dvh - 140px); pointer-events: none; }
+.voice-messages { display: flex; flex-direction: column; gap: 14px; max-height: inherit; overflow-y: auto; }
+.voice-message { align-self: flex-start; width: fit-content; max-width: 94%; border-radius: 17px 17px 17px 5px; padding: 11px 14px; background: oklch(24% 0.013 245); color: oklch(93% 0.008 240); box-shadow: 0 3px 14px oklch(10% 0.01 240 / 0.16); pointer-events: auto; opacity: 1; transition: opacity 1.2s ease-out; animation: voice-message-in 180ms ease-out; }
+.voice-message.user { align-self: flex-end; border-radius: 17px 17px 5px 17px; background: oklch(49% 0.14 250); }
+.voice-message.fading { opacity: 0; }
+.voice-conversation:hover .voice-message.fading, .voice-conversation:focus-within .voice-message.fading { opacity: 1; }
+.voice-message-label { display: block; font-size: 0.65rem; font-weight: 600; opacity: 0.7; margin-bottom: 4px; }
+.voice-message p { font-size: 0.84rem; line-height: 1.55; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24dvh; overflow-y: auto; }
+.voice-message.pending .voice-message-label::after { content: ' · live'; }
+.voice-message-actions { display: flex; gap: 10px; margin-top: 8px; }
+.voice-message button { color: inherit; font: inherit; font-size: 0.72rem; background: transparent; border: 0; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.voice-dock button:focus-visible, .voice-message button:focus-visible { outline: 2px solid var(--teal); outline-offset: 4px; }
+@keyframes voice-message-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.voice-dock button:disabled { opacity: 0.5; cursor: default; }
+@keyframes marble-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+@keyframes marble-connect { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@media (max-width: 650px) {
+  .voice-dock { bottom: 98px; width: min(380px, calc(100vw - 32px)); }
+  .voice-help { font-size: 0.68rem; }
+  .voice-conversation { bottom: 250px; left: 14px; width: min(310px, calc(100vw - 28px)); max-height: calc(100dvh - 340px); }
+  .voice-message p { max-height: 16dvh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-marble-float, .voice-dock.loading .voice-halo, .voice-dock.stopping .voice-halo, .voice-dock.reply-speaking .voice-halo { animation: none; }
+  .voice-sphere, .voice-halo { transition: none; transform: none; }
+  .voice-message { animation: none; transition: none; }
+}
+
 * {
   box-sizing: border-box;
 }

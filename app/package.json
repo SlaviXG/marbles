@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Live visualization of the Obsidian vault (force-directed graph).",
   "scripts": {
+    "setup:wake": "node scripts/setup-wake.mjs",
+    "predev": "npm run setup:wake",
+    "preclient": "npm run setup:wake",
+    "prebuild": "npm run setup:wake",
     "dev": "concurrently -k -n server,client -c blue,green \"node server/index.mjs\" \"vite\"",
     "server": "node server/index.mjs",
     "client": "vite",
@@ -13,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@mediapipe/tasks-vision": "^0.10.14",
     "chokidar": "^3.6.0",
     "d3-force-3d": "^3.0.6",
@@ -21,6 +26,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-force-graph-2d": "^1.25.5",
+    "ws": "^8.18.3",
     "zustand": "^4.5.4"
   },
   "devDependencies": {
