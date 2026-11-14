@@ -133,9 +133,11 @@ audio object URLs and microphone resources are released. The Vite development
 server exposes the speech handler directly as well, so updating speech playback
 does not require restarting an active agent runner. Neither route exposes the key.
 
-After speech recognition, **Claude Sonnet 5.5** coordinates the work through a
-bounded Messages API tool loop inside Marbles. Set `ANTHROPIC_API_KEY` in the
-repo-root `.env`, then restart the server. `MARBLES_COORDINATOR_MODEL` optionally
+After speech recognition, the actual **Nous Research Hermes Agent** runtime
+coordinates the work, powered by **Claude Sonnet 5.5** through its native Anthropic
+provider. Set `ANTHROPIC_API_KEY` in the repo-root `.env`. Install Git, uv, and
+Python 3.14, then run `npm run setup:hermes` in `app`. `npm run dev` and
+`npm run server` run setup automatically, reusing the installed runtime. `MARBLES_COORDINATOR_MODEL` optionally
 overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and Marin
 speech output; the coordinator does not send standby audio to Claude.
 
@@ -155,8 +157,14 @@ to analyze. Asset reads are limited to the task workspace; hidden/credential fil
 traversal, and escaping symlinks are rejected. Log credentials are redacted.
 Unmanaged CLI session logs are labeled separately from Marbles-managed work.
 
-The execution harness is Marbles's existing TaskService and SwarmService, using
-Claude's native tool calls. This is not an installation of the Hermes runtime.
+Hermes `run_agent.AIAgent` owns the reasoning, provider calls, retries, and tool
+loop. A small Python stdio adapter registers Marbles tools in Hermes and forwards
+their execution to the existing TaskService/SwarmService. There is no custom
+JavaScript LLM loop. The source is pinned in `server/hermes/runtime.json`; setup
+uses the upstream uv lockfile and Anthropic extra. Its checkout, Python environment,
+and dedicated Hermes profile live under gitignored `app/.hermes-runtime/`; the
+user’s global Hermes profile is untouched. The small app toolset is directly
+visible, with Hermes tool-search deferral disabled for this profile.
 One idle worker is the default; explicit team requests and useful collaborative
 plans use the existing swarm runner. Reservations prevent voice/manual/swarm races.
 Cancellation keeps a worker busy until its process exits. New work uses the
@@ -164,15 +172,19 @@ existing per-task workspace under `MARBLES_WORKSPACE_DIR` (default
 `~/marbles-workspace`); changing an external project still requires a real target
 and the worker's existing access.
 
-Delegation ends the planning loop and acknowledges the actual assignment without
-an extra model call. Spoken assignment and completion notices are limited to 25
+After an accepted delegation or final response tool, the adapter requests a
+Hermes interrupt at the tool boundary and acknowledges the actual app receipt.
+A provider/process failure after acceptance cannot duplicate the work. Spoken assignment and completion notices are limited to 25
 words. Full plans and assumptions are under
 **Plan & assumptions** and in task details; raw worker logs stay in task details.
-Completed voice tasks/swarms get one cached Claude result summary, with a short
+Completed voice tasks/swarms get one cached Hermes/Claude result summary, with a short
 local fallback if that call fails. **Read aloud** uses the same concise message.
 
-The coordinator is bounded to six model rounds and twelve tool calls per request,
-with a shared 40-second deadline and at most four in-flight voice requests.
+Hermes is bounded to six iterations and a 40-second run budget. The Node bridge
+bounds tool calls to twelve and terminates a stuck runtime after 50 seconds; the
+voice UI allows 55 seconds for the response. At most four voice requests are
+in flight. Summary turns expose no execution tools. Status/log requests remove
+delegation/cancellation tools from both Hermes’s schema and the app dispatcher.
 Request IDs deduplicate retries, including accepted work, and follow-ups serialize
 within each conversation. Memory is kept for up to 50 conversations with six recent
 messages each; requests and result summaries retain up to 200 entries. These are
@@ -199,6 +211,8 @@ retry up to three times without replaying audio from an established session.
 Before sharing this server, add authentication and explicit origin configuration.
 Keep the frontend on port 5173. The key, audio, and local configuration are never
 committed; transcripts and generated prompts remain in the server task history.
+
+Runtime reference: [Hermes programmatic integration](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/programmatic-integration.md).
 
 API references: [live transcription](https://developers.openai.com/api/docs/guides/realtime-transcription)
 and [Claude tool use](https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works).

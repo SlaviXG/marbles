@@ -157,9 +157,9 @@ describe('swarm execution', () => {
 describe('voice swarm routing', () => {
   it('routes keyword requests to swarm even when interpretation says solo', async () => {
     const start = vi.fn(async () => ({ id: 'swarm-1', agents: ['codex'] }));
-    const { ClaudeCoordinator } = await import('../agents/ClaudeCoordinator.mjs');
+    const { HermesCoordinator } = await import('../agents/HermesCoordinator.mjs');
     const taskService = { root: '/tmp', agentDetector: async () => [], snapshot: () => [], isBusy: () => false, startIdle: vi.fn() };
-    const coordinator = new ClaudeCoordinator({ taskService, swarmService: { start }, apiKey: 'test', fetchApi: async () => ({ ok: true, json: async () => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'delegate-123', name: 'delegate_work', input: { collaboration: 'solo', agentId: 'auto', problem: '', objective: 'Write', summary: 'I’ll write the report.', plan: ['Write a report'], assumptions: [], constraints: [], successCriteria: ['Report exists'] } }] }) }) });
+    const coordinator = new HermesCoordinator({ taskService, swarmService: { start }, runner: async (_payload, call) => { await call('delegate_work', { collaboration: 'solo', agentId: 'auto', problem: '', objective: 'Write', summary: 'I’ll write the report.', plan: ['Write a report'], assumptions: [], constraints: [], successCriteria: ['Report exists'] }); return { completed: false, interrupted: true }; } });
     const commands = new VoiceCommands({ taskService, swarmService: { start }, coordinator });
     const result = await commands.dispatch({ transcript: 'Have everyone write a report', requestId: 'request-123' });
     expect(result.state).toBe('swarm'); expect(start).toHaveBeenCalledWith(expect.objectContaining({ mode: 'swarm' }));
