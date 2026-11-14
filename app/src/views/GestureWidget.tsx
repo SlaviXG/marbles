@@ -40,7 +40,7 @@ export default function GestureWidget() {
       if (next !== lastFeedback) { lastFeedback = next; setFeedback(next); }
       if (handDebug.version === drawn && wasPresent === present) return;
       drawn = handDebug.version; wasPresent = present;
-      const hands = present ? handDebug.hands : [];
+      const hands = present ? handDebug.hands.filter(hand => hand.active) : [];
       ctx.clearRect(0, 0, W, H);
       ctx.strokeStyle = 'oklch(70% .08 215 / .3)';
       ctx.lineWidth = 1;

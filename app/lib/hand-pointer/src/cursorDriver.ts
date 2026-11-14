@@ -69,6 +69,13 @@ export interface CursorParams {
   pinchAnchorMs: number;
   pinchAnchorMaxPx: number; // cap the correction; beyond this trust tracking
   pinchAnchorMaxSpeed: number; // px/s; faster = travelling, do not anchor
+  // A press holds the dot exactly where it began until the hand has travelled
+  // this far (px). The anchor above corrects only the instant of the press;
+  // the hand usually keeps sinking for a few hundred ms after it, and without
+  // this the dot slides during the hold and the release misses the target.
+  // Past this distance it is a drag, and the dot is released to follow 1:1.
+  // 0 turns it off.
+  pressHoldPx: number;
   // Two-handed zoom. Gain converts hand separation (px) into a wheel-style
   // delta: ~200px apart is ~2x at the graph's pinch sensitivity.
   zoomGain: number;
@@ -89,6 +96,7 @@ export const DEFAULT_CURSOR_PARAMS: CursorParams = {
   pinchAnchorMs: 100,
   pinchAnchorMaxPx: 60,
   pinchAnchorMaxSpeed: 250,
+  pressHoldPx: 18,
   zoomGain: 0.35,
   zoomMinDelta: 0.5,
 };
@@ -159,6 +167,12 @@ export class CursorDriver {
   private pressLatch = false;
   // Dot positions from the last ~250ms, to anchor a press against the pinch dip.
   private readonly hist: { t: number; x: number; y: number }[] = [];
+  // Press hold: where the smoothed hand and the dot were when the press began.
+  private held = false;
+  private pressSx = 0;
+  private pressSy = 0;
+  private pressDispX = 0;
+  private pressDispY = 0;
 
   constructor(deps: CursorDriverDeps, nowMs: number, startX = 0, startY = 0) {
     this.sink = deps.sink;
@@ -286,12 +300,31 @@ export class CursorDriver {
       }
       this.lockedId = null; // no pull while pinched
       this.magnetRest = false;
+      this.held = p.pressHoldPx > 0;
+      this.pressSx = sx.value;
+      this.pressSy = sy.value;
+      this.pressDispX = sx.value + this.offX;
+      this.pressDispY = sy.value + this.offY;
     } else if (!pressing && this.wasPressing) {
+      this.held = false;
       // Pinch ended: pause the assist so releasing a pan does not dart the
       // cursor onto a nearby node; the decay below eases out any residue.
       this.magnetPauseUntil = now + p.magnetResumeMs;
     }
-    if (active && pressing) {
+    if (
+      active &&
+      pressing &&
+      this.held &&
+      Math.hypot(sx.value - this.pressSx, sy.value - this.pressSy) < p.pressHoldPx
+    ) {
+      // Still within the hold: pin the dot to the press point by absorbing
+      // whatever the hand has drifted into the offset. If the hold breaks
+      // later, that offset is what the drain below works off, so the dot
+      // starts moving from the press point without a jump.
+      this.offX = this.pressDispX - sx.value;
+      this.offY = this.pressDispY - sy.value;
+    } else if (active && pressing) {
+      this.held = false;
       // A drag drains the offset in proportion to travel, blending the pan back
       // to exact 1:1; a stationary pinch keeps its point for the click.
       const travel = Number.isFinite(this.prevX)
@@ -374,6 +407,7 @@ export class CursorDriver {
       this.hist.length = 0;
       this.zooming = false;
       this.pressLatch = false;
+      this.held = false;
     }
     // Bookkeeping for the pinch anchor (dot history) and drag travel.
     if (active && !pressing) {

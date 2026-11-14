@@ -9,6 +9,7 @@ import { forceCollide } from "d3-force-3d";
 import { useVault } from "../state/store";
 import { useAgents } from "../state/agents";
 import { composeGraph, type GNode } from "../core/graph";
+import { ZOOM_MAX, fieldOf, minZoom } from "../core/field";
 import { springProgress, springForSettleMs, LAYOUT, type SpringToken } from "../motion/springs";
 import { SpringValue } from "../motion/SpringValue";
 import { subscribeFrame } from "../motion/ticker";
@@ -289,8 +290,9 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
       // so a long pinch and a single notch both stay smooth.
       zoomTau.current = a.pinch ? ZOOM_TAU_GESTURE : ZOOM_TAU_FINE;
       const sensitivity = a.pinch ? 0.01 : 0.0015;
-      const min = Math.log(0.3);
-      const max = Math.log(12);
+      const field = fieldOf(nodesRef.current);
+      const min = Math.log(minZoom(field, el.clientWidth, el.clientHeight));
+      const max = Math.log(ZOOM_MAX);
       zoomTargetLog.current = Math.min(
         max,
         Math.max(min, zoomTargetLog.current - a.delta * sensitivity),
@@ -625,6 +627,17 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
           // hand drift reinterprets the gesture as relocating the canvas.
           // Panning is for empty background, where there is nothing to open.
           if (downNode.current) return;
+          // Let a pinch settle before interpreting its small drift as a pan.
+          // Follow the last pointer so crossing the threshold starts smoothly.
+          if (
+            !dragging.current &&
+            Math.hypot(e.clientX - downRef.current.x, e.clientY - downRef.current.y) <=
+              clickSlop(DRAG_THRESHOLD)
+          ) {
+            lastPtr.current = { x: e.clientX, y: e.clientY };
+            lastMoveT.current = performance.now();
+            return;
+          }
           // Drag = pan, 1:1. Move the center rigidly and track velocity for fling.
           const t = performance.now();
           const dt = Math.max(1, t - lastMoveT.current) / 1000;

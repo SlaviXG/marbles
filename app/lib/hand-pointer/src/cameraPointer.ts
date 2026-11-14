@@ -3,6 +3,18 @@ import { OneEuro } from "./oneEuro";
 import { loadParams, subscribeParams, type PointerParams } from "./pointerParams";
 import { createHandWorker, type HandAssets, type HandOut, type WorkerOut } from "./handWorker";
 import { ArticulationTracker } from "./articulation";
+import { handPose, poseUsable, type HandPose } from "./palm";
+import {
+  DRIVER_GRACE,
+  HandArbiter,
+  HandoffOffset,
+  MotionTracker,
+  PinchLatch,
+  palmSpan,
+} from "./handArbiter";
+import { PinchGuard, nextPinch } from "./pinchGuard";
+import { AimPoint } from "./aimPoint";
+import { HandRecorder, installHandRecorder } from "./handRecorder";
 import { DEFAULT_CURSOR_PARAMS } from "./cursorDriver";
 
 // The camera pointer: webcam -> worker (hand landmarks) -> One Euro filter ->
@@ -103,7 +115,10 @@ export const secondaryHand = {
 // zone and whether a hand has drifted outside it. `version` ticks on every
 // inference result so the renderer can skip redraws between them.
 export const handDebug = {
-  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean }[],
+  // `pose` holds the pose measurements (see palm.ts) and `active` whether the
+  // hand passed the pose gate and is being used as input. Hands that fail it
+  // are still listed, so the overlay can show a hand that is seen but ignored.
+  hands: [] as { hand: "L" | "R"; pts: number[]; primary: boolean; pose: HandPose; active: boolean }[],
   version: 0,
   // Live tap-gesture state for the overlay, so a click that does not fire can be
   // told apart from a gesture that was never recognised.
@@ -111,6 +126,17 @@ export const handDebug = {
   // now: the arbiter that would use it is not wired up until the numbers show
   // the two hands actually separate during real use.
   articulation: { L: 0, R: 0 } as Record<"L" | "R", number>,
+  // How far each hand's index knuckle is from where it recently was, in palm
+  // lengths (see MotionTracker in handArbiter.ts): the signal that decides
+  // which hand drives when both are in frame.
+  motion: { L: 0, R: 0 } as Record<"L" | "R", number>,
+  // Hands moving too fast to start a pinch right now (see pinchGuard.ts).
+  fast: { L: false, R: false } as Record<"L" | "R", boolean>,
+  // What the arbiter is doing about a handover (see HandArbiter.why). Empty
+  // when there is nothing to decide.
+  arbiter: "",
+  // Progress toward a handover, 0..1 (see HandArbiter.evidence).
+  evidence: 0,
 };
 
 const DOWNSCALE = 256; // cap the frame's long side before inference (cheap win)
@@ -185,6 +211,37 @@ class CameraPointer {
     L: new ArticulationTracker(),
     R: new ArticulationTracker(),
   };
+  // Whether each physical hand currently passes the pose gate. Kept between
+  // frames for the hysteresis in poseUsable.
+  private palm: Record<"L" | "R", boolean> = { L: false, R: false };
+  // Which hand drives when both are in frame: the one that is moving while
+  // the other rests. Motion is tracked per physical hand, like articulation.
+  private motion: Record<"L" | "R", MotionTracker> = {
+    L: new MotionTracker(),
+    R: new MotionTracker(),
+  };
+  private arbiter = new HandArbiter();
+  // When each physical hand was last in frame and usable (seconds, on the
+  // frame clock). A hand's per-hand state below survives a miss shorter than
+  // DRIVER_GRACE, so a single dropped detection does not restart it.
+  private seenT: Record<"L" | "R", number> = { L: NaN, R: NaN };
+  // Whether each physical hand is pinching. Per hand, not per role: when the
+  // cursor changes hands, each hand keeps its own pinch.
+  private pinch: Record<"L" | "R", boolean> = { L: false, R: false };
+  // Keeps a hand that takes the cursor over from pressing with it until it
+  // has been seen open (see PinchLatch).
+  private pinchLatch = new PinchLatch();
+  // Per physical hand: refuses a pinch that starts mid-sweep (motion blur).
+  private guard: Record<"L" | "R", PinchGuard> = { L: new PinchGuard(), R: new PinchGuard() };
+  // Per physical hand: the point the hand aims at, steady through a pinch.
+  private aim: Record<"L" | "R", AimPoint> = { L: new AimPoint(), R: new AimPoint() };
+  // The hand that drove the cursor on the last frame, to notice a handover.
+  private driving: "L" | "R" | null = null;
+  // Carries the cursor's position across a handover so it does not jump.
+  private handoff = new HandoffOffset();
+  // Camera frame width / height, so pose angles are measured in real
+  // proportions rather than the stretched normalized ones.
+  private aspect = 4 / 3;
   private busy = false; // worker has a frame in flight (backpressure)
   private lastSent = 0;
   private rafId = 0;
@@ -204,6 +261,11 @@ class CameraPointer {
   // diagnostics: counts since the last heartbeat log (per second)
   private dbg = { sent: 0, tips: 0, hands: 0, bmpErr: 0, stall: 0 };
   private dbgTimer = 0;
+  // Debug recorder (see handRecorder.ts and RECORDING.md). Null unless ?debug,
+  // so a normal session pays one null check per frame and nothing else. Kept
+  // across stop/start so turning the hand cursor off does not lose a take.
+  private rec: HandRecorder | null = null;
+  private uninstallRec: (() => void) | null = null;
 
   async start(options: StartOptions = {}) {
     if (this.stream) return;
@@ -256,6 +318,14 @@ class CameraPointer {
 
     // Heartbeat under ?debug: one line/sec, to see which stage stalls.
     if (DEBUG) {
+      this.rec ??= new HandRecorder({
+        meta: () => ({
+          userAgent: navigator.userAgent,
+          frame: { width: this.video?.videoWidth ?? 0, height: this.video?.videoHeight ?? 0 },
+          params: this.params,
+        }),
+      });
+      this.uninstallRec = installHandRecorder(this.rec);
       this.dbgTimer = window.setInterval(() => {
         const d = this.dbg;
         console.log(
@@ -273,6 +343,8 @@ class CameraPointer {
     this.rafId = 0;
     clearInterval(this.dbgTimer);
     this.dbgTimer = 0;
+    this.uninstallRec?.();
+    this.uninstallRec = null;
     window.removeEventListener("pointermove", this.onRealPointer, true);
     window.removeEventListener("pointerdown", this.onRealPointer, true);
     pointerStore.getState().setMode("hand");
@@ -287,6 +359,18 @@ class CameraPointer {
     this.canvas = null;
     this.cctx = null;
     this.busy = false;
+    this.arbiter.reset();
+    this.motion.L.reset();
+    this.motion.R.reset();
+    this.seenT = { L: NaN, R: NaN };
+    this.pinch = { L: false, R: false };
+    this.pinchLatch.reset();
+    this.driving = null;
+    this.handoff.clear();
+    this.aim.L.reset();
+    this.aim.R.reset();
+    this.guard.L.reset();
+    this.guard.R.reset();
     pointerTarget.present = false;
     pointerStore.getState().set("off");
   }
@@ -352,6 +436,7 @@ class CameraPointer {
     const vh = video.videoHeight;
     if (!this.busy && now - this.lastSent >= minGap && video.readyState >= 2 && vw > 0 && vh > 0) {
       this.lastSent = now;
+      this.aspect = vw / vh;
       // Downscale only when larger than the target. Snapshot the frame onto an
       // OffscreenCanvas and transfer it: transferToImageBitmap is synchronous and
       // reliable, unlike createImageBitmap(video) which can hang on some setups.
@@ -379,6 +464,39 @@ class CameraPointer {
     this.rafId = requestAnimationFrame(this.pump);
   };
 
+  // Debug recording of one result frame. Only called when this.rec exists.
+  // Every raw hand is recorded, including ones the pose gate rejected, so a
+  // recording can be replayed through the pure logic with different constants.
+  private record(
+    msg: { hands: HandOut[]; t: number },
+    pose: Map<HandOut, HandPose>,
+    active: HandOut[],
+    driver: "L" | "R" | null,
+    motion: Partial<Record<"L" | "R", number>>,
+    extra?: Record<string, unknown>,
+  ) {
+    this.rec!.push({
+      t: msg.t,
+      at: performance.now(),
+      hands: msg.hands.map((c) => ({
+        hand: c.hand,
+        conf: c.conf,
+        pts: c.pts,
+        pose: pose.get(c),
+        active: active.includes(c),
+      })),
+      driver,
+      why: handDebug.arbiter,
+      motion,
+      evidence: handDebug.evidence,
+      primaryPinching: pointerTarget.pinching,
+      secondaryPinching: secondaryHand.pinching,
+      fast: handDebug.fast,
+      mode: pointerStore.getState().mode,
+      extra,
+    });
+  }
+
   private onResult(msg: WorkerOut) {
     if (msg.type === "ready") {
       pointerStore.getState().set("tracking");
@@ -397,7 +515,85 @@ class CameraPointer {
     // a result arrived: the worker is free for the next frame
     this.busy = false;
     this.dbg.tips++;
-    if (msg.hands.length === 0) {
+    // Pose gate: only a hand held up with its palm to the camera is input. One
+    // seen from the back, turned sideways, lying level, hanging down or tipped
+    // so the fingers point at the lens is dropped here, before any gesture is
+    // read from it, and from then on is treated like a hand not in frame.
+    for (const side of ["L", "R"] as const) {
+      if (!msg.hands.some((c) => c.hand === side)) this.palm[side] = false;
+    }
+    const pose = new Map<HandOut, HandPose>();
+    const hands = msg.hands.filter((c) => {
+      const s = handPose(c.pts, c.hand, this.aspect);
+      pose.set(c, s);
+      this.palm[c.hand] = poseUsable(s, this.palm[c.hand]);
+      return !this.params.requirePalm || this.palm[c.hand];
+    });
+
+    const p = this.params;
+    const t = msg.t / 1000;
+
+    // Everything kept per physical hand: motion (for the arbiter), the pinch
+    // guard, the pinch itself. Measured for each usable hand whatever its
+    // role turns out to be this frame.
+    //
+    // A hand that is missing keeps its state for DRIVER_GRACE. Single missed
+    // detections are common, and restarting a hand's trackers on each one
+    // would make it read as freshly arrived (motion zero, pinch released,
+    // aim offset forgotten) every time. Only a hand gone that long is reset,
+    // so that its return is not read as a move or a sweep.
+    //
+    // Motion is measured at the index knuckle (landmark 5), not the
+    // fingertip: closing a pinch moves the fingertip, and a resting hand that
+    // pinches must not read as a hand that is pointing and take the cursor.
+    const motion: Partial<Record<"L" | "R", number>> = {};
+    const reversal: Partial<Record<"L" | "R", boolean>> = {};
+    // Thumb tip to index tip distance in normalized space: what the pinch
+    // thresholds on.
+    const gap: Partial<Record<"L" | "R", number>> = {};
+    for (const side of ["L", "R"] as const) {
+      const seen = hands.find((c) => c.hand === side);
+      if (seen) {
+        this.seenT[side] = t;
+        const tracker = this.motion[side];
+        motion[side] = tracker.update(
+          seen.pts[10] * this.aspect,
+          seen.pts[11],
+          palmSpan(seen.pts, this.aspect),
+          t,
+        );
+        reversal[side] = tracker.reversal;
+        // Palm speed from the middle knuckle (landmark 9), which survives
+        // blur and does not move when the fingers close.
+        handDebug.fast[side] = this.guard[side].update(
+          seen.pts[18] * this.aspect,
+          seen.pts[19],
+          t,
+          p.pinchMaxSpeed,
+        );
+        // Pinch, with hysteresis so a click does not flicker at the
+        // threshold. It may not START while the hand is sweeping fast: blur
+        // makes the fingertips read as touching (see pinchGuard.ts).
+        const d = Math.hypot(seen.x - seen.thumbX, seen.y - seen.thumbY);
+        gap[side] = d;
+        this.pinch[side] = nextPinch(
+          this.pinch[side],
+          d,
+          p.pinchOn,
+          p.pinchOff,
+          handDebug.fast[side],
+        );
+      } else if (!(t - this.seenT[side] < DRIVER_GRACE)) {
+        this.motion[side].reset();
+        this.guard[side].reset();
+        this.aim[side].reset();
+        this.pinch[side] = false;
+        handDebug.fast[side] = false;
+      }
+      handDebug.motion[side] = motion[side] ?? 0;
+    }
+
+    if (hands.length === 0) {
       // A missed detection is not a missing hand: a pinched hand occludes its
       // own landmarks, so single misses are common exactly mid-drag. Hold
       // presence and pinch through the GONE_MS grace (lastSeen ages naturally)
@@ -410,33 +606,88 @@ class CameraPointer {
         secondaryHand.present = false;
         secondaryHand.pinching = false;
       }
-      handDebug.hands = [];
+      handDebug.hands = msg.hands.map((c) => ({
+        hand: c.hand,
+        pts: c.pts,
+        primary: false,
+        pose: pose.get(c)!,
+        active: false,
+      }));
       handDebug.version++;
       this.artic.L.reset();
       this.artic.R.reset();
       handDebug.articulation.L = 0;
       handDebug.articulation.R = 0;
+      handDebug.arbiter = "";
+      handDebug.evidence = 0;
+      if (this.rec) this.record(msg, pose, hands, null, {});
       return;
     }
     this.dbg.hands++;
-    // Pick the hand the user nominated. Falling back to whatever is in frame
-    // matters: with one hand raised the cursor must work regardless of which
-    // one it is. The choice only bites when BOTH hands are visible, which is
-    // exactly when an arbitrary pick would feel broken.
-    const want = pointerStore.getState().priority;
-    const h = msg.hands.find((c) => c.hand === want) ?? msg.hands[0];
-    const p = this.params;
-    const t = msg.t / 1000;
+    const now = performance.now();
 
-    handDebug.hands = msg.hands.map((c) => ({ hand: c.hand, pts: c.pts, primary: c === h }));
+    // The hand that was driving is not in this frame. Its pinch and presence
+    // are held, exactly as when no hand is seen at all, and end the same way:
+    // once it has been unseen for GONE_MS. Done before asking the arbiter,
+    // because the arbiter never takes the cursor from a pinching hand, and
+    // this is what tells it the pinch is over.
+    if (
+      this.driving !== null &&
+      !hands.some((c) => c.hand === this.driving) &&
+      now - pointerTarget.lastSeen > GONE_MS
+    ) {
+      pointerTarget.present = false;
+      pointerTarget.pinching = false;
+    }
+
+    // Pick the hand that drives. With one hand raised it is that hand,
+    // whichever it is. With both, the arbiter follows the one that is moving
+    // while the other rests (see handArbiter.ts); the user's nominated hand is
+    // the starting choice, and the only choice when autoHand is off.
+    const want = pointerStore.getState().priority;
+    const pick = p.autoHand
+      ? // Locked only by the driving hand's pinch (a click, drag or zoom in
+        // progress). The other hand's pinch does not count: a relaxed hand
+        // often rests with thumb and finger close enough to read as one, and
+        // that must not stop it taking the cursor.
+        this.arbiter.update(motion, reversal, pointerTarget.pinching, want, t)
+      : want;
+    handDebug.arbiter = p.autoHand ? this.arbiter.why : "";
+    handDebug.evidence = p.autoHand ? this.arbiter.evidence : 0;
+    const picked = hands.find((c) => c.hand === pick);
+    // Held: the arbiter is keeping the cursor with a hand that is missing
+    // from this frame (see DRIVER_GRACE). Nobody drives this frame. The hand
+    // that IS visible must not stand in for it, which would be the very
+    // handover the grace exists to prevent; it stays the secondary hand.
+    // With autoHand off there is no grace: the nominated hand drives if it is
+    // here, and otherwise whichever hand is.
+    const held = p.autoHand && !picked;
+    const h = held ? null : (picked ?? hands[0]);
+
+    // Handover: the filters hold each hand's own history, so they follow the
+    // hands rather than the roles. Without this the new driver would be
+    // smoothed from the old one's position and glide across the screen.
+    const handover = h !== null && this.driving !== null && this.driving !== h.hand;
+    if (handover) {
+      [this.fx, this.fx2] = [this.fx2, this.fx];
+      [this.fy, this.fy2] = [this.fy2, this.fy];
+    }
+    if (h) this.driving = h.hand;
+
+    handDebug.hands = msg.hands.map((c) => ({
+      hand: c.hand,
+      pts: c.pts,
+      primary: c === h,
+      pose: pose.get(c)!,
+      active: hands.includes(c),
+    }));
     handDebug.version++;
 
     // Articulation per physical hand, and reset for whichever hand is absent so
     // a hand that leaves and returns does not read its re-entry as a gesture.
-    const tSec = msg.t / 1000;
     for (const side of ["L", "R"] as const) {
-      const seen = msg.hands.find((c) => c.hand === side);
-      if (seen) handDebug.articulation[side] = this.artic[side].update(seen.pts, tSec);
+      const seen = hands.find((c) => c.hand === side);
+      if (seen) handDebug.articulation[side] = this.artic[side].update(seen.pts, t);
       else {
         this.artic[side].reset();
         handDebug.articulation[side] = 0;
@@ -444,30 +695,72 @@ class CameraPointer {
     }
 
     // The other hand, if there is one. Tracked for two-handed gestures only.
-    const o = msg.hands.find((c) => c !== h);
+    const o = hands.find((c) => c !== h);
     if (o) {
-      const od = Math.hypot(o.x - o.thumbX, o.y - o.thumbY);
-      secondaryHand.pinching = secondaryHand.pinching ? od < p.pinchOff : od < p.pinchOn;
-      const s = this.toScreen(this.fx2.filter(1 - o.x, t), this.fy2.filter(o.y, t));
+      secondaryHand.pinching = this.pinch[o.hand];
+      const oa = this.aim[o.hand].update(o.pts, gap[o.hand]!, this.pinch[o.hand], t, p);
+      const s = this.toScreen(this.fx2.filter(1 - oa.x, t), this.fy2.filter(oa.y, t));
       secondaryHand.x = s.x;
       secondaryHand.y = s.y;
       secondaryHand.present = true;
-      secondaryHand.lastSeen = performance.now();
-    } else if (performance.now() - secondaryHand.lastSeen > GONE_MS) {
+      secondaryHand.lastSeen = now;
+    } else if (now - secondaryHand.lastSeen > GONE_MS) {
       secondaryHand.present = false;
       secondaryHand.pinching = false;
     }
-    // Pinch-to-click: thumb-tip to index-tip distance in normalized space, with
-    // hysteresis so a click does not flicker at the threshold.
-    const pinchDist = Math.hypot(h.x - h.thumbX, h.y - h.thumbY);
-    pointerTarget.pinching = pointerTarget.pinching
-      ? pinchDist < p.pinchOff
-      : pinchDist < p.pinchOn;
 
+    if (!h) {
+      // Held frame: the cursor stays where it is, with the press it had.
+      //
+      // Not pinching, the cursor is also kept alive (lastSeen refreshed). The
+      // cursor driver hides a cursor unseen for GONE_MS, and DRIVER_GRACE is
+      // the same 250 ms, but the two cannot line up: the grace ends on the
+      // first FRAME past 250 ms, which is processed up to a frame interval
+      // after the cursor would already have been hidden. Left to age, the
+      // cursor would blink off for that interval and then reappear under the
+      // other hand. Here that cannot strand a cursor: the arbiter ends an
+      // unpinched hold within DRIVER_GRACE, by the driver returning or by the
+      // visible hand taking over, and either way the cursor carries on.
+      //
+      // Pinching, lastSeen is left to age instead, so a press whose hand has
+      // gone is released after GONE_MS just as it is with no hand in frame
+      // (the check above then lifts the arbiter's lock).
+      if (pointerTarget.present && !pointerTarget.pinching) pointerTarget.lastSeen = now;
+      if (this.rec) this.record(msg, pose, hands, pick ?? null, motion, { held: true });
+      return;
+    }
+
+    // The press follows the physical hand: this hand's own pinch, except that
+    // a hand which has just taken the cursor over cannot press until it has
+    // been seen open (see PinchLatch). That holds even if the cursor had
+    // already gone when it took over: a drag whose hand left the frame must
+    // not resume under a second hand that happens to rest half-closed.
+    const pinchDist = gap[h.hand]!;
+    pointerTarget.pinching = this.pinchLatch.update(
+      handover,
+      this.pinch[h.hand],
+      pinchDist,
+      p.pinchOff,
+    );
+
+    // Where the hand aims: the fingertip while it is open, held steady through
+    // a pinch so the click lands where it was aimed (see aimPoint.ts). It is
+    // told about the hand's physical pinch, latched or not: what it guards
+    // against is the finger curling, whether or not that is a press.
+    const ha = this.aim[h.hand].update(h.pts, pinchDist, this.pinch[h.hand], t, p);
     // mirror x (front camera), de-jitter in normalized space, then active zone
     // -> full screen (same mapping the second hand goes through).
-    const { x, y } = this.toScreen(this.fx.filter(1 - h.x, t), this.fy.filter(h.y, t));
-    pointerTarget.lastSeen = performance.now();
+    const raw = this.toScreen(this.fx.filter(1 - ha.x, t), this.fy.filter(ha.y, t));
+    pointerTarget.lastSeen = now;
+
+    // A different hand took over: it picks the cursor up from where it stands
+    // rather than pulling it to its own position (see HandoffOffset). With no
+    // cursor on screen there is nothing to carry over, so start clean.
+    if (!pointerTarget.present) this.handoff.clear();
+    else if (handover) this.handoff.begin(pointerTarget.x, pointerTarget.y, raw.x, raw.y);
+    const aim = this.handoff.apply(raw.x, raw.y, DEFAULT_CURSOR_PARAMS.offsetRecycle);
+    const x = Math.min(window.innerWidth, Math.max(0, aim.x));
+    const y = Math.min(window.innerHeight, Math.max(0, aim.y));
 
     // Reclaim: while the mouse owns the cursor, a deliberate hand move (well past
     // where the hand sat when the mouse took over) hands control back to the hand.
@@ -483,6 +776,18 @@ class CameraPointer {
     // past it rather than snapping the anchor onto the raw (still noisy) sample.
     // A hard hold-then-jump reads as a twitch every time tremor happens to cross
     // the line; easing in the excess keeps the anchor continuous through it.
+    if (this.rec) {
+      this.record(msg, pose, hands, h.hand, motion, {
+        pinchDist,
+        handover,
+        x,
+        y,
+        rawX: raw.x,
+        rawY: raw.y,
+        aimFrozen: this.aim[h.hand].frozen,
+      });
+    }
+
     const dz = this.stabilize ? p.deadzone * 6 : p.deadzone;
     if (pointerTarget.present) {
       const ddx = x - pointerTarget.x;
