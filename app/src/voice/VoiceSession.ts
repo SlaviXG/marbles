@@ -22,7 +22,6 @@ export class VoiceSession {
   private wakeDeadline = 0;
   private replyPlaying = false;
   private playbackUntil = 0;
-  private attention: boolean | null = null; // is the user looking at the screen? null = unknown
   private muteTranscriptUntil = 0;
   private stream?: MediaStream;
   private context?: AudioContext;
@@ -38,7 +37,7 @@ export class VoiceSession {
   private connectionAttempts = 0;
   private timer?: ReturnType<typeof setTimeout>;
 
-  constructor(private events: VoiceEvents, private options: { wake?: boolean } = {}) {}
+  constructor(private events: VoiceEvents, private options: { wake?: boolean; automatic?: boolean } = {}) {}
 
   async start() {
     try {
@@ -62,7 +61,9 @@ export class VoiceSession {
         let resumeTimer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([this.context.resume(), new Promise((_, reject) => {
-            resumeTimer = setTimeout(() => reject(new Error('Your browser needs one click to enable wake listening. Use Enable microphone.')), 2500);
+            resumeTimer = setTimeout(() => reject(new Error(this.options.automatic
+              ? 'Your browser needs one tap before audio can start. Tap the orb, then say Marbles.'
+              : 'Your browser needs one click to enable wake listening. Use Enable microphone.')), 2500);
           })]);
         } finally { clearTimeout(resumeTimer); }
         if (this.disposed) return;
@@ -124,6 +125,9 @@ export class VoiceSession {
     // recognizer has a separate microphone path, so its callback is gated too.
     if (this.replyPlaying || performance.now() < this.playbackUntil) return;
     this.wake?.setSuspended(false);
+    // Expire before inspecting new speech, so a voice starting after the
+    // listening window cannot extend it without another wake word.
+    if (this.options.wake && this.awake && !this.speaking && Date.now() > this.wakeDeadline) this.rearm();
     if (this.wake && !this.awake) {
       this.wake.push(data);
       const rms = Math.sqrt(data.reduce((sum, v) => sum + v * v, 0) / data.length);
@@ -136,17 +140,15 @@ export class VoiceSession {
     this.speaking = turn.speaking;
     if (turn.background) {
       // Music or a video, not a request: close the turn, ignore whatever
-      // transcript it produces, and go back to waiting (for the wake word, or
-      // for the user's eyes) instead of streaming the room to the transcriber.
+      // transcript it produces, and go back to waiting for the wake word
+      // instead of streaming the room to the transcriber.
       this.send({ type: 'commit' });
       this.muteTranscriptUntil = performance.now() + 6000;
       this.events.discard?.();
       this.rearm();
       return;
     }
-    // Looking at the screen keeps the conversation open; otherwise each new
-    // phrase buys a little more time, but continuous sound does not.
-    if (this.attention) this.wakeDeadline = Math.max(this.wakeDeadline, Date.now() + 4000);
+    // Only speech inside an explicitly awakened turn can extend its window.
     if (turn.audio) {
       if (started) this.wakeDeadline = Math.max(this.wakeDeadline, Date.now() + 15_000);
       if ((this.socket?.bufferedAmount ?? 0) > SAMPLE_RATE * 2 * 3) {
@@ -166,31 +168,18 @@ export class VoiceSession {
     this.turns.discard(); this.wake?.reset();
     this.speaking = false;
     this.events.activity?.(0, false);
-    if (this.attention) {
-      // Still being looked at: stay ready, no wake word needed.
-      this.awake = true; this.wakeDeadline = Date.now() + 4000;
-      this.events.status('armed', 'Listening while you look at the screen.');
-      return;
-    }
     this.awake = false;
+    this.wakeDeadline = 0;
     this.events.status('wake', this.wake?.browserRecognitionActive
       ? 'Listening for Marbles with local and browser speech recognition.'
       : 'Listening locally for Marbles. Standby audio stays on this device.');
   }
 
-  /** Tell the session whether the user is looking at the screen (true / false),
-   * or that this is unknown (null: no camera, no face model). Looking arms the
-   * microphone the way the wake word does; looking away lets it lapse. */
+  /** Attention can only shorten a quiet, explicitly awakened listening window.
+   * Looking at the screen is never permission to transcribe the room. */
   setAttention(looking: boolean | null) {
-    if (looking === this.attention) return;
-    this.attention = looking;
-    if (!this.options.wake || this.disposed || this.stopping || !this.capture) return;
-    if (looking && !this.awake && !this.replyPlaying) {
-      this.awake = true; this.wakeDeadline = Date.now() + 4000;
-      this.turns.discard(); this.wake?.reset();
-      this.events.status('armed', 'Listening while you look at the screen.');
-    } else if (!looking && this.awake && !this.speaking) {
-      // Give a glance away a moment; a real look away ends the conversation.
+    if (looking !== false || !this.options.wake || this.disposed || this.stopping || !this.capture) return;
+    if (this.awake && !this.speaking) {
       this.wakeDeadline = Math.min(this.wakeDeadline, Date.now() + 3000);
     }
   }

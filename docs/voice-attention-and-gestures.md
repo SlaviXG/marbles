@@ -5,35 +5,55 @@ your hands can do. Everything here runs in the browser unless it says otherwise.
 
 ## When the microphone is open
 
-Marbles is always in one of three states.
+Once the controls are enabled, Marbles is in one of three states.
 
 | State | What it means | How you get there |
 | --- | --- | --- |
-| Waiting | Audio stays on this device. Only the local wake-word detector hears it. | The default once the orb is on. |
-| Armed | Ready for a request. Speech is sent to the transcriber when you start talking. | Say "Marbles", **or look at the screen**. |
+| Waiting | Listening for “Marbles”; no audio goes to command transcription. Browser-assisted wake recognition may use the browser’s speech service. | The default once the orb is on. |
+| Armed | Ready for a request. Speech is sent to the transcriber when you start talking. | Say "Marbles". |
 | Listening | You are speaking; your words are being transcribed. | Start talking while armed. |
 
-It returns to Waiting when you stop engaging: a few seconds after you look away,
-or when the short window after the wake word runs out. A new phrase extends the
-window. Continuous sound does not.
+It returns to Waiting as soon as a request is submitted, without waiting for
+Hermes to answer. Follow-up requests, including answers to clarification
+questions, need “Marbles” again. Saying only “Marbles” leaves a short window to
+describe the task. That window expires after 20 seconds without speech; looking
+at the screen cannot extend it. Looking away may shorten an already quiet turn
+to three seconds. Pausing the orb turns off microphone and camera entirely.
 
 ### Looking at the screen (head pose)
 
-When the orb is on, a second, small camera stream watches for faces.
+A small camera stream watches for faces, either at startup with existing
+permissions or while the controls are enabled.
 
-1. MediaPipe's face landmarker runs in a worker, about six times a second, on a
-   256-pixel-wide frame.
+At startup, when camera and microphone permissions are already granted, the
+orb shows **Look here to wake**. The camera is on but the microphone stays off
+until a continuous look of at least 1.2 seconds enables voice and hand control.
+This only replaces the initial orb tap: it enters Waiting, not Armed. A glance,
+missing face, hidden page or stalled camera resets the hold. The startup hold
+uses raw head-pose observations rather than the indicator's smoothing below.
+
+Startup activation is available once per page visit. A manual start, pause,
+cancel or failed automatic attempt consumes it. **Cancel look to wake** turns
+off the startup camera and leaves the orb available. A hidden page stops that
+camera until it is visible again. First-time permissions and browsers without
+permission-query support fall back to tapping. If audio cannot start without a
+browser interaction, the automatic attempt releases microphone and camera and
+asks for a tap. Automatic activation does not request screen sharing.
+
+1. MediaPipe's face landmarker runs in a worker, about four times a second, on a
+   192-pixel-wide frame (less often while a hand is active).
 2. The **nearest person** is chosen: the largest face in view.
 3. That face's transformation matrix gives the direction the head points. Yaw
    and pitch are read from it (`src/attention/headPose.ts`).
 4. You count as looking when the head is within 24° sideways and 22° up or down
    of straight at the camera. Once you are looking, the cone widens by a quarter
    so a nod or a glance at the keyboard does not drop you.
-5. Timing smooths it: 0.3 s of looking to engage, 1.4 s of looking away to
-   release, 2 s with no face before "nobody is there".
+5. Timing smooths the indicator: 0.3 s of looking to engage, 1.8 s of looking
+   away to release, 2.6 s with no face before "nobody is there".
 
-Looking arms the microphone exactly as the wake word does. The gesture panel
-shows **Eyes on** or **Looking away** while a face is tracked.
+The gesture panel shows **Eyes on** or **Looking away** while a face is tracked.
+These are camera indicators, not permission to transcribe. Head pose cannot arm
+listening, extend its deadline, or keep it armed after a submitted request.
 
 What it is and is not:
 
@@ -64,17 +84,17 @@ Four things work together. None is perfect alone.
    half-written subtitle is removed, and that level becomes the new room level so
    it stops opening turns. Speaking over it still works, because a voice is
    louder than its bed (`AudioTurns` in `src/voice/audio.ts`).
-4. **Attention.** With head pose on, sound only becomes a request while you are
-   looking at the screen or just after the wake word.
+4. **Wake-word gating.** Facing the camera cannot open command transcription.
+   An explicit wake word opens a turn, and submission returns it to standby.
 
 Known limits:
 
 - Sound from **other apps** (a music player outside the browser) is not covered
-  by echo cancellation on every system. Background detection and attention are
-  what handle it.
+  by echo cancellation on every system. Wake-word gating and background
+  detection reduce unintended transcription.
 - A song with long pauses, or speech-like audio such as a podcast, can still be
-  transcribed while you are looking at the screen. Hermes is told it may ignore
-  background speech, which catches much of the rest.
+  transcribed during an explicitly awakened turn. A false wake-word detection
+  can also open a turn. Pause the orb when no microphone capture is wanted.
 - Someone talking without a single pause for 3.5 s in a very noisy room could be
   misread as background. Raise `BACKGROUND_SECONDS` if that happens.
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { DEFAULT_ASSETS, GONE_MS, pointerTarget } from '../input';
-import { AttentionFilter, closestFace, poseFromMatrix, type Attention, type Face } from './headPose';
+import { AttentionFilter, closestFace, facing, poseFromMatrix, type Attention, type Face } from './headPose';
+import type { LookObservation } from './LookToWake';
 
 // Watches the camera for the nearest face and reports whether that person is
 // looking at the screen. Everything runs on this device: frames go to a worker
@@ -14,7 +15,7 @@ const BUSY_INTERVAL_MS = 800; // while a hand is working, the hand tracker gets 
 const FRAME_WIDTH = 192;
 
 export type AttentionStatus = 'off' | 'starting' | 'error' | Attention;
-export const useAttention = create<{ status: AttentionStatus; error: string }>(() => ({ status: 'off', error: '' }));
+export const useAttention = create<{ status: AttentionStatus; error: string; observation: LookObservation | null }>(() => ({ status: 'off', error: '', observation: null }));
 
 /** Turned off with `?attention=off` in the address, or localStorage `marbles.attention = "off"`. */
 export function attentionEnabled() {
@@ -74,7 +75,7 @@ class AttentionTracker {
   async start() {
     if (!attentionEnabled() || this.stream || useAttention.getState().status === 'starting') return;
     const generation = ++this.generation;
-    useAttention.setState({ status: 'starting', error: '' });
+    useAttention.setState({ status: 'starting', error: '', observation: null });
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' } });
       if (generation !== this.generation) { stream.getTracks().forEach(track => track.stop()); return; }
@@ -83,21 +84,25 @@ class AttentionTracker {
       video.autoplay = true; video.playsInline = true; video.muted = true; video.srcObject = stream;
       video.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
       document.body.appendChild(video);
-      await video.play();
       this.video = video;
+      await video.play();
+      if (generation !== this.generation) return;
       const url = URL.createObjectURL(new Blob([`(${faceWorkerMain.toString()})();`], { type: 'text/javascript' }));
       const worker = new Worker(url);
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
       this.worker = worker;
-      worker.onerror = () => this.fail('The face model could not start.');
+      worker.onerror = () => { if (generation === this.generation) this.fail('The face model could not start.'); };
       worker.onmessage = ({ data }: MessageEvent<WorkerOut>) => {
         if (generation !== this.generation) return;
         if (data.type === 'error') return this.fail(data.message);
         if (data.type === 'ready') { this.filter = new AttentionFilter(); useAttention.setState({ status: 'nobody' }); this.timer = setInterval(() => this.tick(), INTERVAL_MS); return; }
         this.busy = false;
         const nearest = closestFace(data.faces);
-        const status = this.filter.update(performance.now(), nearest ? poseFromMatrix(nearest.matrix) : null);
-        if (status !== useAttention.getState().status) useAttention.setState({ status });
+        const now = performance.now(), pose = nearest ? poseFromMatrix(nearest.matrix) : null;
+        const status = this.filter.update(now, pose);
+        // Startup uses raw observations so the indicator's look-away hysteresis
+        // cannot turn a brief glance into a held look.
+        useAttention.setState({ status, observation: { looking: !!pose && facing(pose), at: now } });
       };
       const abs = (value: string) => new URL(value, document.baseURI).href;
       worker.postMessage({ type: 'init', visionUrl: abs(DEFAULT_ASSETS.visionUrl), wasmUrl: abs(DEFAULT_ASSETS.wasmUrl), modelUrl: FACE_MODEL });
@@ -116,15 +121,17 @@ class AttentionTracker {
     if (handBusy && now - this.lastFrame < BUSY_INTERVAL_MS) return;
     this.lastFrame = now;
     this.busy = true;
+    const generation = this.generation;
     try {
       const bitmap = await createImageBitmap(video, { resizeWidth: FRAME_WIDTH, resizeHeight: Math.round(FRAME_WIDTH * video.videoHeight / video.videoWidth) });
-      this.worker?.postMessage({ type: 'frame', bitmap, time: performance.now() }, [bitmap]);
-    } catch { this.busy = false; }
+      if (generation !== this.generation || !this.worker) { bitmap.close(); return; }
+      this.worker.postMessage({ type: 'frame', bitmap, time: performance.now() }, [bitmap]);
+    } catch { if (generation === this.generation) this.busy = false; }
   }
   private fail(message: string) {
     this.release();
     // Attention is an extra: without it the wake word works exactly as before.
-    useAttention.setState({ status: 'error', error: message });
+    useAttention.setState({ status: 'error', error: message, observation: null });
   }
   private release() {
     clearInterval(this.timer); this.timer = undefined; this.busy = false;
@@ -135,7 +142,7 @@ class AttentionTracker {
   stop() {
     this.generation++;
     this.release();
-    useAttention.setState({ status: 'off', error: '' });
+    useAttention.setState({ status: 'off', error: '', observation: null });
   }
 }
 

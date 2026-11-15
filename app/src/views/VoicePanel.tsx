@@ -12,7 +12,8 @@ import { mediaCommand, slideCommand } from '../voice/mediaCommand';
 import { SLIDE_EVENT } from './preview/SlidePager';
 import { setDucked } from '../voice/ducking';
 import { describeScreen, shareScreen } from '../state/screen';
-import { useAttention } from '../attention/AttentionTracker';
+import { attentionEnabled, attentionTracker, useAttention } from '../attention/AttentionTracker';
+import { LookToWake, lookToWakePermitted } from '../attention/LookToWake';
 import { useDisplay } from '../state/display';
 import { applyDisplayAction, closeWindows, type DisplayAction } from '../state/windows';
 import { usePresentation } from '../state/presentation';
@@ -22,8 +23,13 @@ import type { AgentTask, SwarmTask } from '../core/agentTypes';
 import { useHud, voiceSignal } from '../state/hud';
 import VoiceCore from './VoiceCore';
 
-export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: () => void; onDeactivate?: () => void } = {}) {
+export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: (source: 'tap' | 'look') => void; onDeactivate?: () => void } = {}) {
   const session = useRef<VoiceSession>();
+  const startupLook = useRef(new LookToWake());
+  const controlsOn = useRef(false);
+  const activationSource = useRef<'tap' | 'look'>('tap');
+  const watchingForLook = useRef(false);
+  const [lookWaiting, setLookWaiting] = useState(false);
   const speaker = useRef<ReplySpeaker>();
   const [voiceReplies] = useState(true);
   const [replyPlaying, setReplyPlaying] = useState(false);
@@ -49,11 +55,11 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const active = ["wake", "armed", "loading", "listening", "stopping"].includes(status);
   const caption = replyPlaying ? '' : status === 'wake' ? 'Say “Marbles”' : status === "armed" ? "Go ahead" : status === "listening" ? "Listening"
     : status === "loading" ? detail.startsWith('Downloading local wake model:') ? detail.replace('Downloading local wake model:', 'Wake model') : 'Waking up' : status === "stopping" ? "Standing down"
-    : status === "error" ? "Tap to retry" : "Tap to wake";
+    : status === "error" ? "Tap to retry" : lookWaiting ? "Look here to wake" : "Tap to wake";
   useEffect(() => { useHud.getState().setVoice(status); }, [status]);
   // Anything the app is playing steps back while you are heard or answered.
   useEffect(() => { setDucked(replyPlaying || status === 'armed' || status === 'listening'); return () => setDucked(false); }, [status, replyPlaying]);
-  // Looking at the screen opens the microphone; only a known answer is passed on.
+  // Looking away can shorten an idle turn; looking never opens a command turn.
   const attention = useAttention(state => state.status);
   useEffect(() => {
     session.current?.setAttention(attention === 'looking' ? true : attention === 'away' || attention === 'nobody' ? false : null);
@@ -70,6 +76,35 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     });
     speaker.current.setEnabled(voiceReplies);
     return () => { mounted.current = false; clearTimeout(pulseTimer.current); commands.current?.dispose(); session.current?.dispose(); speaker.current?.dispose(); onDeactivate?.(); };
+  }, []);
+  useEffect(() => {
+    let alive = true, revision = 0;
+    const prepare = async () => {
+      const attempt = ++revision;
+      if (document.hidden || !startupLook.current.available || !attentionEnabled()) return;
+      if (!await lookToWakePermitted() || !alive || attempt !== revision || document.hidden || !startupLook.current.available) return;
+      watchingForLook.current = true; setLookWaiting(true);
+      void attentionTracker.start();
+    };
+    const unsubscribe = useAttention.subscribe(state => {
+      if (!watchingForLook.current || !alive) return;
+      if (state.status === 'error') {
+        startupLook.current.cancel(); watchingForLook.current = false; setLookWaiting(false);
+      } else if (startupLook.current.observe(state.observation, performance.now(), !document.hidden)) activate('look');
+    });
+    const visibility = () => {
+      revision++; startupLook.current.resetLook();
+      if (document.hidden && watchingForLook.current) {
+        watchingForLook.current = false; setLookWaiting(false); attentionTracker.stop();
+      } else if (!document.hidden) void prepare();
+    };
+    document.addEventListener('visibilitychange', visibility);
+    void prepare();
+    return () => {
+      alive = false; revision++; unsubscribe();
+      document.removeEventListener('visibilitychange', visibility);
+      if (watchingForLook.current) { watchingForLook.current = false; attentionTracker.stop(); }
+    };
   }, []);
   useEffect(() => {
     for (const task of tasks) {
@@ -115,7 +150,18 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     setMessages(current => upsertMessage(current, item, time));
     if (item.role === 'assistant' && !item.pending && item.id !== 'speech-error') speaker.current?.enqueue(item.id, item.text);
   }
-  function start() {
+  function cancelLook() {
+    startupLook.current.cancel(); watchingForLook.current = false; setLookWaiting(false);
+    attentionTracker.stop();
+  }
+  function activate(source: 'tap' | 'look') {
+    if (controlsOn.current) return;
+    startupLook.current.cancel(); watchingForLook.current = false; setLookWaiting(false);
+    controlsOn.current = true; activationSource.current = source;
+    start(source);
+    if (controlsOn.current) onActivate?.(source);
+  }
+  function start(source: 'tap' | 'look') {
     commands.current?.dispose();
     speaker.current?.interrupt();
     session.current?.dispose();
@@ -131,9 +177,12 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
+      // The request is captured. Wait for another explicit wake while Hermes
+      // works, rather than transcribing unrelated speech until its reply lands.
+      session.current?.rearm();
       // A deck on screen takes "next" and "back" before anything else does.
       const slide = document.querySelector('.slide-pager') ? slideCommand(request) : null;
-      if (slide) { window.dispatchEvent(new CustomEvent(SLIDE_EVENT, { detail: slide })); session.current?.rearm(); return; }
+      if (slide) { window.dispatchEvent(new CustomEvent(SLIDE_EVENT, { detail: slide })); return; }
       const media = mediaCommand(request, useDisplay.getState().display, !!useDisplay.getState().video);
       if (media) {
         const view = useDisplay.getState();
@@ -145,7 +194,6 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         else if (media.action === 'grid') view.focus(null);
         else view.step(media.action === 'next' ? 1 : -1);
         if (media.reply) message({ id: `media:${crypto.randomUUID()}`, role: 'assistant', text: media.reply });
-        session.current?.rearm();
         return;
       }
       const local = canvasCommand(request, useAgents.getState().tasks, useAgents.getState().swarms, useAgents.getState().agents.filter(agent => agent.codingAgent),
@@ -155,7 +203,6 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         if (local.close) useVault.getState().clear();
         if (local.select) useVault.getState().select(local.select);
         message({ id: `canvas:${crypto.randomUUID()}`, role: 'assistant', text: local.reply });
-        session.current?.rearm();
         return;
       }
       enqueue({ transcript: request, requestId: crypto.randomUUID(), conversationId: conversationId.current, selectedId: useVault.getState().selectedId });
@@ -163,7 +210,9 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     const next = new VoiceSession({
       status: (state, detail) => {
         setStatus(state); setDetail(detail ?? "");
+        if (state === 'idle' || state === 'error') controlsOn.current = false;
         if (state === 'error') {
+          if (activationSource.current === 'look') onDeactivate?.();
           const text = transcriptText(draft.current);
           if (text) message({ id: draftId.current, role: 'user', text });
           message({ id: 'microphone-error', role: 'assistant', text: detail ?? 'Microphone error.' });
@@ -206,7 +255,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         clearTimeout(pulseTimer.current);
         pulseTimer.current = setTimeout(() => setWakePulse(false), 600);
       },
-    }, { wake: true });
+    }, { wake: true, automatic: source === 'look' });
     session.current = next;
     void next.start();
   }
@@ -250,25 +299,22 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         for (const [turn, data] of [first, ...(first.followUp ? [first.followUp] : [])].entries()) {
         const reply = turn ? (text: string, extra: Partial<VoiceMessage> = {}) => message({ id: `${id}:earlier`, role: 'assistant', label: 'Marbles · Hermes', text, ...extra }) : replyFirst;
         if (data.state === 'assigned') {
-          session.current?.rearm();
           // One sentence can hold several tasks; follow every one of them.
           for (const [n, task] of ((data.tasks ?? [data.task]) as AgentTask[]).entries()) watching.current.set(task.id, data.intents?.[n]?.objective ?? data.intent.objective);
           reply(data.reply, { taskId: data.task.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshTasks()]);
         } else if (data.state === 'swarm') {
-          session.current?.rearm(); watchingSwarms.current.add(data.swarm.id);
+          watchingSwarms.current.add(data.swarm.id);
           reply(data.reply, { swarmId: data.swarm.id, plan: data.intent });
           await Promise.all([refreshAgents(), refreshSwarms()]);
         } else if (data.state === 'show' && data.display) {
           // Hermes chose to put something in front of the user.
           applyDisplayAction(data.display as DisplayAction);
           reply(data.reply);
-          session.current?.rearm();
         } else if (data.state === 'ignore') {
-          setMessages(current => current.filter(item => item.id !== id)); session.current?.rearm();
+          setMessages(current => current.filter(item => item.id !== id));
         } else {
           reply(data.reply);
-          if (data.state !== 'clarify') session.current?.rearm();
         }
         }
       } catch (error) {
@@ -286,7 +332,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       <button type="button" className="voice-marble" disabled={status === "stopping"}
         aria-label={active ? "Pause voice and hand control" : "Enable voice and hand control"}
         aria-pressed={active} aria-describedby="voice-detail"
-        onClick={() => { if (active) { session.current?.stop(); voiceSignal.level = 0; onDeactivate?.(); } else { start(); onActivate?.(); } }}>
+        onClick={() => { if (active) { startupLook.current.cancel(); session.current?.stop(); voiceSignal.level = 0; onDeactivate?.(); } else activate('tap'); }}>
         <VoiceCore />
         <svg className="voice-mic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
           <rect x="9" y="3" width="6" height="12" rx="3" />
@@ -294,7 +340,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         </svg>
       </button>
       <div className="voice-caption" role="status" key={caption}>{caption}</div>
-      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. Say Marbles, then your task. Requests start when you finish speaking. Browser-assisted wake recognition may use your browser’s speech service. Command transcription uses OpenAI. Touch again to pause.'}</p>
+      {lookWaiting && <div className="look-wake-note"><span>Camera on · microphone off</span><button type="button" onClick={cancelLook}>Cancel look to wake</button></div>}
+      <p id="voice-detail" className={status === 'error' ? 'voice-help' : 'voice-sr-only'} role={status === 'error' ? 'alert' : undefined}>{status === 'error' ? detail : 'Touch the orb to enable microphone and camera. With permissions already granted, look here briefly to enable them at startup. Say Marbles before each request, then describe your task. Looking does not open command transcription. Requests start when you finish speaking. Browser-assisted wake recognition may use your browser’s speech service. Command transcription uses OpenAI. Touch again to pause.'}</p>
     </section>
     </>
   );

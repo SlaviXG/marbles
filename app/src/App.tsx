@@ -70,7 +70,7 @@ export default function App() {
       <span className={`canvas-connection${connected ? ' connected' : ''}`} role="status"><span aria-hidden="true" />{connected ? 'Online' : 'Reconnecting'}<Clock /></span>
     </header>
     {!count && !booting && <p className="canvas-empty">Looking for Codex, Claude Code or Cursor on this computer.</p>}
-    <VoicePanel onActivate={() => { void enableTabCapture(); void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); disableTabCapture(); }} />
+    <VoicePanel onActivate={source => { if (source === 'tap') void enableTabCapture(); void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); disableTabCapture(); }} />
     <DetailPanel disabled={presenting} />
     <PresentationStage />
     <MediaStage />
