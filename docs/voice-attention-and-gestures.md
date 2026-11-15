@@ -142,17 +142,27 @@ seconds more per request (roughly 9–15 s in testing).
 | Pinch and release | Opens what you are pointing at. |
 | Pinch, hold and move | Drags it: any window by its title bar, any teammate or file on the canvas. A teammate's files travel with it. |
 | Pinch with both hands | Zoom (hands apart or together) and pan (hands moving together). |
-| Pinch the × on a window | Closes it. |
+| **Open palm, aim, swish** | Rest the open palm over the window until its outline lights, then sweep sideways. Closes only that window, including YouTube. |
 | **Pinch a window and fling it** | Closes it. Grab the title bar, throw, and let go while it is still moving: it flies off and closes. Set down gently, it just stays where you put it. |
 | **Pinch a slide** | Next slide. The left edge of the slide goes back. |
+| **Drop your hands** | Closes whatever is on the main stage. The hand must fall out of the bottom of the view at speed and stay gone. A video keeps playing. |
 
-Open-hand swipes and dropping the hands do not close windows: these movements
-can look like ordinary pointing and resting. A pinch-and-fling requires an
-actual grab of the title bar, followed by release while moving quickly.
+Swishes require at least three extended fingers, a 220 ms steady aim at a
+window, then a fast, straight sweep over at least 160 px (scaled for screen
+width). Pointing with one finger, normal reaching, pinches and two-hand zooms
+cannot trigger them. A faint outline marks the armed window; one swish closes
+one window, followed by a cooldown. `SWISH` in `src/input/dismissGesture.ts`
+holds the thresholds. Short tracking gaps are tolerated without inventing motion.
 
-A throw is measured at release: at least 1500 px/s, averaged over the last
-140 ms (the pinch opening jolts the final frames), after a drag of at least
-140 px. Thresholds are `FLING` in `src/hooks/useDragMove.ts`.
+Pinch-and-fling remains an alternative. A throw is measured at release: at least
+1500 px/s, averaged over the last 140 ms (the pinch opening jolts the final
+frames), after a drag of at least 140 px. Thresholds are `FLING` in
+`src/hooks/useDragMove.ts`.
+
+Dropping your hands is deliberately hard to do by accident: in view for about a
+second first, then leaving downward at over 1300 px/s, steeply, from the lower
+third, and not coming straight back. Lowering your hands to rest does nothing.
+Thresholds are `DISMISS` in `src/input/dismissGesture.ts`.
 
 While a document is open the cursor is steadied a little against hand tremor,
 and not at all during a drag, so what you carry follows your hand exactly.

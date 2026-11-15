@@ -353,6 +353,7 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 
 /* Anything projected can be picked up by its title bar and put somewhere else. */
 .window-grip { cursor: grab; touch-action: none; user-select: none; }
+.swish-ready { outline: 1px solid oklch(85% .1 205 / .65); outline-offset: 3px; }
 .window-dragging { transition: none !important; box-shadow: 0 0 0 1px var(--bright), 0 0 80px oklch(75% .14 208 / .4), 0 50px 110px oklch(4% .02 248 / .8) !important; }
 .window-dragging .window-grip { cursor: grabbing; }
 .window-dragging iframe { pointer-events: none; } /* a video must not swallow the drag */

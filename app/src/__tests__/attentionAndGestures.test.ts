@@ -1,6 +1,35 @@
 import { describe, expect, it } from 'vitest';
+import { DismissGesture } from '../input/dismissGesture';
 import { AttentionFilter, closestFace, facing, poseFromMatrix } from '../attention/headPose';
 import { AudioTurns, BACKGROUND_SECONDS, SAMPLE_RATE } from '../voice/audio';
+
+const view = { width: 1440, height: 900 };
+const hand = (x: number, y: number, extra = {}) => ({ x, y, present: true, pinching: false, ...extra });
+const gone = { x: 0, y: 0, present: false, pinching: false };
+
+describe('dropping your hands', () => {
+  const drop = (frames: (t: number) => ReturnType<typeof hand> | typeof gone, until: number) => {
+    const gesture = new DismissGesture();
+    let event = null;
+    for (let t = 0; t <= until && !event; t += 16) event = gesture.step(t, frames(t), view);
+    return event;
+  };
+  // In view for a second, then straight down and out at speed.
+  const falling = (t: number) => t <= 1000 ? hand(700, 400) : t <= 1160 ? hand(700, 400 + (t - 1000) * 2.6) : gone;
+  it('clears the stage when the hand falls out of view', () => {
+    expect(drop(falling, 2200)).toEqual({ type: 'drop' });
+  });
+  it('does nothing when hands are lowered at ordinary speed, rested low, or only flicker', () => {
+    expect(drop(t => t <= 1000 ? hand(700, 400) : t <= 1600 ? hand(700, 400 + (t - 1000) * .7) : gone, 2800)).toBeNull(); // slow
+    expect(drop(t => t <= 1200 ? hand(700, 800) : gone, 2400)).toBeNull(); // resting low, then lost
+    expect(drop(t => falling(t) === gone && t > 1400 ? hand(700, 700) : falling(t), 2600)).toBeNull(); // came straight back
+  });
+  it('does nothing for a sideways exit, a brief appearance, or letting go of a pinch', () => {
+    expect(drop(t => t <= 1000 ? hand(700, 700) : t <= 1160 ? hand(700 + (t - 1000) * 3, 700 + (t - 1000) * .6) : gone, 2200)).toBeNull();
+    expect(drop(t => t <= 300 ? hand(700, 400) : t <= 460 ? hand(700, 400 + (t - 300) * 2.6) : gone, 1600)).toBeNull();
+    expect(drop(t => t <= 1000 ? hand(700, 400, { pinching: true }) : t <= 1160 ? hand(700, 400 + (t - 1000) * 2.6, { pinching: true }) : gone, 2200)).toBeNull();
+  });
+});
 
 // A rotation about the vertical axis by `yaw`, then about the horizontal by `pitch`, column-major.
 function matrix(yawDeg: number, pitchDeg: number) {
