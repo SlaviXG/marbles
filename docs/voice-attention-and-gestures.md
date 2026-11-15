@@ -122,29 +122,28 @@ seconds more per request (roughly 9–15 s in testing).
 | Pinch and release | Opens what you are pointing at. |
 | Pinch, hold and move | Drags it: any window by its title bar, any teammate or file on the canvas. A teammate's files travel with it. |
 | Pinch with both hands | Zoom (hands apart or together) and pan (hands moving together). |
-| **Swipe across a window** | Closes it. A quick, mostly sideways sweep across about a sixth of the view. The window flies off the way it was hit. |
-| **Drop your hands** | Closes whatever is on the main stage. The hand must leave downward at speed from the lower part of the view and stay gone for half a second. A video keeps playing; swipe it to close it. |
+| **Pinch a window and fling it** | Closes it. Grab the title bar, throw, and let go while it is still moving: it flies off and closes. Set down gently, it just stays where you put it. |
+| **Pinch a slide** | Next slide. The left edge of the slide goes back. |
+| **Drop your hands** | Closes whatever is on the main stage. The hand must fall out of the bottom of the view at speed and stay gone. A video keeps playing. |
 
-A slap is fast, and fast is when hand tracking is weakest: the hand blurs and
-detections go missing. The swipe is built for that:
+Closing needs a grip. An open hand moving quickly across a window is simply
+what pointing looks like, and treating it as "close" shut things by accident,
+so that gesture is gone. A throw is measured at the moment of release: at least
+1500 px/s, averaged over the last 140 ms (the pinch opening jolts the final
+frames), after a drag of at least 140 px. Thresholds are `FLING` in
+`src/hooks/useDragMove.ts`.
 
-- It is measured on the hand as the camera saw it (wrist and knuckles), not on
-  the smoothed cursor.
-- It compares any two recent positions, so a gap in the middle costs nothing,
-  and positions survive a dropout of up to 0.45 s.
-- A hand swept right out of view still counts.
-- A pinch that only flickers is forgiven; a held pinch (a drag) is not judged.
-- It closes the window the sweep crossed. If it crossed none, it closes what is
-  on the main stage, so you do not have to aim.
+Dropping your hands is deliberately hard to do by accident: in view for about a
+second first, then leaving downward at over 1300 px/s, steeply, from the lower
+third, and not coming straight back. Lowering your hands to rest does nothing.
+Thresholds are `DISMISS` in `src/input/dismissGesture.ts`.
 
-Resting your hands, reaching for something, or tracking flickering for a moment
-does not close anything: each closing gesture has to clear a speed and distance
-threshold, and nothing is judged while you are pinching. Thresholds are in
-`DISMISS` in `src/input/dismissGesture.ts`.
+While a document is open the cursor is steadied a little against hand tremor,
+and not at all during a drag, so what you carry follows your hand exactly.
 
-While a document is open the cursor is steadied against hand tremor. That
-steadying is switched off for the length of a drag, so what you carry follows
-your hand exactly.
+The face model that watches where you are looking shares the processor with the
+hand tracker. While a hand is in view it checks about once a second instead of
+four times, so pointing and dragging get the cores.
 
 ## Spoken replies and keys
 
@@ -202,14 +201,47 @@ can explain instead of leaving a dead player.
 
 ## Email
 
-Hermes only drafts. When you confirm, a worker agent (Claude first, otherwise
-Codex) sends the message **with its own Gmail connector**, exactly as written,
-and must end with an explicit verdict: sent, no Gmail available, or failed. The
-card shows which. If the agent has no Gmail connector signed in, nothing is
-sent and the card offers **Send with Mail** (the Mac's Mail app) instead.
+There are two routes, and Hermes picks by what you asked for.
 
-- The Claude worker is allowed the `mcp__claude_ai_Gmail` tools for that task.
-- Set `MARBLES_EMAIL_VIA=mail` to always use Mail.
-- A connector added in the Claude or ChatGPT apps is not automatically available
-  to the command-line agents Marbles runs. Check with
-  `claude -p "which Gmail tools do you have?"`.
+- **A short message** ("email Sam that the review moved to 3"): Hermes drafts a
+  card. When you confirm, the server tries each way of sending in turn and stops
+  at the first that works: **Claude** with its Gmail connector, then **Codex**
+  with its, then the Mac's **Mail** app. The card says who is sending and how it
+  went. You confirm once; you do not have to nurse it through.
+- **Something that has to be made or attached** ("make the deck and mail it to
+  me"): Hermes delegates it. The worker makes the file and sends it with its
+  Gmail connector, attaching it.
+
+"Me" is your own address: `MARBLES_USER_EMAIL` in `.env`, otherwise the address
+git commits with.
+
+A Claude worker started without permission for its connector is refused when it
+tries to send, which is why emails used to fail. Voice-delegated Claude tasks and
+email tasks are now started with `--allowedTools mcp__claude_ai_Gmail`. Set
+`MARBLES_AGENT_GMAIL=off` to withhold it from ordinary tasks, or
+`MARBLES_EMAIL_VIA=mail` to always use Mail. Check what a worker can see with
+`claude -p "which Gmail tools do you have?"`.
+
+## Slide decks
+
+Decks open one slide at a time: pinch the slide for the next one, the left edge
+for the previous one, or say "next slide", "go back", "first slide", "last
+slide". Arrow keys work too.
+
+That covers PowerPoint files and **HTML decks**. Agents often build a deck as an
+HTML page whose "next" button is JavaScript. Marbles never runs scripts in files
+an agent produced, so that button was dead and only the first slide showed. The
+viewer now finds the slides in the page itself (`section.slide`, `.slides >
+section`, reveal.js and similar layouts), shows exactly one filling a 16:9 frame,
+and pages them with its own controls. An HTML page that is not a deck is shown
+whole, as before.
+
+## Responsiveness
+
+- A turn ends 0.6 s after you stop. Quiet is judged against how loudly you were
+  speaking, not only against the room, so noise after your sentence no longer
+  keeps the microphone open until the 15 s cap.
+- The moment you stop, "thinking" dots appear, before the transcript is back.
+- The screenshot left for Hermes is no longer waited for before the request goes.
+- Hermes itself takes 3–10 s depending on the request. `low` effort measured no
+  faster than `medium`, so the default stays `medium`.

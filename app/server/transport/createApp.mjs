@@ -8,7 +8,7 @@ import { VoiceCommands } from "../agents/voiceCommands.mjs";
 import { taskCapability } from "../agents/taskService.mjs";
 import { localVoiceOrigin } from "./voice.mjs";
 import { searchImages, searchYouTube } from "../media/webMedia.mjs";
-import { sendEmail, placeCall, isEmail, emailTaskPrompt, emailOutcome, GMAIL_TOOLS } from "../comms/comms.mjs";
+import { sendEmail, placeCall, EmailJobs, userEmail } from "../comms/comms.mjs";
 import { liveEnv } from "../env.mjs";
 import { Screen } from "../agents/screen.mjs";
 import { speechHandler, ttsInfo } from "./speech.mjs";
@@ -45,7 +45,9 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
         if (found) artifact = { ...found, absolutePath: await resolveArtifact(taskService.root, found.path) };
       } catch { /* An expired/missing selection is not a usable source. */ }
     }
+    const ownEmail = await userEmail();
     return {
+      ...(ownEmail ? { user: { email: ownEmail } } : {}),
       notes: notes.slice(0, 12).map(note => ({ id: note.id, title: note.title, path: note.path })),
       selected: note ? { title: note.title, path: note.path, excerpt: note.sections.map(section => section.content).join('\n').slice(0, 1500) }
         : task ? { id: task.id, title: task.title, status: task.status, objective: task.intent?.objective, artifacts: task.artifacts.slice(0, 5) }
@@ -144,22 +146,22 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     try { res.json({ videos: await searchYouTube(req.query.q) }); }
     catch (error) { res.status(400).json({ error: error.message }); }
   });
+  const emailJobs = new EmailJobs({ taskService, agents: () => agentRegistry.snapshot().filter(agent => agent.available !== false && !taskCapability(agent)), mail: comms.sendEmail });
   app.post('/api/comms/email', async (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Email requires a local app origin.' });
     try {
       const { to, subject, body, via } = req.body ?? {};
-      // Default: a worker agent sends it with its own Gmail connector. Mail.app
-      // is the explicit fallback (the card offers it when no connector exists).
+      // Agents send it with their own Gmail connector, Claude first, then Codex;
+      // the Mac's Mail app is the last resort. MARBLES_EMAIL_VIA=mail skips agents.
       if (via === 'mail' || liveEnv('MARBLES_EMAIL_VIA') === 'mail') return res.json(await comms.sendEmail({ to, subject, body }));
-      if (!isEmail(to) || typeof subject !== 'string' || !subject.trim() || subject.length > 200 || typeof body !== 'string' || !body.trim() || body.length > 8000) throw new Error('A valid address, subject and message are required.');
-      const agents = agentRegistry.snapshot().filter(agent => agent.available !== false && !taskCapability(agent));
-      const preferred = agents.find(agent => agent.id === 'claude') ?? agents.find(agent => agent.id === 'codex');
-      const task = await taskService.startOrQueue(emailTaskPrompt({ to: to.trim(), subject: subject.trim(), body }),
-        { source: 'email', title: `Send email to ${to.trim()}`, allowTools: GMAIL_TOOLS }, preferred?.id ?? 'auto');
-      res.status(202).json({ sent: false, taskId: task.id, agentId: task.agentId });
+      const job = await emailJobs.start({ to, subject, body });
+      res.status(202).json({ sent: false, taskId: job.id, agentId: job.tried.at(-1) ?? null, ...(job.result ?? {}) });
     } catch (error) { res.status(error.code === 'NO_AGENTS' ? 503 : 400).json({ error: error.message }); }
   });
-  app.get('/api/comms/email/:id', (req, res) => res.json(emailOutcome(taskService.snapshot().find(task => task.id === req.params.id && task.source === 'email'))));
+  app.get('/api/comms/email/:id', async (req, res) => {
+    try { res.json(await emailJobs.status(req.params.id)); }
+    catch (error) { res.json({ status: 'failed', reason: error.message }); }
+  });
   app.post('/api/comms/call', (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Calls require a local app origin.' });
     try { res.json(comms.placeCall(req.body)); }

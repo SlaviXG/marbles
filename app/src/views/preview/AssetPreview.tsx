@@ -3,6 +3,7 @@ import type { ArtifactInfo } from '../../core/agentTypes';
 import { parseDelimited, readOffice, type PreviewSection } from './assetContent';
 import Markdown from './Markdown';
 import Deck from './Deck';
+import HtmlDeck from './HtmlDeck';
 import { texToMarkdown } from './latexSource';
 
 const extension = (name: string) => name.split('.').pop()?.toLowerCase() ?? '';
@@ -48,10 +49,7 @@ export default function AssetPreview({ artifact }: { artifact: ArtifactInfo }) {
       : ext === 'pdf' ? <PdfPreview url={url} />
       : /^(mp3|wav|ogg|m4a)$/.test(ext) ? <audio controls src={url} />
       : media ? <video controls src={url} />
-      : html ? <iframe title={artifact.name} sandbox="allow-same-origin" src={`/api/artifacts/view/${artifact.path.split('/').map(encodeURIComponent).join('/')}`} onLoad={event => {
-        const frame = event.currentTarget;
-        try { frame.style.height = `${Math.min(12000, Math.max(480, frame.contentDocument?.documentElement.scrollHeight ?? 480))}px`; } catch { /* Keep a readable viewport for redirected pages. */ }
-      }} />
+      : html ? <HtmlDeck name={artifact.name} src={`/api/artifacts/view/${artifact.path.split('/').map(encodeURIComponent).join('/')}`} />
       : error ? <p role="alert">{error}</p>
       : markdown !== null ? <Markdown text={markdown} path={artifact.path} />
       : !sections ? <div className="preview-loading" role="status"><span className="voice-sr-only">Preparing preview…</span><i /><i /><i /><i /></div>

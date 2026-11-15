@@ -867,7 +867,10 @@ class CameraPointer {
       });
     }
 
-    const dz = this.stabilize ? p.deadzone * 6 : p.deadzone;
+    // 3x, not 6x: a wide deadzone holds the cursor still and then lets it go in a
+    // step, which reads as stickiness rather than steadiness when aiming at
+    // controls inside an open document.
+    const dz = this.stabilize ? p.deadzone * 3 : p.deadzone;
     if (pointerTarget.present) {
       const ddx = x - pointerTarget.x;
       const ddy = y - pointerTarget.y;

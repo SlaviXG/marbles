@@ -24,8 +24,8 @@ export const ATTENTION = {
   pitch: 22, // degrees up or down (a laptop screen sits just below its camera)
   release: 1.25, // once looking, the cone is this much wider, so a nod does not drop it
   engageMs: 300, // looking must hold this long to count
-  awayMs: 1400, // ...and looking away this long to stop counting
-  goneMs: 2000, // no face at all for this long: nobody is there
+  awayMs: 1800, // ...and looking away this long to stop counting
+  goneMs: 2600, // no face at all for this long: nobody is there
 };
 
 export const facing = (pose: HeadPose, widen = 1) => Math.abs(pose.yaw) <= ATTENTION.yaw * widen && Math.abs(pose.pitch) <= ATTENTION.pitch * widen;

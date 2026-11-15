@@ -82,14 +82,14 @@ export const useDisplay = create<DisplayState>((set, get) => ({
         return;
       }
       // An agent is sending it with its Gmail connector: wait for its verdict.
-      if (current()) set({ note: 'An agent is sending it with Gmail' });
+      if (current()) set({ note: `${result.agentId || 'An agent'} is sending it with Gmail` });
       for (let waited = 0; waited < 240_000 && current(); waited += 1500) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         const outcome = await (await fetch(`/api/comms/email/${result.taskId}`, { signal: AbortSignal.timeout(8000) })).json();
-        if (outcome.status === 'sending') continue;
+        if (outcome.status === 'sending') { if (current() && outcome.agentId) set({ note: `${outcome.agentId} is sending it with Gmail` }); continue; }
         if (!current()) return;
-        if (outcome.status === 'sent') { set({ status: 'done', note: `Sent by ${outcome.agentId || 'your agent'} with Gmail` }); return; }
-        const text = outcome.status === 'unavailable' ? `${outcome.agentId || 'The agent'} has no Gmail connector signed in, so the email was not sent.` : `The email was not sent: ${outcome.reason}`;
+        if (outcome.status === 'sent') { set({ status: 'done', note: outcome.via === 'Mail' ? 'Sent with Mail (no agent had Gmail)' : `Sent by ${outcome.via || 'your agent'} with Gmail` }); return; }
+        const text = `The email was not sent: ${outcome.reason || 'no way of sending worked'}`;
         set({ status: 'failed', note: text, mailFallback: true, issue: { text, at: Date.now() } });
         return;
       }

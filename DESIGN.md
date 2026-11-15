@@ -38,4 +38,4 @@ Work queues instead of failing or being dropped. One sentence can hold several t
 
 The canvas is quieter: no lines run from the centre to the agents. A working agent is shown by its own dial, timer and latest line.
 
-Looking at the screen opens the microphone; looking away lets it lapse. Steady sound (music, a video) is recognised and ignored, and a video in the app steps back while Marbles listens or speaks. A fast swipe across a window closes it, and dropping your hands clears the stage. See `docs/voice-attention-and-gestures.md` for how each works and its limits.
+Looking at the screen opens the microphone; looking away lets it lapse. Steady sound (music, a video) is recognised and ignored, and a video in the app steps back while Marbles listens or speaks. Closing needs a grip: pinch a window and fling it away, or drop your hands to clear the stage; an open hand waving closes nothing. Decks open one slide at a time and a pinch on the slide moves on. See `docs/voice-attention-and-gestures.md` for how each works and its limits.

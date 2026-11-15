@@ -7,66 +7,27 @@ const view = { width: 1440, height: 900 };
 const hand = (x: number, y: number, extra = {}) => ({ x, y, present: true, pinching: false, ...extra });
 const gone = { x: 0, y: 0, present: false, pinching: false };
 
-describe('waving things away', () => {
-  it('reads a quick sideways sweep as a swipe and reports where it travelled', () => {
-    const gesture = new DismissGesture();
-    let event: any = null;
-    for (let i = 0; i <= 12 && !event; i++) event = gesture.step(1000 + i * 16, hand(400 + i * 45, 300 + i * 2), view);
-    expect(event).toMatchObject({ type: 'swipe', direction: 1 });
-    expect(event.path[0]).toEqual({ x: 400, y: 300 });
-  });
-  it('still sees a slap when tracking loses the hand in the middle of it', () => {
-    const gesture = new DismissGesture();
-    for (let t = 0; t <= 400; t += 66) gesture.step(t, hand(500, 400), view); // resting, at camera rate
-    gesture.step(466, hand(540, 400), view);
-    for (let t = 482; t < 700; t += 16) expect(gesture.step(t, gone, view)).toBeNull(); // blurred: no detection
-    expect(gesture.step(700, hand(1020, 420), view)).toMatchObject({ type: 'swipe', direction: 1 });
-  });
-  it('counts a hand swept right out of view', () => {
-    const gesture = new DismissGesture();
-    for (let t = 0; t <= 400; t += 66) gesture.step(t, hand(1000, 400), view);
-    // One more detection near the right edge, too short a move to count on its own, then gone.
-    expect(gesture.step(466, hand(1180, 402), view)).toBeNull();
-    let event = null;
-    for (let t = 482; t < 700 && !event; t += 16) event = gesture.step(t, gone, view);
-    expect(event).toMatchObject({ type: 'swipe', direction: 1 });
-  });
-  it('forgives a pinch that only flickers during the sweep', () => {
+describe('dropping your hands', () => {
+  const drop = (frames: (t: number) => ReturnType<typeof hand> | typeof gone, until: number) => {
     const gesture = new DismissGesture();
     let event = null;
-    for (let i = 0; i <= 12 && !event; i++) event = gesture.step(1000 + i * 16, hand(400 + i * 45, 300, { pinching: i === 4 || i === 5 }), view);
-    expect(event).toMatchObject({ type: 'swipe' });
+    for (let t = 0; t <= until && !event; t += 16) event = gesture.step(t, frames(t), view);
+    return event;
+  };
+  // In view for a second, then straight down and out at speed.
+  const falling = (t: number) => t <= 1000 ? hand(700, 400) : t <= 1160 ? hand(700, 400 + (t - 1000) * 2.6) : gone;
+  it('clears the stage when the hand falls out of view', () => {
+    expect(drop(falling, 2200)).toEqual({ type: 'drop' });
   });
-  it('ignores slow travel, diagonal reaches and anything done while dragging', () => {
-    const slow = new DismissGesture();
-    for (let i = 0; i <= 80; i++) expect(slow.step(1000 + i * 16, hand(300 + i * 8, 300), view)).toBeNull();
-    const diagonal = new DismissGesture();
-    for (let i = 0; i <= 12; i++) expect(diagonal.step(1000 + i * 16, hand(400 + i * 45, 300 + i * 40), view)).toBeNull();
-    const dragging = new DismissGesture();
-    for (let i = 0; i <= 30; i++) expect(dragging.step(1000 + i * 16, hand(200 + i * 30, 300, { pinching: true }), view)).toBeNull();
-    const small = new DismissGesture();
-    for (let i = 0; i <= 4; i++) expect(small.step(1000 + i * 16, hand(400 + i * 40, 300), view)).toBeNull(); // quick but short: a flick of the wrist
+  it('does nothing when hands are lowered at ordinary speed, rested low, or only flicker', () => {
+    expect(drop(t => t <= 1000 ? hand(700, 400) : t <= 1600 ? hand(700, 400 + (t - 1000) * .7) : gone, 2800)).toBeNull(); // slow
+    expect(drop(t => t <= 1200 ? hand(700, 800) : gone, 2400)).toBeNull(); // resting low, then lost
+    expect(drop(t => falling(t) === gone && t > 1400 ? hand(700, 700) : falling(t), 2600)).toBeNull(); // came straight back
   });
-  it('closes the stage when the hand drops out of view, but not when it rests or flickers', () => {
-    const drop = new DismissGesture();
-    let t = 0;
-    for (; t <= 700; t += 16) drop.step(t, hand(700, 400), view);
-    for (let i = 0; i < 10; i++, t += 16) drop.step(t, hand(700, 400 + i * 45), view);
-    let event = null;
-    for (let i = 0; i < 40 && !event; i++, t += 16) event = drop.step(t, gone, view);
-    expect(event).toEqual({ type: 'drop' });
-
-    const rest = new DismissGesture();
-    t = 0;
-    for (; t <= 700; t += 16) rest.step(t, hand(700, 760), view);
-    for (let i = 0; i < 60; i++, t += 16) expect(rest.step(t, gone, view)).toBeNull();
-
-    const flicker = new DismissGesture();
-    t = 0;
-    for (; t <= 700; t += 16) flicker.step(t, hand(700, 400), view);
-    for (let i = 0; i < 10; i++, t += 16) flicker.step(t, hand(700, 400 + i * 45), view);
-    for (let i = 0; i < 10; i++, t += 16) expect(flicker.step(t, gone, view)).toBeNull();
-    for (let i = 0; i < 60; i++, t += 16) expect(flicker.step(t, hand(700, 700), view)).toBeNull();
+  it('does nothing for a sideways exit, a brief appearance, or letting go of a pinch', () => {
+    expect(drop(t => t <= 1000 ? hand(700, 700) : t <= 1160 ? hand(700 + (t - 1000) * 3, 700 + (t - 1000) * .6) : gone, 2200)).toBeNull();
+    expect(drop(t => t <= 300 ? hand(700, 400) : t <= 460 ? hand(700, 400 + (t - 300) * 2.6) : gone, 1600)).toBeNull();
+    expect(drop(t => t <= 1000 ? hand(700, 400, { pinching: true }) : t <= 1160 ? hand(700, 400 + (t - 1000) * 2.6, { pinching: true }) : gone, 2200)).toBeNull();
   });
 });
 
@@ -100,9 +61,10 @@ describe('who is looking at the screen', () => {
     expect(filter.update(600, aside)).toBe('looking'); // a glance
     expect(filter.update(1000, ahead)).toBe('looking');
     expect(filter.update(1100, aside)).toBe('looking');
-    expect(filter.update(2600, aside)).toBe('away');
-    expect(filter.update(2700, null)).toBe('away');
-    expect(filter.update(5000, null)).toBe('nobody');
+    expect(filter.update(2600, aside)).toBe('looking'); // not long enough yet
+    expect(filter.update(3000, aside)).toBe('away');
+    expect(filter.update(3100, null)).toBe('away');
+    expect(filter.update(6000, null)).toBe('nobody');
   });
 });
 

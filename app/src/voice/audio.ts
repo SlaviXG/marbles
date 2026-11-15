@@ -13,6 +13,12 @@ export function pcm16(audio: Float32Array): ArrayBuffer {
 export type AudioTurn = { audio?: Float32Array; commit: boolean; speaking: boolean; level: number;
   /** The turn was steady sound (music, a video, a fan), not someone talking. */ background?: boolean };
 
+// A turn ends after this much quiet. Shorter feels snappier but cuts people off
+// mid-thought; 0.6 s is about the longest pause inside a sentence.
+export const END_SILENCE_SECONDS = 0.6;
+// Sound below this share of the turn's own speech level counts as quiet.
+const END_OF_SPEECH = 0.16;
+
 // How long unbroken sound may run before it is judged to be background.
 // Speech breathes: within a few seconds it always dips back toward the room
 // level between words and phrases. Music and video soundtracks do not.
@@ -30,6 +36,7 @@ export class AudioTurns {
   private attack = 0;
   private calibrated = 0;
   private noise = 0.003;
+  private peak = 0; // how loud this turn's speech has been (slowly forgetting)
   private quietest = Infinity; // the quietest 20 ms heard in the current turn
   private energy = 0; // summed rms of the turn, for its average level
   private chunks = 0;
@@ -82,9 +89,15 @@ export class AudioTurns {
       return { audio, commit: true, speaking: false, level, background: true };
     }
     // Lower release threshold keeps soft syllables inside a spoken phrase.
-    const voiced = rms > Math.max(0.007, this.noise * 1.6);
+    // ...and it is judged against the speaker's own level, not only the room's.
+    // In a noisy room the tail of a sentence used to be followed by sound that
+    // still cleared the room threshold, so the turn would not end until the
+    // 15 s cap. Sound far below how loudly this person has been talking is not
+    // them talking.
+    this.peak = Math.max(this.peak * .997, rms);
+    const voiced = rms > Math.max(0.007, this.noise * 1.6, this.peak * END_OF_SPEECH);
     this.silence = voiced ? 0 : this.silence + audio.length;
-    const commit = this.silence >= SAMPLE_RATE * 0.7 || this.length >= SAMPLE_RATE * 15;
+    const commit = this.silence >= SAMPLE_RATE * END_SILENCE_SECONDS || this.length >= SAMPLE_RATE * 15;
     if (commit) this.flush();
     return { audio, commit, speaking: !commit, level };
   }
@@ -92,7 +105,7 @@ export class AudioTurns {
   flush(): boolean {
     const hasAudio = this.length >= SAMPLE_RATE * 0.1;
     this.length = this.silence = this.attack = 0;
-    this.quietest = Infinity; this.energy = 0; this.chunks = 0; this.heard = 0;
+    this.quietest = Infinity; this.energy = 0; this.chunks = 0; this.heard = 0; this.peak = 0;
     return hasAudio;
   }
 

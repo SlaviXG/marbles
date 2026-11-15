@@ -243,3 +243,47 @@ it('sends email through an agent’s Gmail connector and believes only its expli
   expect(claude.args.slice(-2)).toEqual(['--allowedTools', 'mcp__claude_ai_Gmail']);
   expect(launcher({ id: 'claude', kind: 'cli', command: 'claude', path: '/bin/claude', available: true }, 'x', '/tmp').args).not.toContain('--allowedTools');
 });
+
+// ---- email tries each way in turn ----
+import { EmailJobs, resolveRecipient as resolve, userEmail } from '../comms/comms.mjs';
+
+it('tries Claude, then Codex, then Mail, and stops at the first that sends', async () => {
+  const tasks = [];
+  const service = { snapshot: () => tasks, startOrQueue: vi.fn(async (_prompt, metadata, agentId) => { const task = { id: `task-${tasks.length}`, agentId, status: 'running', stdout: '', source: metadata.source, allowTools: metadata.allowTools }; tasks.push(task); return task; }) };
+  const mail = vi.fn(async () => ({ sent: true }));
+  const jobs = new EmailJobs({ taskService: service, agents: () => [{ id: 'claude' }, { id: 'codex' }], mail });
+  const job = await jobs.start({ to: 'sam@example.com', subject: 'Hi', body: 'Yo' });
+  expect(service.startOrQueue.mock.calls[0][2]).toBe('claude');
+  expect(tasks[0].allowTools).toEqual(['mcp__claude_ai_Gmail']);
+  expect(await jobs.status(job.id)).toMatchObject({ status: 'sending', agentId: 'claude' });
+  Object.assign(tasks[0], { status: 'completed', stdout: 'NO_GMAIL: no connector' });
+  expect(await jobs.status(job.id)).toMatchObject({ status: 'sending', agentId: 'codex' });
+  Object.assign(tasks[1], { status: 'completed', stdout: 'NO_GMAIL: none here either' });
+  expect(await jobs.status(job.id)).toEqual({ status: 'sent', via: 'Mail', tried: ['claude', 'codex'] });
+  expect(mail).toHaveBeenCalledTimes(1);
+  expect(await jobs.status(job.id)).toMatchObject({ status: 'sent', via: 'Mail' }); // settled: nothing is sent twice
+  expect(mail).toHaveBeenCalledTimes(1);
+
+  const direct = new EmailJobs({ taskService: service, agents: () => [{ id: 'claude' }], mail });
+  const sent = await direct.start({ to: 'sam@example.com', subject: 'Hi', body: 'Yo' });
+  Object.assign(tasks.at(-1), { status: 'completed', stdout: 'Done.\nEMAIL_SENT' });
+  expect(await direct.status(sent.id)).toEqual({ status: 'sent', via: 'claude', tried: ['claude'] });
+  expect(mail).toHaveBeenCalledTimes(1);
+  await expect(direct.start({ to: 'nope', subject: 'Hi', body: 'Yo' })).rejects.toThrow();
+  expect(await direct.status('missing')).toMatchObject({ status: 'failed' });
+});
+
+it('knows who “me” is', async () => {
+  process.env.MARBLES_USER_EMAIL = 'me@example.com';
+  try {
+    expect(await userEmail()).toBe('me@example.com');
+    expect(await resolve('me', 'email')).toEqual({ name: 'You', address: 'me@example.com' });
+    expect(await resolve('My email', 'email')).toEqual({ name: 'You', address: 'me@example.com' });
+  } finally { delete process.env.MARBLES_USER_EMAIL; }
+});
+
+it('lets a voice-delegated Claude task use Gmail, and tells it how to email', () => {
+  const intent = { problem: '', objective: 'Make a deck and email it', summary: 's', plan: ['Build the deck', 'Email it to sam@example.com'], assumptions: [], constraints: [], successCriteria: ['c'], collaboration: 'solo', agentId: 'claude' };
+  expect(buildVoicePrompt('Make a deck and mail it to me', intent)).toMatch(/Gmail connector/);
+  expect(buildVoicePrompt('Make a deck', { ...intent, objective: 'Make a deck', plan: ['Build the deck'] })).not.toMatch(/Gmail connector/);
+});

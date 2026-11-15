@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { liveEnv } from '../env.mjs';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -165,6 +166,9 @@ export class TaskService {
       if (queued) { const now = new Date().toISOString(); Object.assign(queued, { agentId, status: 'running', updatedAt: now, startedAt: now }); }
       else this.tasks.push(task);
       if (metadata.allowTools) task.allowTools = metadata.allowTools;
+      // Voice-delegated work may include "...and email it to me". Without this a
+      // headless Claude is refused its own Gmail connector and the send fails.
+      else if (!task.allowTools && task.source === 'voice' && liveEnv('MARBLES_AGENT_GMAIL') !== 'off') task.allowTools = ['mcp__claude_ai_Gmail'];
       const launch = launcher(agent, task.prompt, dir, { allowTools: task.allowTools });
       let child;
       try { child = this.spawnProcess(launch.command, launch.args, launch.options); }

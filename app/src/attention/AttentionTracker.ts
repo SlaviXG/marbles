@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { DEFAULT_ASSETS } from '../input';
+import { DEFAULT_ASSETS, GONE_MS, pointerTarget } from '../input';
 import { AttentionFilter, closestFace, poseFromMatrix, type Attention, type Face } from './headPose';
 
 // Watches the camera for the nearest face and reports whether that person is
@@ -9,8 +9,9 @@ import { AttentionFilter, closestFace, poseFromMatrix, type Attention, type Face
 // It is deliberately light: a small frame a few times a second is plenty to
 // tell where a head is pointing, and the hand tracker needs the rest.
 const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
-const INTERVAL_MS = 170;
-const FRAME_WIDTH = 256;
+const INTERVAL_MS = 260;
+const BUSY_INTERVAL_MS = 800; // while a hand is working, the hand tracker gets the processor
+const FRAME_WIDTH = 192;
 
 export type AttentionStatus = 'off' | 'starting' | 'error' | Attention;
 export const useAttention = create<{ status: AttentionStatus; error: string }>(() => ({ status: 'off', error: '' }));
@@ -66,6 +67,7 @@ class AttentionTracker {
   private worker?: Worker;
   private timer?: ReturnType<typeof setInterval>;
   private busy = false;
+  private lastFrame = 0;
   private filter = new AttentionFilter();
   private generation = 0;
 
@@ -106,6 +108,13 @@ class AttentionTracker {
   private async tick() {
     const video = this.video;
     if (!video || !this.worker || this.busy || document.hidden || !video.videoWidth) return;
+    // Face and hand models share the same cores. A hand in view means the user
+    // is pointing or dragging, which must stay smooth; where their head points
+    // changes slowly, so it can be checked far less often meanwhile.
+    const now = performance.now();
+    const handBusy = pointerTarget.present && now - pointerTarget.lastSeen < GONE_MS;
+    if (handBusy && now - this.lastFrame < BUSY_INTERVAL_MS) return;
+    this.lastFrame = now;
     this.busy = true;
     try {
       const bitmap = await createImageBitmap(video, { resizeWidth: FRAME_WIDTH, resizeHeight: Math.round(FRAME_WIDTH * video.videoHeight / video.videoWidth) });

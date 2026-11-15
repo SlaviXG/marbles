@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { liveEnv } from '../env.mjs';
 
 // Email and calls go through the user's own Mac apps (Mail, Contacts,
 // FaceTime / iPhone calling), so there are no accounts or keys to configure.
@@ -44,6 +45,12 @@ export async function findContacts(name, { run = osascript, platform = process.p
 export async function resolveRecipient(to, kind, options) {
   if (typeof to !== 'string' || !to.trim() || to.length > 254) throw new Error('Say who this is for.');
   const value = to.trim();
+  // "Mail me the deck": the user's own address.
+  if (kind === 'email' && /^(me|myself|my ?self|my (?:own )?(?:e-?mail|address|inbox))$/i.test(value)) {
+    const own = await userEmail();
+    if (own) return { name: 'You', address: own };
+    throw new Error('The user’s own address is not known. Ask for it, or set MARBLES_USER_EMAIL in .env.');
+  }
   if (kind === 'email' && isEmail(value)) return { name: '', address: value };
   if (kind === 'call' && normalizePhone(value)) return { name: '', address: normalizePhone(value) };
   const people = (await findContacts(value, options)).filter(person => (kind === 'email' ? person.emails : person.phones).length);
@@ -100,4 +107,58 @@ export function emailOutcome(task) {
   if (task.status === 'completed' && /\bEMAIL_SENT\b/.test(verdict) && !/NO_GMAIL|EMAIL_FAILED/.test(verdict)) return { status: 'sent', agentId: task.agentId };
   if (/NO_GMAIL/.test(verdict)) return { status: 'unavailable', agentId: task.agentId, reason: reason || 'No Gmail connector is signed in for this agent.' };
   return { status: 'failed', agentId: task.agentId, reason: reason || (task.status === 'cancelled' ? 'Cancelled.' : 'The agent did not confirm that the email was sent.') };
+}
+
+// ---- Who "me" is ----
+let gitEmail; // looked up once
+/** The user's own email address: MARBLES_USER_EMAIL, else the one git commits with. */
+export async function userEmail({ run = (file, args) => new Promise(resolve => execFile(file, args, { timeout: 4000 }, (error, stdout) => resolve(error ? '' : stdout.trim()))) } = {}) {
+  const configured = liveEnv('MARBLES_USER_EMAIL');
+  if (isEmail(configured)) return configured.trim();
+  gitEmail ??= await run('git', ['config', '--global', 'user.email']);
+  return isEmail(gitEmail) ? gitEmail : '';
+}
+
+// ---- Trying each way to send, in order ----
+// Agents first (Claude, then Codex), because they send from the user's real
+// Gmail. If neither has a usable Gmail connector the Mac's Mail app is used.
+// The user confirmed the email once; they should not have to nurse it through.
+export class EmailJobs {
+  constructor({ taskService, agents, mail = sendEmail }) { Object.assign(this, { taskService, agents, mail }); this.jobs = new Map(); }
+  async start({ to, subject, body }) {
+    if (!isEmail(to) || typeof subject !== 'string' || !subject.trim() || subject.length > 200 || typeof body !== 'string' || !body.trim() || body.length > 8000) throw new Error('A valid address, subject and message are required.');
+    const job = { id: `mail-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, email: { to: to.trim(), subject: subject.trim(), body }, tried: [], taskId: null, result: null, advancing: null };
+    this.jobs.set(job.id, job);
+    if (this.jobs.size > 50) this.jobs.delete(this.jobs.keys().next().value);
+    await this.advance(job);
+    return job;
+  }
+  /** Hand the email to the next agent that has not tried, or to Mail when none is left. */
+  async advance(job, reason = '') {
+    const next = ['claude', 'codex'].find(id => !job.tried.includes(id) && this.agents().some(agent => agent.id === id));
+    if (next) {
+      job.tried.push(next);
+      const task = await this.taskService.startOrQueue(emailTaskPrompt(job.email), { source: 'email', title: `Send email to ${job.email.to}`, allowTools: GMAIL_TOOLS }, next);
+      job.taskId = task.id;
+      return;
+    }
+    job.taskId = null;
+    try {
+      const mailed = await this.mail(job.email);
+      job.result = mailed.sent ? { status: 'sent', via: 'Mail', tried: job.tried } : { status: 'failed', tried: job.tried, link: mailed.link, reason: reason || 'No agent had a Gmail connector and Mail could not send it.' };
+    } catch (error) { job.result = { status: 'failed', tried: job.tried, reason: error.message }; }
+  }
+  async status(id) {
+    const job = this.jobs.get(id);
+    if (!job) return { status: 'failed', reason: 'The email was not found.' };
+    if (job.result) return job.result;
+    if (job.advancing) { await job.advancing; return job.result ?? { status: 'sending', agentId: job.tried.at(-1), tried: job.tried }; }
+    const outcome = emailOutcome(this.taskService.snapshot().find(task => task.id === job.taskId));
+    if (outcome.status === 'sending') return { ...outcome, tried: job.tried };
+    if (outcome.status === 'sent') return job.result = { status: 'sent', via: outcome.agentId, tried: job.tried };
+    // This agent could not send it: move on rather than stopping.
+    job.advancing = this.advance(job, outcome.reason).finally(() => { job.advancing = null; });
+    await job.advancing;
+    return job.result ?? { status: 'sending', agentId: job.tried.at(-1), tried: job.tried };
+  }
 }

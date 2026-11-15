@@ -8,7 +8,8 @@ import { upsertMessage, type VoiceMessage, type VoiceRequest } from "../voice/me
 import { ReplySpeaker } from '../voice/ReplySpeaker';
 import { withoutWakePhrase } from '../voice/wakePhrase';
 import { canvasCommand } from '../voice/canvasCommand';
-import { mediaCommand } from '../voice/mediaCommand';
+import { mediaCommand, slideCommand } from '../voice/mediaCommand';
+import { SLIDE_EVENT } from './preview/SlidePager';
 import { setDucked } from '../voice/ducking';
 import { describeScreen, shareScreen } from '../state/screen';
 import { useAttention } from '../attention/AttentionTracker';
@@ -29,6 +30,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   const pulseTimer = useRef<ReturnType<typeof setTimeout>>();
   const commands = useRef<CommandBuffer>();
   const mounted = useRef(true);
+  const wasSpeaking = useRef(false);
+  const thinkingTimer = useRef<ReturnType<typeof setTimeout>>();
   const backlog = useRef<VoiceRequest[]>([]);
   const flying = useRef(false);
   const conversationId = useRef(crypto.randomUUID());
@@ -101,6 +104,8 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
   }
 
   function message(item: Omit<VoiceMessage, 'expiresAt'>) {
+    // A real answer (or its own "planning" line) replaces the placeholder.
+    if (item.role === 'assistant' && item.id !== 'thinking') { clearTimeout(thinkingTimer.current); setMessages(current => current.filter(entry => entry.id !== 'thinking')); }
     const time = Date.now();
     setMessages(current => upsertMessage(current, item, time));
     if (item.role === 'assistant' && !item.pending && item.id !== 'speech-error') speaker.current?.enqueue(item.id, item.text);
@@ -121,6 +126,9 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         message({ id: `wake-reply:${crypto.randomUUID()}`, role: 'assistant', text: 'Ready.' });
         return;
       }
+      // A deck on screen takes "next" and "back" before anything else does.
+      const slide = document.querySelector('.slide-pager') ? slideCommand(request) : null;
+      if (slide) { window.dispatchEvent(new CustomEvent(SLIDE_EVENT, { detail: slide })); session.current?.rearm(); return; }
       const media = mediaCommand(request, useDisplay.getState().display, !!useDisplay.getState().video);
       if (media) {
         const view = useDisplay.getState();
@@ -164,14 +172,27 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         }
         commands.current?.event(event);
       },
-      activity: (energy, speaking) => { voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
+      activity: (energy, speaking) => {
+        // The moment you stop talking, show that it is being thought about. The
+        // transcript and the answer take a few seconds; silence in between reads
+        // as "it did not hear me".
+        if (speaking !== wasSpeaking.current) {
+          wasSpeaking.current = speaking;
+          clearTimeout(thinkingTimer.current);
+          if (speaking) setMessages(current => current.filter(item => item.id !== 'thinking'));
+          else {
+            message({ id: 'thinking', role: 'assistant', text: 'Thinking…', pending: true });
+            thinkingTimer.current = setTimeout(() => setMessages(current => current.filter(item => item.id !== 'thinking')), 9000);
+          }
+        } voiceSignal.level = energy; commands.current?.activity(speaking); speaker.current?.setUserSpeaking(speaking); },
       awake: () => speaker.current?.interrupt(),
       // What was heard was the room, not a request: take the half-written line away.
       discard: () => {
         const id = draftId.current;
         for (const item of Object.keys(draft.current.items)) consumed.current.add(item);
         draft.current = emptyTranscript(); draftId.current = crypto.randomUUID();
-        setMessages(current => current.filter(item => item.id !== id));
+        clearTimeout(thinkingTimer.current);
+        setMessages(current => current.filter(item => item.id !== id && item.id !== 'thinking'));
       },
       wakeDetected: () => {
         setWakePulse(false);
@@ -211,7 +232,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
       try {
         // Marbles knows what is on screen: a short description goes with the
         // request, and a picture is left with the local server in case it must look.
-        await shareScreen();
+        void shareScreen(); // not awaited: it is only needed if Hermes decides to look
         const response = await fetch('/api/voice/tasks', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...request, screen: describeScreen() }), signal: AbortSignal.timeout(150_000),

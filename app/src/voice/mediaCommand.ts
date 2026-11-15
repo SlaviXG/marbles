@@ -33,3 +33,13 @@ export function mediaCommand(text: string, display: Stage | null, video: boolean
   }
   return null;
 }
+
+/** "Next slide", "go back a slide", "first slide": only meaningful while a deck is on screen. */
+export function slideCommand(text: string): { delta?: number; to?: 'first' | 'last' } | null {
+  const phrase = said(text);
+  if (/^(?:next|next (?:slide|page|one)|forward|go forward|continue)$/.test(phrase)) return { delta: 1 };
+  if (/^(?:previous|previous (?:slide|page|one)|back|go back|back a (?:slide|page)|last (?:slide|page) again)$/.test(phrase)) return { delta: -1 };
+  if (/^(?:first (?:slide|page)|go to the (?:start|beginning|first slide)|start over)$/.test(phrase)) return { to: 'first' };
+  if (/^(?:last (?:slide|page)|go to the (?:end|last slide))$/.test(phrase)) return { to: 'last' };
+  return null;
+}
