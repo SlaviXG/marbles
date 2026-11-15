@@ -13,7 +13,8 @@ import { SLIDE_EVENT } from './preview/SlidePager';
 import { setDucked } from '../voice/ducking';
 import { describeScreen, shareScreen } from '../state/screen';
 import { useAttention } from '../attention/AttentionTracker';
-import { useDisplay, type Display } from '../state/display';
+import { useDisplay } from '../state/display';
+import { applyDisplayAction, closeWindows, type DisplayAction } from '../state/windows';
 import { usePresentation } from '../state/presentation';
 import { artifactSelection } from '../core/presentation';
 import { useVault } from '../state/store';
@@ -135,6 +136,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
         if (media.action === 'confirm') void view.confirm();
         else if (media.action === 'close') view.close();
         else if (media.action === 'closeVideo') view.closeVideo();
+        else if (media.action === 'closeAll') closeWindows();
         else if (media.action === 'bigger' || media.action === 'smaller') view.resizeVideo(media.action === 'bigger');
         else if (media.action === 'grid') view.focus(null);
         else view.step(media.action === 'next' ? 1 : -1);
@@ -255,11 +257,7 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
           await Promise.all([refreshAgents(), refreshSwarms()]);
         } else if (data.state === 'show' && data.display) {
           // Hermes chose to put something in front of the user.
-          const shown = data.display as Display | { kind: 'select'; id: string } | { kind: 'close' };
-          if (shown.kind === 'select') { useDisplay.getState().close(); useVault.getState().select(shown.id); }
-          else if (shown.kind === 'close') { useDisplay.getState().close(); useVault.getState().clear(); }
-          else if (shown.kind === 'video') useDisplay.getState().show(shown); // a side window: whatever is open stays open
-          else { useVault.getState().clear(); useDisplay.getState().show(shown); }
+          applyDisplayAction(data.display as DisplayAction);
           reply(data.reply);
           session.current?.rearm();
         } else if (data.state === 'ignore') {

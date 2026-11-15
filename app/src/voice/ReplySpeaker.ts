@@ -1,4 +1,3 @@
-import { wakeMatch } from './wakePhrase';
 import { DEFAULT_SPEECH_VOICE, isSpeechVoice, type SpeechVoice } from '../../shared/speechVoices.mjs';
 
 export function spokenText(text: string): string {
@@ -6,11 +5,8 @@ export function spokenText(text: string): string {
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/g, 'link in the message')
-    .replace(/[*_`#]/g, '').replace(/\bmarbles\b/gi, 'the wake word')
+    .replace(/[*_`#]/g, '')
     .replace(/\s+/g, ' ').trim();
-  // Never speak even a fuzzy wake candidate back into the detector.
-  let wake;
-  while ((wake = wakeMatch(plain))) plain = `${plain.slice(0, wake.start)}the wake phrase${plain.slice(wake.end)}`;
   if (plain.length <= 700) return plain;
   const end = plain.slice(0, 620).lastIndexOf('. ');
   return `${plain.slice(0, end > 250 ? end + 1 : 620)} Details are in the message.`;

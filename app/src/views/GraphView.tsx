@@ -623,6 +623,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         const held = downNode.current ? moved.current.get(downNode.current) : undefined;
         carry.current = downNode.current && nodeCache.current.get(downNode.current)?.baseX != null
           ? { id: downNode.current, sx: e.clientX, sy: e.clientY, ox: held?.x ?? 0, oy: held?.y ?? 0, moving: false } : null;
+        if (carry.current) steady.drag(true);
         if (DEBUG)
           console.debug(`[graph] pointerdown at ${e.clientX.toFixed(0)},${e.clientY.toFixed(0)} node=`, downNode.current);
         ensureViewInit();
@@ -654,7 +655,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
             const held = carry.current;
             if (!held) return;
             const dx = e.clientX - held.sx, dy = e.clientY - held.sy;
-            if (!held.moving && Math.hypot(dx, dy) < clickSlop(DRAG_THRESHOLD) * 1.4) return;
+            if (!held.moving && Math.hypot(dx, dy) < Math.min(18, clickSlop(DRAG_THRESHOLD) * 1.4)) return;
             if (!held.moving) steady.drag(true);
             held.moving = true;
             el.style.cursor = "grabbing";
@@ -712,10 +713,11 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         const d = downRef.current;
         const pressed = downNode.current;
         const carried = carry.current?.moving;
+        if (carry.current) steady.drag(false);
         carry.current = null;
         downRef.current = null;
         downNode.current = null;
-        if (carried) { steady.drag(false); if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
+        if (carried) { if (wrapRef.current) wrapRef.current.style.cursor = "grab"; return; } // put down, not opened
         if (wasDrag) {
           // Fling: throw the center with the release velocity; the spring settles it.
           const { x: vx, y: vy } = panVel.current;
@@ -750,7 +752,7 @@ export default function GraphView({ ambientMotion = true }: { ambientMotion?: bo
         // the press state without selecting anything and without touching
         // hover: no click was completed, and the pointer has not gone anywhere.
         dragging.current = false;
-        if (carry.current?.moving) steady.drag(false);
+        if (carry.current) steady.drag(false);
         carry.current = null;
         downRef.current = null;
         downNode.current = null;

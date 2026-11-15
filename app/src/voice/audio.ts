@@ -14,10 +14,10 @@ export type AudioTurn = { audio?: Float32Array; commit: boolean; speaking: boole
   /** The turn was steady sound (music, a video, a fan), not someone talking. */ background?: boolean };
 
 // A turn ends after this much quiet. Shorter feels snappier but cuts people off
-// mid-thought; 0.6 s is about the longest pause inside a sentence.
-export const END_SILENCE_SECONDS = 0.6;
+// mid-thought; short thinking pauses remain part of the same turn.
+export const END_SILENCE_SECONDS = 0.5;
 // Sound below this share of the turn's own speech level counts as quiet.
-const END_OF_SPEECH = 0.16;
+const END_OF_SPEECH = 0.28;
 
 // How long unbroken sound may run before it is judged to be background.
 // Speech breathes: within a few seconds it always dips back toward the room
@@ -41,6 +41,8 @@ export class AudioTurns {
   private energy = 0; // summed rms of the turn, for its average level
   private chunks = 0;
   private heard = 0; // samples of the turn itself, without the pre-roll
+  private voiceAttack = 0;
+  private tail: { rms: number; samples: number }[] = [];
 
   push(audio: Float32Array): AudioTurn {
     const rms = Math.sqrt(audio.reduce((sum, v) => sum + v * v, 0) / audio.length);
@@ -69,10 +71,14 @@ export class AudioTurns {
       this.attack = 0;
     }
     this.length += audio.length;
-    for (let start = 0; start + BLOCK <= fresh.length; start += BLOCK) {
+    const levels: { rms: number; samples: number }[] = [];
+    for (let start = 0; start < fresh.length; start += BLOCK) {
       let sum = 0;
-      for (let i = start; i < start + BLOCK; i++) sum += fresh[i] * fresh[i];
-      this.quietest = Math.min(this.quietest, Math.sqrt(sum / BLOCK));
+      const end = Math.min(start + BLOCK, fresh.length);
+      for (let i = start; i < end; i++) sum += fresh[i] * fresh[i];
+      const blockRms = Math.sqrt(sum / (end - start));
+      this.quietest = Math.min(this.quietest, blockRms);
+      levels.push({ rms: blockRms, samples: end - start });
     }
     this.energy += rms; this.chunks++; this.heard += fresh.length;
     // Sound that has gone this long without once dropping near the room level
@@ -94,9 +100,24 @@ export class AudioTurns {
     // still cleared the room threshold, so the turn would not end until the
     // 15 s cap. Sound far below how loudly this person has been talking is not
     // them talking.
-    this.peak = Math.max(this.peak * .997, rms);
-    const voiced = rms > Math.max(0.007, this.noise * 1.6, this.peak * END_OF_SPEECH);
-    this.silence = voiced ? 0 : this.silence + audio.length;
+    for (const block of levels) {
+      this.peak = Math.max(this.peak * .999, block.rms);
+      this.tail.push(block);
+      while (this.tail.length > 18) this.tail.shift();
+      const bed = this.tail.reduce((sum, item) => sum + item.rms, 0) / this.tail.length;
+      // A new fan/music bed can be louder than the room was at calibration.
+      // A sustained, flat tail well below speech is quiet, not another word.
+      const flatTail = this.tail.reduce((sum, item) => sum + item.samples, 0) >= SAMPLE_RATE * .28
+        && bed < this.peak * .55
+        && Math.max(...this.tail.map(item => item.rms)) - Math.min(...this.tail.map(item => item.rms)) < Math.max(.002, bed * .1);
+      const varied = Math.max(...this.tail.map(item => item.rms)) - Math.min(...this.tail.map(item => item.rms)) > bed * .35;
+      const softSpeech = varied && block.rms > Math.max(.007, this.noise * 2, this.peak * .12, bed * .7);
+      const voiced = !flatTail && (softSpeech || block.rms > Math.max(.007, this.noise * 1.6, this.peak * END_OF_SPEECH));
+      // A cough/click shorter than 60 ms must not keep restarting the timer.
+      this.voiceAttack = voiced ? this.voiceAttack + block.samples : 0;
+      if (this.voiceAttack >= SAMPLE_RATE * .06) this.silence = 0;
+      else this.silence += block.samples;
+    }
     const commit = this.silence >= SAMPLE_RATE * END_SILENCE_SECONDS || this.length >= SAMPLE_RATE * 15;
     if (commit) this.flush();
     return { audio, commit, speaking: !commit, level };
@@ -106,6 +127,7 @@ export class AudioTurns {
     const hasAudio = this.length >= SAMPLE_RATE * 0.1;
     this.length = this.silence = this.attack = 0;
     this.quietest = Infinity; this.energy = 0; this.chunks = 0; this.heard = 0; this.peak = 0;
+    this.voiceAttack = 0; this.tail = [];
     return hasAudio;
   }
 

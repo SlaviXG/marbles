@@ -7,13 +7,13 @@ import path from 'node:path';
 
 export const workspaceRoot = () => path.resolve(process.env.MARBLES_WORKSPACE_DIR || path.join(os.homedir(), 'marbles-workspace'));
 export const taskCapability = (agent) => agent.available === false ? agent.reason || 'Agent unavailable' : agent.kind !== 'cli' ? agent.id === 'cursor' ? 'Cursor CLI not installed. Install with: curl https://cursor.com/install -fsS | bash, then run `cursor-agent login`.' : 'Desktop app has no non-interactive CLI' : !['codex', 'claude', 'cursor'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : null;
-export function launcher(agent, prompt, dir, { allowTools = [] } = {}) {
+export function launcher(agent, prompt, dir, { allowTools = [], access = liveEnv('MARBLES_AGENT_ACCESS') || 'workspace' } = {}) {
   if (taskCapability(agent)) throw new Error(taskCapability(agent));
-  if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', access === 'full' ? 'danger-full-access' : 'workspace-write', '-c', 'approval_policy="never"', '--skip-git-repo-check', '-C', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
   if (agent.id === 'cursor') return { command: agent.path, args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
   // A task may be allowed specific connector tools (for example Gmail) that a
   // headless run would otherwise refuse to call.
-  return { command: agent.path, args: ['-p', prompt, '--permission-mode', 'acceptEdits', ...(allowTools.length ? ['--allowedTools', ...allowTools] : [])], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  return { command: agent.path, args: ['-p', prompt, ...(access === 'full' ? ['--dangerously-skip-permissions'] : ['--permission-mode', 'acceptEdits']), ...(allowTools.length ? ['--allowedTools', ...allowTools] : [])], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
 }
 const tail = (s, chunk) => (s + chunk).slice(-12000);
 const fileType = (name) => {

@@ -61,7 +61,7 @@ describe('task launcher', () => {
       const task = await service.start('codex', 'do X');
       expect(task.status).toBe('running');
       expect(calls[0][0]).toBe('/bin/codex');
-      expect(calls[0][1]).toEqual(['exec', '-s', 'workspace-write', '--skip-git-repo-check', '-C', path.join(root, 'codex', task.id), 'do X']);
+      expect(calls[0][1]).toEqual(['exec', '-s', 'workspace-write', '-c', 'approval_policy="never"', '--skip-git-repo-check', '-C', path.join(root, 'codex', task.id), 'do X']);
       expect(calls[0][2].shell).toBe(false);
       calls.length = 0;
       expect(launcher(claude, 'do Y', root).args).toEqual(['-p', 'do Y', '--permission-mode', 'acceptEdits']);
@@ -72,6 +72,13 @@ describe('task launcher', () => {
   });
 });
 describe('artifact path safety', () => {
+  it('gives explicitly enabled full-access workers file access beyond the task directory without changing global configuration', () => {
+    const launch = launcher(codex, 'Write /tmp/deck.pptx', '/tmp/jobs/one', { access: 'full' });
+    expect(launch.args).toContain('danger-full-access'); expect(launch.args).toContain('approval_policy="never"'); expect(launch.options.cwd).toBe('/tmp/jobs/one');
+    const claudeLaunch = launcher(claude, 'Write /tmp/deck.pptx', '/tmp/jobs/two', { access: 'full', allowTools: ['mcp__claude_ai_Gmail'] });
+    expect(claudeLaunch.args).toContain('--dangerously-skip-permissions'); expect(claudeLaunch.args).toContain('mcp__claude_ai_Gmail'); expect(claudeLaunch.options.shell).toBe(false);
+    expect(launcher(codex, 'Work locally', '/tmp/jobs', { access: 'workspace' }).args).toContain('workspace-write');
+  });
   it('rejects traversal and symlinks outside the root', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'marbles-artifact-'));
     try {

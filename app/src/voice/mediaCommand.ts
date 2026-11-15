@@ -2,14 +2,15 @@ import type { Display } from '../state/display';
 
 // Short spoken answers to whatever is on screen. Handled locally so "send it"
 // or "next" is instant and can never be mistaken for a new task.
-export type MediaAction = { action: 'confirm' | 'close' | 'closeVideo' | 'bigger' | 'smaller' | 'next' | 'previous' | 'grid'; reply: string };
+export type MediaAction = { action: 'confirm' | 'close' | 'closeVideo' | 'closeAll' | 'bigger' | 'smaller' | 'next' | 'previous' | 'grid'; reply: string };
 const said = (text: string) => text.trim().toLowerCase().replace(/[.!?,]+$/g, '').replace(/^(?:ok(?:ay)?|yes|yeah|please)[, ]+/, '').replace(/\s+please$/, '');
 type Stage = Exclude<Display, { kind: 'video' }>;
 
 export function mediaCommand(text: string, display: Stage | null, video: boolean = false): MediaAction | null {
-  const phrase = said(text);
+  const phrase = said(text).replace(/^(?:can|could|would) you (?:please )?/, '').replace(/(?: please| for me)$/, '');
+  if (/^(?:close|hide|dismiss) (?:everything|all(?: the)?(?: windows| screens)?|all of (?:it|them))$|^clear (?:the )?screen$/.test(phrase)) return { action: 'closeAll', reply: 'All windows closed.' };
   if (video) {
-    if (/^(?:close|stop|hide|dismiss|turn off)(?: the)? video$/.test(phrase)) return { action: 'closeVideo', reply: 'Video closed.' };
+    if (/^(?:close|stop|hide|dismiss|turn off|shut|shut down|get rid of)(?: (?:the|this|that))? (?:youtube(?: video)?|video|player)(?: (?:window|player))?$/.test(phrase)) return { action: 'closeVideo', reply: 'Video closed.' };
     if (/^(?:make (?:it|the video) )?(?:bigger|larger)|(?:enlarge|expand|maximi[sz]e)(?: the)? video$/.test(phrase)) return { action: 'bigger', reply: '' };
     if (/^(?:make (?:it|the video) )?smaller|(?:shrink|minimi[sz]e)(?: the)? video$/.test(phrase)) return { action: 'smaller', reply: '' };
   }

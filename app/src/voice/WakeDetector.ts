@@ -34,6 +34,7 @@ export class WakeDetector {
   private epoch = 0;
   private disposed = false;
   private loaded = false;
+  private suspended = false;
   private failures = 0;
   private retryAt = 0;
   private cooldownUntil = 0;
@@ -42,6 +43,14 @@ export class WakeDetector {
   constructor(private wake: (audio: Float32Array, diagnostic: WakeDiagnostic) => void, private error: (message: string) => void) {}
 
   get browserRecognitionActive() { return this.recognition !== undefined; }
+  setSuspended(value: boolean) {
+    if (value === this.suspended) return;
+    this.suspended = value; this.reset();
+    if (value) {
+      const recognition = this.recognition; this.recognition = undefined;
+      try { recognition?.stop(); } catch { /* Already stopped. */ }
+    } else if (this.loaded && !this.disposed) this.startWebSpeech();
+  }
 
   load(progress: (percent: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -75,7 +84,7 @@ export class WakeDetector {
   }
 
   push(audio: Float32Array) {
-    if (this.disposed || !this.loaded || !audio.length || !audio.every(Number.isFinite)) return;
+    if (this.disposed || this.suspended || !this.loaded || !audio.length || !audio.every(Number.isFinite)) return;
     const joined = new Float32Array(this.audio.length + audio.length);
     joined.set(this.audio); joined.set(audio, this.audio.length);
     this.audio = joined.slice(-SAMPLE_RATE * WAKE_HISTORY_SECONDS);
@@ -138,13 +147,14 @@ export class WakeDetector {
   }
 
   private startWebSpeech() {
-    if (!WAKE_WEB_SPEECH_ENABLED || typeof window === 'undefined') return;
+    if (!WAKE_WEB_SPEECH_ENABLED || this.suspended || typeof window === 'undefined') return;
     const browser = window as typeof window & { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition };
     const Constructor = browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
     if (!Constructor) return;
     const recognition = new Constructor(); this.recognition = recognition;
     recognition.continuous = true; recognition.interimResults = true; recognition.lang = 'en-US';
     recognition.onresult = event => {
+      if (this.suspended || this.recognition !== recognition) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const text = event.results[i][0]?.transcript ?? '';
         if (wakeMatch(text)) this.detect('webspeech', text, 0, 0, this.total, 0);

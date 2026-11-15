@@ -73,7 +73,7 @@ export class VoiceSession {
       if (this.disposed) return;
       if (this.options.wake) {
         this.wake = new WakeDetector((audio, diagnostic) => {
-          if (this.disposed || this.stopping || (this.awake && !this.replyPlaying)) return;
+          if (this.disposed || this.stopping || this.replyPlaying || performance.now() < this.playbackUntil || this.awake) return;
           this.events.wakeDetected?.(diagnostic);
           this.events.awake?.();
           this.replyPlaying = false; this.playbackUntil = 0;
@@ -120,13 +120,16 @@ export class VoiceSession {
   }
 
   private consume(data: Float32Array) {
-    if (this.wake && (!this.awake || this.replyPlaying)) {
+    // Do not feed our own voice back into either recognizer. The browser's
+    // recognizer has a separate microphone path, so its callback is gated too.
+    if (this.replyPlaying || performance.now() < this.playbackUntil) return;
+    this.wake?.setSuspended(false);
+    if (this.wake && !this.awake) {
       this.wake.push(data);
       const rms = Math.sqrt(data.reduce((sum, v) => sum + v * v, 0) / data.length);
       this.events.activity?.(Math.min(1, rms * 12), false);
       return;
     }
-    if (this.replyPlaying || performance.now() < this.playbackUntil) return;
     const turn = this.turns.push(data);
     this.events.activity?.(turn.level, turn.speaking);
     const started = turn.speaking && !this.speaking;
@@ -196,6 +199,7 @@ export class VoiceSession {
     if (playing === this.replyPlaying) return;
     this.replyPlaying = playing;
     this.playbackUntil = playing ? Infinity : performance.now() + 350;
+    if (playing) this.wake?.setSuspended(true);
     this.turns.discard(); this.wake?.reset();
   }
 

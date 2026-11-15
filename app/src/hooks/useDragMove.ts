@@ -39,13 +39,14 @@ export function useDragMove<T extends HTMLElement, H extends HTMLElement>(
       home = { left: rect.left - offset.current.x, top: rect.top - offset.current.y, width: rect.width, height: rect.height };
       start = { x: event.clientX, y: event.clientY }; origin = { ...offset.current };
       active = true; moved = false; trail = [{ t: performance.now(), x: event.clientX, y: event.clientY }];
+      steady.drag(true);
     };
     const move = (event: PointerEvent) => {
       if (!active) return;
       // While the hand drives the cursor, a trusted move is not the user's grab.
       if (event.isTrusted && usePointerStore.getState().mode === 'hand' && usePointerStore.getState().status === 'tracking') return;
       const dx = event.clientX - start.x, dy = event.clientY - start.y;
-      if (!moved && Math.hypot(dx, dy) < clickSlop(5)) return;
+      if (!moved && Math.hypot(dx, dy) < Math.min(16, clickSlop(5))) return;
       // The cursor must track the hand exactly while it carries something.
       if (!moved) { moved = true; element.classList.add('window-dragging'); steady.drag(true); }
       const x = Math.max(KEEP - home.left - home.width, Math.min(innerWidth - KEEP - home.left, origin.x + dx));
@@ -56,11 +57,11 @@ export function useDragMove<T extends HTMLElement, H extends HTMLElement>(
       trail.push({ t: now, x: event.clientX, y: event.clientY });
       while (trail.length > 2 && now - trail[0].t > 400) trail.shift();
     };
-    const up = () => {
+    const up = (event: PointerEvent) => {
       if (!active) return;
       active = false; element.classList.remove('window-dragging');
-      if (!moved) return;
       steady.drag(false);
+      if (!moved || event.type === 'pointercancel') return;
       // Was it thrown? Speed just before release, ignoring the last jolt of the pinch opening.
       const last = trail[trail.length - 1];
       const from = trail.find(point => last.t - point.t <= FLING.sampleMs) ?? trail[0];

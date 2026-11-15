@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { subscribeFrame } from "../motion/ticker";
 import {
   CursorDriver,
+  handCursorPosition,
   VirtualPointer,
   dispatchAction,
   pointerTarget,
@@ -70,6 +71,7 @@ export default function HandCursor() {
     const unsub = subscribeFrame((now) => {
       const handMode = usePointerStore.getState().mode === "hand";
       const f = driver.step(now, pointerTarget, secondaryHand, handMode);
+      handCursorPosition.x = f.x; handCursorPosition.y = f.y;
       if (!Number.isFinite(lastTx) || Math.abs(f.x - lastTx) > 0.05 || Math.abs(f.y - lastTy) > 0.05) {
         el.style.transform = `translate3d(${f.x}px, ${f.y}px, 0)`;
         lastTx = f.x;

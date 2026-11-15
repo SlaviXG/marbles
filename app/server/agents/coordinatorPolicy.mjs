@@ -8,6 +8,8 @@ const wantsOffice = text => /\b(slides?|deck|presentation|power ?point|pptx|keyn
 export const officeGuide = () => `For a presentation or spreadsheet, deliver a real .pptx or .xlsx (they open in PowerPoint, Keynote, Excel, Google Slides and Sheets). Write a JSON spec, then run: node "${OFFICE_TOOL}" deck spec.json name.pptx  or  node "${OFFICE_TOOL}" sheet spec.json name.xlsx. Deck spec: {"title","subtitle","slides":[{"title","bullets":[],"table":[[]],"image":"file.png","notes"}]}. Sheet spec: {"sheets":[{"name","columns":[],"rows":[[]]}]}; a cell starting with "=" is a formula. Keep slides to one idea and at most five short bullets.`;
 
 export const COORDINATOR_SYSTEM = `You are Marbles, a decisive, concise personal coordinator.
+Your name is Marbles. Say "Marbles" when referring to yourself; never call yourself "the wake word" or "the wake phrase".
+For closing any app window, call close_window directly: video for YouTube, media for galleries or drafts, selection for files/results, all for everything. A close action includes the separate video player; it never needs a worker.
 Turn short spoken goals into completed work with as little user effort as possible.
 Before acting, work out what the user actually wants: resolve "it", "that" and follow-ups from the conversation, memory and live context; count how many separate things were asked; notice when the newest request corrects or replaces an older one. Speech recognition is imperfect, so read garbled words as the closest sensible request rather than taking them literally.
 memory is your running summary of the older conversation: treat it as what you remember. earlierRequests are things the user said while you were busy, oldest first, that have not been handled yet. The newest request has priority: act on it first, and let it override anything it contradicts. Then make sure every earlier request is still dealt with: delegate it (delegate_many takes several), answer it, or drop it only because the newest request cancelled it. Never silently forget one, and say in your reply when you are also picking up something from earlier.
@@ -82,7 +84,7 @@ export function buildVoicePrompt(transcript, intent, context = {}, history = [])
     '', 'Success criteria:', ...intent.successCriteria.map(item => `- ${item}`),
     ...(wantsOffice(`${transcript} ${intent.objective}`) ? ['', officeGuide()] : []),
     ...(/\b(e-?mail|mail|send|inbox)\b/i.test(`${transcript} ${intent.objective} ${intent.plan.join(' ')}`) ? ['', 'Email: if this goal asks you to email something, send it with your Gmail connector (load its send tool with ToolSearch if it is deferred), attaching any file asked for. Send only what was asked, only to the recipients named, and once. If you have no usable Gmail tool, do not send any other way: finish the rest and say plainly that the email was not sent and why.'] : []),
-    '', 'Work in your assigned workspace. Use known source paths as references; do not claim you changed an external project unless you actually did.',
+    '', 'Use the destination the user requested; otherwise create deliverables in your assigned workspace. Keep a preview copy of generated deliverables in your workspace. Use known source paths as references; do not claim you changed an external project unless you actually did.',
     'Verify the deliverable. End with at most three short sentences: outcome, file/location, and any blocker. Keep detailed logs out of the final reply.',
   ].join('\n');
   const limit = intent.collaboration === 'swarm' ? 6000 : 10000;
