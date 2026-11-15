@@ -101,7 +101,7 @@ export default function GestureWidget() {
     {hint && <p className="gesture-widget-hint">{hint}</p>}
     <details className="portal-trick">
       <summary>Portal trick</summary>
-      <p>With gestures on, draw one big circle with your index finger in 1–3 seconds. Keep your thumb apart. Either direction works.</p>
+      <p>Draw two big circles in the same direction, 1–3 seconds each. Keep your thumb apart. The first circle lights the sparks; the second opens the portal. Rest for 12 seconds before another spell.</p>
       <button type="button" onClick={previewPortal}>Preview portal</button>
     </details>
   </aside>;

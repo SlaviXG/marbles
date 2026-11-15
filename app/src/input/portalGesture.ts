@@ -1,16 +1,22 @@
 // Raw, mirrored camera coordinates, before cursor gain, magnets or smoothing.
-// A closed loop in either direction summons a cameo, never a pointer action.
+// Two closed loops in the same direction summon a cameo, never a pointer action.
 export type PortalSample = { x: number; y: number; hand: string; present: boolean; blocked: boolean };
-type Point = { x: number; y: number; t: number };
-export const PORTAL = { minMs: 650, maxMs: 3200, gapMs: 180, cooldownMs: 8000, minDiameter: .18 };
+export type PortalPoint = { x: number; y: number; t: number };
+type Point = PortalPoint;
+export const PORTAL = { minMs: 800, maxMs: 3200, gapMs: 180, cooldownMs: 12000, minDiameter: .22, confirmMs: 3600 };
 
 export class PortalGesture {
   private points: Point[] = [];
   private hand = '';
   private lastSeen = -Infinity;
   private quietUntil = -Infinity;
+  private firstCircle: { x: number; y: number; radius: number; direction: number; at: number } | null = null;
 
-  reset() { this.points = []; this.hand = ''; this.lastSeen = -Infinity; }
+  get armed(): boolean { return this.firstCircle !== null; }
+
+  get trail(): readonly PortalPoint[] { return this.points; }
+
+  reset() { this.points = []; this.hand = ''; this.lastSeen = -Infinity; this.firstCircle = null; }
 
   step(now: number, sample: PortalSample): boolean {
     if (!Number.isFinite(now) || !Number.isFinite(sample.x) || !Number.isFinite(sample.y)
@@ -18,6 +24,7 @@ export class PortalGesture {
     if (sample.hand !== this.hand || now - this.lastSeen > PORTAL.gapMs || now < this.lastSeen) this.reset();
     this.hand = sample.hand;
     this.lastSeen = now;
+    if (this.firstCircle && now - this.firstCircle.at > PORTAL.confirmMs) this.firstCircle = null;
     this.points = this.points.filter(p => now - p.t <= PORTAL.maxMs);
     const last = this.points[this.points.length - 1];
     if (last && Math.hypot(sample.x - last.x, sample.y - last.y) < .008) return false;
@@ -49,8 +56,20 @@ export class PortalGesture {
     }
     if (Math.abs(turn) < Math.PI * 1.8 || Math.abs(turn) / absoluteTurn < .88
       || travel < radius * 5 || travel > radius * 8) return false;
-    this.quietUntil = now + PORTAL.cooldownMs;
-    this.reset();
-    return true;
+    const first = this.firstCircle;
+    const direction = Math.sign(turn);
+    const confirmed = !!first && direction === first.direction
+      && Math.hypot(cx - first.x, cy - first.y) < first.radius * .55
+      && radius / first.radius > .65 && radius / first.radius < 1.5;
+    if (confirmed) {
+      this.quietUntil = now + PORTAL.cooldownMs;
+      this.reset();
+      return true;
+    }
+    // A single accidental loop only arms. Start a fresh loop at this endpoint;
+    // overlapping points cannot count the same revolution twice.
+    this.firstCircle = { x: cx, y: cy, radius, direction, at: now };
+    this.points = [{ x: sample.x, y: sample.y, t: now }];
+    return false;
   }
 }
