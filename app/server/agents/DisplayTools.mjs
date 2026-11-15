@@ -16,7 +16,8 @@ export const DISPLAY_TOOLS = [
   tool('show_images', 'Find pictures on the web and show them in the app. Use for “show me pictures / photos / images of …”.', { query: text(200) }),
   tool('play_video', 'Find a YouTube video and play it inside the app. The query is a topic, a title, or a YouTube link.', { query: text(200) }),
   tool('draft_email', 'Prepare an email. The app shows the draft and sends it only after the user confirms, so never say it was sent.',
-    { to: text(254, 'An email address, or a contact’s name.'), subject: text(200), body: text(4000, 'The complete message, ready to send, signed off naturally.') }),
+    { to: text(254, 'An email address, or a contact’s name.'), subject: text(200), body: text(4000, 'The complete message, ready to send, signed off naturally.'),
+      attachments: { type: 'array', maxItems: 10, items: text(500), description: 'Exact generated asset paths from find_assets or context. Empty for text-only email.' } }),
   tool('place_call', 'Prepare a phone call. The app shows who will be called and dials only after the user confirms.', { to: text(254, 'A phone number, or a contact’s name.') }),
 ];
 export const DISPLAY_TOOL_NAMES = DISPLAY_TOOLS.map(item => item.name);
@@ -25,8 +26,8 @@ const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLower
 const has = (a, b) => !!b && String(a ?? '').toLowerCase().includes(String(b).toLowerCase());
 
 export class DisplayTools {
-  constructor({ taskService, swarmService, noteProvider = () => [], images = searchImages, videos = searchYouTube, recipient = resolveRecipient } = {}) {
-    Object.assign(this, { taskService, swarmService, noteProvider, images, videos, recipient });
+  constructor({ taskService, swarmService, noteProvider = () => [], images = searchImages, videos = searchYouTube, recipient = resolveRecipient, prepareEmail } = {}) {
+    Object.assign(this, { taskService, swarmService, noteProvider, images, videos, recipient, prepareEmail });
   }
   async open({ kind, ref } = {}) {
     if (kind === 'close') return /video|youtube/i.test(ref ?? '') ? { kind: 'close', target: 'video' } : { kind: 'close' };
@@ -79,7 +80,10 @@ export class DisplayTools {
       if (typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 200) throw new Error('Give the email a subject.');
       if (typeof input.body !== 'string' || !input.body.trim() || input.body.length > 4000) throw new Error('Write the email body.');
       const { name: person, address } = await this.recipient(input.to, 'email');
-      return { kind: 'email', to: address, name: person, subject: input.subject.trim(), body: input.body.trim() };
+      const draft = { kind: 'email', to: address, name: person, subject: input.subject.trim(), body: input.body.trim() };
+      if (this.prepareEmail) return this.prepareEmail({ ...draft, attachments: input.attachments ?? [] });
+      if (input.attachments?.length) throw new Error('Email attachments require the Nylas connection.');
+      return draft;
     }
     if (name === 'place_call') {
       const { name: person, address } = await this.recipient(input.to, 'call');

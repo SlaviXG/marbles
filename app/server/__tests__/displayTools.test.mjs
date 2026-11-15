@@ -282,8 +282,8 @@ it('knows who “me” is', async () => {
   } finally { delete process.env.MARBLES_USER_EMAIL; }
 });
 
-it('lets a voice-delegated Claude task use Gmail, and tells it how to email', () => {
+it('keeps email delivery in the app rather than the delegated worker', () => {
   const intent = { problem: '', objective: 'Make a deck and email it', summary: 's', plan: ['Build the deck', 'Email it to sam@example.com'], assumptions: [], constraints: [], successCriteria: ['c'], collaboration: 'solo', agentId: 'claude' };
-  expect(buildVoicePrompt('Make a deck and mail it to me', intent)).toMatch(/Gmail connector/);
+  expect(buildVoicePrompt('Make a deck and mail it to me', intent)).toMatch(/Do not send email/);
   expect(buildVoicePrompt('Make a deck', { ...intent, objective: 'Make a deck', plan: ['Build the deck'] })).not.toMatch(/Gmail connector/);
 });

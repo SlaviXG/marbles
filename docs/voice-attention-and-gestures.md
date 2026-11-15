@@ -234,26 +234,38 @@ can explain instead of leaving a dead player.
 
 ## Email
 
-There are two routes, and Hermes picks by what you asked for.
+With Nylas configured, Hermes prepares a local email preview showing the recipient,
+subject, body and attachment filenames/sizes. Saying “send it” or pinching Send
+confirms exactly that preview. Only the server calls Nylas; Codex and Claude do
+not need Gmail connectors. No email is sent while a draft is being prepared.
 
-- **A short message** ("email Sam that the review moved to 3"): Hermes drafts a
-  card. When you confirm, the server tries each way of sending in turn and stops
-  at the first that works: **Claude** with its Gmail connector, then **Codex**
-  with its, then the Mac's **Mail** app. The card says who is sending and how it
-  went. You confirm once; you do not have to nurse it through.
-- **Something that has to be made or attached** ("make the deck and mail it to
-  me"): Hermes delegates it. The worker makes the file and sends it with its
-  Gmail connector, attaching it.
+- Existing files: Hermes uses `find_assets`, then `draft_email` with the chosen
+  workspace asset paths. Unlisted files and paths outside the workspace are rejected.
+- “Make a deck and email it to me”: Hermes delegates creation with an `email`
+  intent. The worker creates files only. When finished, Hermes chooses its final
+  deliverables and shows an email preview for confirmation.
+- Attachments total at most 20 MB. Their contents are checked again on confirmation;
+  if a file changed or disappeared, a fresh preview is required.
+- Repeat confirmation and retries reuse the same Nylas idempotency key. A timeout
+  is shown as unconfirmed delivery, with no automatic fallback to another sender.
+  After 55 minutes an uncertain send must be checked in Sent mail before preparing
+  another preview. Previews and send receipts are local to the running server;
+  after a restart, expired previews cannot send.
 
-"Me" is your own address: `MARBLES_USER_EMAIL` in `.env`, otherwise the address
-git commits with.
+Configure server-only `NYLAS_API_KEY`, `NYLAS_GRANT_ID`, and `NYLAS_API_URI`
+(`https://api.eu.nylas.com` or `https://api.us.nylas.com`) in the ignored `.env`.
+Use a grant-bound Nylas IAM key with `messages.send` permission. `MARBLES_USER_EMAIL`
+sets the address used for “me”. Never put the key in a `VITE_` variable or a worker
+prompt. New worker processes do not inherit the Nylas key.
 
-A Claude worker started without permission for its connector is refused when it
-tries to send, which is why emails used to fail. Voice-delegated Claude tasks and
-email tasks are now started with `--allowedTools mcp__claude_ai_Gmail`. Set
-`MARBLES_AGENT_GMAIL=off` to withhold it from ordinary tasks, or
-`MARBLES_EMAIL_VIA=mail` to always use Mail. Check what a worker can see with
-`claude -p "which Gmail tools do you have?"`.
+Nylas is selected automatically when its configuration is present, or explicitly
+with `MARBLES_EMAIL_VIA=nylas`. Legacy text-only routes remain available through
+`MARBLES_EMAIL_VIA=agent` or `mail`; attachment previews require Nylas. Ordinary
+workers receive legacy Gmail tool permission only with `MARBLES_AGENT_GMAIL=on`.
+
+References: [Nylas sending](https://developer.nylas.com/docs/v3/email/send-email/),
+[idempotency](https://developer.nylas.com/docs/v3/email/idempotent-send/),
+[multipart attachments](https://support.nylas.com/hc/en-us/articles/19492515408669-Sending-attachments-in-API-V3-larger-than-3MB-via-multipart).
 
 ## Slide decks
 

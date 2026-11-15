@@ -65,7 +65,10 @@ describe('task launcher', () => {
       expect(calls[0][2].shell).toBe(false);
       calls.length = 0;
       expect(launcher(claude, 'do Y', root).args).toEqual(['-p', 'do Y', '--permission-mode', 'acceptEdits']);
-      expect(launcher({ id: 'cursor', kind: 'cli', path: '/bin/agent' }, 'do Z', root)).toEqual({ command: '/bin/agent', args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', root, 'do Z'], options: { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } });
+      const cursor = launcher({ id: 'cursor', kind: 'cli', path: '/bin/agent' }, 'do Z', root);
+      const { env, ...options } = cursor.options;
+      expect({ ...cursor, options }).toEqual({ command: '/bin/agent', args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', root, 'do Z'], options: { cwd: root, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } });
+      expect(env.NYLAS_API_KEY).toBeUndefined();
       spawnProcess.mock.results[0].value.emit('close', 0);
       expect(task.status).toBe('completed');
     } finally { await rm(root, { recursive: true, force: true }); }

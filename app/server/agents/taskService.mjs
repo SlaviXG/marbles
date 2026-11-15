@@ -9,11 +9,14 @@ export const workspaceRoot = () => path.resolve(process.env.MARBLES_WORKSPACE_DI
 export const taskCapability = (agent) => agent.available === false ? agent.reason || 'Agent unavailable' : agent.kind !== 'cli' ? agent.id === 'cursor' ? 'Cursor CLI not installed. Install with: curl https://cursor.com/install -fsS | bash, then run `cursor-agent login`.' : 'Desktop app has no non-interactive CLI' : !['codex', 'claude', 'cursor'].includes(agent.id) ? 'Task launch is not supported for this CLI yet' : null;
 export function launcher(agent, prompt, dir, { allowTools = [], access = liveEnv('MARBLES_AGENT_ACCESS') || 'workspace' } = {}) {
   if (taskCapability(agent)) throw new Error(taskCapability(agent));
-  if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', access === 'full' ? 'danger-full-access' : 'workspace-write', '-c', 'approval_policy="never"', '--skip-git-repo-check', '-C', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
-  if (agent.id === 'cursor') return { command: agent.path, args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', dir, prompt], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  const env = { ...process.env };
+  delete env.NYLAS_API_KEY; // Sending credentials stay in the app server.
+  const options = { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'], env };
+  if (agent.id === 'codex') return { command: agent.path, args: ['exec', '-s', access === 'full' ? 'danger-full-access' : 'workspace-write', '-c', 'approval_policy="never"', '--skip-git-repo-check', '-C', dir, prompt], options };
+  if (agent.id === 'cursor') return { command: agent.path, args: ['-p', '--force', '--trust', '--output-format', 'stream-json', '--workspace', dir, prompt], options };
   // A task may be allowed specific connector tools (for example Gmail) that a
   // headless run would otherwise refuse to call.
-  return { command: agent.path, args: ['-p', prompt, ...(access === 'full' ? ['--dangerously-skip-permissions'] : ['--permission-mode', 'acceptEdits']), ...(allowTools.length ? ['--allowedTools', ...allowTools] : [])], options: { cwd: dir, shell: false, stdio: ['ignore', 'pipe', 'pipe'] } };
+  return { command: agent.path, args: ['-p', prompt, ...(access === 'full' ? ['--dangerously-skip-permissions'] : ['--permission-mode', 'acceptEdits']), ...(allowTools.length ? ['--allowedTools', ...allowTools] : [])], options };
 }
 const tail = (s, chunk) => (s + chunk).slice(-12000);
 const fileType = (name) => {
@@ -166,9 +169,8 @@ export class TaskService {
       if (queued) { const now = new Date().toISOString(); Object.assign(queued, { agentId, status: 'running', updatedAt: now, startedAt: now }); }
       else this.tasks.push(task);
       if (metadata.allowTools) task.allowTools = metadata.allowTools;
-      // Voice-delegated work may include "...and email it to me". Without this a
-      // headless Claude is refused its own Gmail connector and the send fails.
-      else if (!task.allowTools && task.source === 'voice' && liveEnv('MARBLES_AGENT_GMAIL') !== 'off') task.allowTools = ['mcp__claude_ai_Gmail'];
+      // Legacy connector access is opt-in. Nylas email tasks only create files.
+      else if (!task.allowTools && !task.intent?.email && task.source === 'voice' && liveEnv('MARBLES_AGENT_GMAIL') === 'on') task.allowTools = ['mcp__claude_ai_Gmail'];
       const launch = launcher(agent, task.prompt, dir, { allowTools: task.allowTools });
       let child;
       try { child = this.spawnProcess(launch.command, launch.args, launch.options); }

@@ -7,7 +7,7 @@ export type Display =
   | { kind: 'images'; query: string; images: WebImage[] }
   | { kind: 'video'; query: string; videoId: string; title: string; channel: string;
       /** Runners-up, tried in order if a video turns out not to allow embedding. */ alternates?: { videoId: string; title: string; channel: string }[] }
-  | { kind: 'email'; to: string; name: string; subject: string; body: string }
+  | { kind: 'email'; draftId?: string; to: string; name: string; subject: string; body: string; attachments?: { path: string; name: string; size: number }[] }
   | { kind: 'call'; number: string; name: string };
 export type Video = Extract<Display, { kind: 'video' }>;
 export type DisplayStatus = 'idle' | 'working' | 'done' | 'failed';
@@ -74,11 +74,13 @@ export const useDisplay = create<DisplayState>((set, get) => ({
         if (current()) set({ status: 'done', note: 'Calling' });
         return;
       }
-      const result = await post('/api/comms/email', { to: display.to, subject: display.subject, body: display.body, ...(via ? { via } : {}) });
+      const result = await post('/api/comms/email', display.draftId ? { draftId: display.draftId }
+        : { to: display.to, subject: display.subject, body: display.body, ...(via ? { via } : {}) });
       if (!result.taskId) {
-        // Sent by the Mac's Mail app (or handed to the default mail handler).
+        // Nylas returns a real provider receipt; a draft or timeout is not sent.
+        if (!result.sent && !result.link) throw new Error('Email delivery was not confirmed.');
         if (!result.sent && result.link) window.location.href = result.link;
-        if (current()) set({ status: 'done', note: result.sent ? 'Sent with Mail' : 'Opened in your mail app' });
+        if (current()) set({ status: 'done', note: result.sent ? (result.via === 'Nylas' ? 'Email sent' : 'Sent with Mail') : 'Opened in your mail app' });
         return;
       }
       // An agent is sending it with its Gmail connector: wait for its verdict.

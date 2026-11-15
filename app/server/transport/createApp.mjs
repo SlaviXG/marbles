@@ -10,6 +10,7 @@ import { localVoiceOrigin } from "./voice.mjs";
 import { searchImages, searchYouTube } from "../media/webMedia.mjs";
 import { sendEmail, placeCall, EmailJobs, userEmail } from "../comms/comms.mjs";
 import { liveEnv } from "../env.mjs";
+import { NylasEmail, emailProvider } from '../comms/nylas.mjs';
 import { Screen } from "../agents/screen.mjs";
 import { speechHandler, ttsInfo } from "./speech.mjs";
 import { SwarmService } from "../swarm/SwarmService.mjs";
@@ -20,10 +21,18 @@ import { scenarios, scenarioById } from '../scenarios/scenarios.mjs';
 
 // Transport layer: exposes the VaultService over HTTP. A snapshot endpoint and
 // an SSE stream that subscribes to the service's change events.
-export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall }, screen = new Screen() } = {}) {
+export function createApp(service, { agentDetector = detectAgents, agentRegistry = new AgentRegistry({ detector: agentDetector }), taskService, swarmService, voiceCommands, comms = { sendEmail, placeCall }, emailService, screen = new Screen() } = {}) {
   taskService ??= new TaskService({ agentDetector: () => agentRegistry.snapshot() });
   swarmService ??= new SwarmService({ agentDetector: () => agentRegistry.snapshot(), root: taskService.root, taskService });
   taskService.externalBusy = id => swarmService.isBusy(id);
+  emailService ??= new NylasEmail({ root: taskService.root,
+    artifacts: () => [...taskService.snapshot(), ...(swarmService.snapshot?.() ?? [])].flatMap(item => item.artifacts ?? []) });
+  const prepareEmail = draft => {
+    if (emailProvider() === 'nylas') return emailService.prepare(draft);
+    if (draft.attachments?.length) throw new Error('Email attachments require the Nylas connection.');
+    const { attachments, ...plain } = draft;
+    return plain;
+  };
   const readLog = id => {
     if (id !== 'cursor') return agentLog(id);
     const task = taskService.snapshot().find(task => task.agentId === id);
@@ -31,7 +40,7 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
     const latest = [task && { at: task.createdAt, stdout: task.stdout }, runs[0] && { at: runs[0].startedAt, stdout: runs[0].stdout }].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     return agentLog(id, undefined, latest?.stdout);
   };
-  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, screen, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
+  voiceCommands ??= new VoiceCommands({ taskService, swarmService, agentRegistry, readLog, screen, prepareEmail, noteProvider: () => service.snapshot().notes ?? [], contextProvider: async selectedId => {
     const notes = service.snapshot().notes ?? [];
     const note = notes.find(note => note.id === selectedId);
     const task = selectedId?.startsWith('task:') ? taskService.snapshot().find(task => task.id === selectedId.slice(5)) : null;
@@ -150,13 +159,14 @@ export function createApp(service, { agentDetector = detectAgents, agentRegistry
   app.post('/api/comms/email', async (req, res) => {
     if (!localVoiceOrigin(req.headers.origin)) return res.status(403).json({ error: 'Email requires a local app origin.' });
     try {
+      if (req.body?.draftId || emailProvider() === 'nylas') return res.json(await emailService.send(req.body?.draftId));
       const { to, subject, body, via } = req.body ?? {};
       // Agents send it with their own Gmail connector, Claude first, then Codex;
       // the Mac's Mail app is the last resort. MARBLES_EMAIL_VIA=mail skips agents.
       if (via === 'mail' || liveEnv('MARBLES_EMAIL_VIA') === 'mail') return res.json(await comms.sendEmail({ to, subject, body }));
       const job = await emailJobs.start({ to, subject, body });
       res.status(202).json({ sent: false, taskId: job.id, agentId: job.tried.at(-1) ?? null, ...(job.result ?? {}) });
-    } catch (error) { res.status(error.code === 'NO_AGENTS' ? 503 : 400).json({ error: error.message }); }
+    } catch (error) { res.status(error.status ?? (error.code === 'NO_AGENTS' ? 503 : 400)).json({ error: error.message }); }
   });
   app.get('/api/comms/email/:id', async (req, res) => {
     try { res.json(await emailJobs.status(req.params.id)); }

@@ -98,7 +98,11 @@ export default function VoicePanel({ onActivate, onDeactivate }: { onActivate?: 
     try {
       const response = await fetch('/api/voice/result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: record.id, kind, conversationId: conversationId.current }), signal: AbortSignal.timeout(55_000) });
-      if (response.ok) { const data = await response.json(); if (typeof data.reply === 'string' && data.reply.trim()) text = data.reply; }
+      if (response.ok) {
+        const data = await response.json();
+        if (typeof data.reply === 'string' && data.reply.trim()) text = data.reply;
+        if (mounted.current && data.display?.kind === 'email') useDisplay.getState().show(data.display);
+      }
     } catch { /* A short local notice keeps results usable if synthesis fails. */ }
     if (mounted.current) message({ id: `result:${kind}:${record.id}`, role: 'assistant', label: 'Marbles · Hermes', text,
       ...(kind === 'task' ? { taskId: record.id } : { swarmId: record.id }) });
