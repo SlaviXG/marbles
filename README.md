@@ -41,6 +41,22 @@ npm run client     # UI only, http://localhost:5173
 - **Hand library alone:** `cd app/lib/hand-pointer && npm install && npm run demo`.
 - **Unit tests:** `npm test` (and `npm run typecheck`) in `app/`.
 
+### Local mocks (not committed)
+
+To work on the UI without the backend, keep your own mocks in `app/mock.local/`.
+Git ignores it (`*.local` in `app/.gitignore`), so each teammate can mock
+whatever they need without it reaching `main`. A typical setup:
+
+- `mock.local/vite.config.ts` imports `../vite.config`, drops the `/api` proxy,
+  answers `/api/agents`, `/api/tasks`, `/api/artifacts/file?path=…` and so on
+  with a middleware plugin, and injects a script with `transformIndexHtml`.
+- That script imports the stores (`../src/state/display`, `presentation`,
+  `agents`) and opens windows: `useDisplay.getState().show({ kind: 'video', … })`,
+  a gallery, an email draft, or a task's files.
+- `mock.local/files/` holds the fake agent output (Markdown, CSV, `.pptx`, …).
+
+Run it from `app/` with `npx vite --config mock.local/vite.config.ts`.
+
 ### With an Obsidian vault (live server)
 
 ```sh
