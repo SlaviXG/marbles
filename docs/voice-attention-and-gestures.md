@@ -278,3 +278,24 @@ whole, as before.
 - The screenshot left for Hermes is no longer waited for before the request goes.
 - Hermes itself takes 3–10 s depending on the request. `low` effort measured no
   faster than `medium`, so the default stays `medium`.
+
+## Sling-ring portal Easter egg
+
+With the camera and gestures active, hold your thumb away from your index finger
+and trace one large circle in the air in about 1–3 seconds. Clockwise and
+counterclockwise both work. An amber spark portal opens, Andrew Garfield’s
+Spider-Man appears, and the cameo fades away after about five seconds.
+The canvas remains usable throughout. Escape dismisses the cameo early.
+
+The gesture widget’s **Portal trick** disclosure has instructions and a
+**Preview portal** button that works with a mouse or keyboard, without a camera.
+Reduced motion uses a quiet cross-fade without flying sparks or zooming.
+
+Recognition uses the primary hand’s raw index fingertip, before cursor gain and
+magnetism. It requires a large, nearly closed loop with consistent winding,
+rejects swipes, tiny circles, partial arcs and tracking jumps, and resets on
+hand changes, tracking loss, pinches, two-hand zooms and dragging. An eight-second
+cooldown prevents repeat cameos. No sound, external request or task is triggered.
+The cameo uses a bundled Sony Pictures publicity still; source and attribution
+are recorded in `app/public/images/README.md`.
+Real camera tuning should check varying frame rates, lighting and hand poses.

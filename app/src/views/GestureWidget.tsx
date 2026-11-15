@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GONE_MS, handDebug, loadParams, pointerTarget, secondaryHand, subscribeParams, usePointerStore } from '../input';
 import { subscribeFrame } from '../motion/ticker';
 import { useAttention } from '../attention/AttentionTracker';
+import { previewPortal } from './SlingRingPortal';
 
 const BONES = [
   [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8],
@@ -98,5 +99,10 @@ export default function GestureWidget() {
       {attention === 'looking' ? 'Eyes on' : 'Looking away'}
     </p>}
     {hint && <p className="gesture-widget-hint">{hint}</p>}
+    <details className="portal-trick">
+      <summary>Portal trick</summary>
+      <p>With gestures on, draw one big circle with your index finger in 1–3 seconds. Keep your thumb apart. Either direction works.</p>
+      <button type="button" onClick={previewPortal}>Preview portal</button>
+    </details>
   </aside>;
 }
