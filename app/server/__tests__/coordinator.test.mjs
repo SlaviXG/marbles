@@ -31,6 +31,14 @@ it('lets Hermes inspect context and answer without starting a worker', async () 
   expect((await coordinator.run({ transcript: 'What is Codex doing?' })).reply).toBe('Codex is idle.');
   expect(taskService.startIdle).not.toHaveBeenCalled();
 });
+it('lets Hermes close the separate YouTube window directly without launching a worker', async () => {
+  const { coordinator, taskService } = setup(async (_payload, call) => {
+    const receipt = await call('close_window', { target: 'video', reply: 'Video closed.' });
+    expect(receipt.terminal).toBe(true); return { interrupted: true, runtime };
+  });
+  expect(await coordinator.run({ transcript: 'Could you close that YouTube window?' })).toMatchObject({ state: 'show', display: { kind: 'close', target: 'video' } });
+  expect(taskService.startIdle).not.toHaveBeenCalled();
+});
 it('supports one blocking question without delegating', async () => {
   const { coordinator, taskService } = setup(async (_payload, call) => {
     await call('respond', { decision: 'clarify', reply: 'Which repository should I change?' }); return { runtime };

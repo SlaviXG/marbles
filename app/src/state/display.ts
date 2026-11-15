@@ -7,7 +7,7 @@ export type Display =
   | { kind: 'images'; query: string; images: WebImage[] }
   | { kind: 'video'; query: string; videoId: string; title: string; channel: string;
       /** Runners-up, tried in order if a video turns out not to allow embedding. */ alternates?: { videoId: string; title: string; channel: string }[] }
-  | { kind: 'email'; to: string; name: string; subject: string; body: string }
+  | { kind: 'email'; draftId?: string; to: string; name: string; subject: string; body: string; attachments?: { path: string; name: string; size: number }[] }
   | { kind: 'call'; number: string; name: string };
 export type Video = Extract<Display, { kind: 'video' }>;
 export type DisplayStatus = 'idle' | 'working' | 'done' | 'failed';
@@ -74,22 +74,24 @@ export const useDisplay = create<DisplayState>((set, get) => ({
         if (current()) set({ status: 'done', note: 'Calling' });
         return;
       }
-      const result = await post('/api/comms/email', { to: display.to, subject: display.subject, body: display.body, ...(via ? { via } : {}) });
+      const result = await post('/api/comms/email', display.draftId ? { draftId: display.draftId }
+        : { to: display.to, subject: display.subject, body: display.body, ...(via ? { via } : {}) });
       if (!result.taskId) {
-        // Sent by the Mac's Mail app (or handed to the default mail handler).
+        // Nylas returns a real provider receipt; a draft or timeout is not sent.
+        if (!result.sent && !result.link) throw new Error('Email delivery was not confirmed.');
         if (!result.sent && result.link) window.location.href = result.link;
-        if (current()) set({ status: 'done', note: result.sent ? 'Sent with Mail' : 'Opened in your mail app' });
+        if (current()) set({ status: 'done', note: result.sent ? (result.via === 'Nylas' ? 'Email sent' : 'Sent with Mail') : 'Opened in your mail app' });
         return;
       }
       // An agent is sending it with its Gmail connector: wait for its verdict.
-      if (current()) set({ note: 'An agent is sending it with Gmail' });
+      if (current()) set({ note: `${result.agentId || 'An agent'} is sending it with Gmail` });
       for (let waited = 0; waited < 240_000 && current(); waited += 1500) {
         await new Promise(resolve => setTimeout(resolve, 1500));
         const outcome = await (await fetch(`/api/comms/email/${result.taskId}`, { signal: AbortSignal.timeout(8000) })).json();
-        if (outcome.status === 'sending') continue;
+        if (outcome.status === 'sending') { if (current() && outcome.agentId) set({ note: `${outcome.agentId} is sending it with Gmail` }); continue; }
         if (!current()) return;
-        if (outcome.status === 'sent') { set({ status: 'done', note: `Sent by ${outcome.agentId || 'your agent'} with Gmail` }); return; }
-        const text = outcome.status === 'unavailable' ? `${outcome.agentId || 'The agent'} has no Gmail connector signed in, so the email was not sent.` : `The email was not sent: ${outcome.reason}`;
+        if (outcome.status === 'sent') { set({ status: 'done', note: outcome.via === 'Mail' ? 'Sent with Mail (no agent had Gmail)' : `Sent by ${outcome.via || 'your agent'} with Gmail` }); return; }
+        const text = `The email was not sent: ${outcome.reason || 'no way of sending worked'}`;
         set({ status: 'failed', note: text, mailFallback: true, issue: { text, at: Date.now() } });
         return;
       }

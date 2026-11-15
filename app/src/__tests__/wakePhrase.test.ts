@@ -37,10 +37,10 @@ it('prefers the clearest match and keeps the task after it intact', () => {
   expect(withoutWakePhrase('Write a report')).toBe('Write a report');
 });
 
-it('does not read exact or approximate trigger words back into the microphone', () => {
+it('speaks Marbles naturally without rewriting its name or other words', () => {
   for (const word of ['marbles', 'marvels', 'marble']) {
     const text = spokenText(`Say **${word}** and read [the report](https://example.com).`);
-    expect(hasWakePhrase(text)).toBe(false);
+    expect(text).toBe(`Say ${word} and read the report.`);
   }
   expect(spokenText('```js\nsecret\n```')).not.toContain('secret');
   expect(spokenText('x'.repeat(2000)).length).toBeLessThan(700);

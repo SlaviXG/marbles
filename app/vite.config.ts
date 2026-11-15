@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [react(), {
     name: 'marbles-dev-speech',
     configureServer(server) {
+      if (mode === 'test') return; // Tests must not inherit private runtime settings or keys.
       // Keep speech available during development without restarting the task
       // runner. This code and the key stay in Vite's Node process. The regular
       // backend exposes the same handler for production / non-Vite clients.

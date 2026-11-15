@@ -6,6 +6,8 @@ import { useSyncExternalStore } from "react";
 import { pointerStore, type PointerState } from "../../lib/hand-pointer/src";
 
 export * from "../../lib/hand-pointer/src";
+// The displayed dot, for hit-testing gesture targets after cursor smoothing.
+export const handCursorPosition = { x: 0, y: 0 };
 
 // React hook over the library's store. Selectors must return a primitive or a
 // stable reference (every current one does), as with any external store.
@@ -24,6 +26,7 @@ let steadyHolds = 0;
 let dragging = false;
 const applySteady = () => camera.setStabilize(steadyHolds > 0 && !dragging);
 export const steady = {
+  get dragging() { return dragging; },
   hold(): () => void {
     steadyHolds++; applySteady();
     let released = false;

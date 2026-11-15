@@ -9,12 +9,15 @@ const tool = (name, description, properties) => ({ name, description,
   input_schema: { type: 'object', properties: { ...properties, reply: text(160, 'One short spoken sentence, under 15 words, said as this appears.') },
     required: [...Object.keys(properties), 'reply'], additionalProperties: false } });
 export const DISPLAY_TOOLS = [
+  tool('close_window', 'Close an app window immediately. Target video for YouTube, media for pictures/email/call cards, selection for files/results/details, or all to clear every window. Never delegate a close request.',
+    { target: { type: 'string', enum: ['video', 'media', 'selection', 'all'] } }),
   tool('open_item', 'Open something on the user’s canvas now: an agent, an agent’s files, a task, a team, a generated file or a note. Use for “open / show / bring up / go to …”. Kind "close" dismisses whatever is open. Does not start work.',
     { kind: { type: 'string', enum: ['agent', 'files', 'task', 'team', 'file', 'note', 'close'] }, ref: text(300, 'Agent ID, task ID, team ID, file name or path, or note ID from context. Empty for close.') }),
   tool('show_images', 'Find pictures on the web and show them in the app. Use for “show me pictures / photos / images of …”.', { query: text(200) }),
   tool('play_video', 'Find a YouTube video and play it inside the app. The query is a topic, a title, or a YouTube link.', { query: text(200) }),
   tool('draft_email', 'Prepare an email. The app shows the draft and sends it only after the user confirms, so never say it was sent.',
-    { to: text(254, 'An email address, or a contact’s name.'), subject: text(200), body: text(4000, 'The complete message, ready to send, signed off naturally.') }),
+    { to: text(254, 'An email address, or a contact’s name.'), subject: text(200), body: text(4000, 'The complete message, ready to send, signed off naturally.'),
+      attachments: { type: 'array', maxItems: 10, items: text(500), description: 'Exact generated asset paths from find_assets or context. Empty for text-only email.' } }),
   tool('place_call', 'Prepare a phone call. The app shows who will be called and dials only after the user confirms.', { to: text(254, 'A phone number, or a contact’s name.') }),
 ];
 export const DISPLAY_TOOL_NAMES = DISPLAY_TOOLS.map(item => item.name);
@@ -23,11 +26,11 @@ const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLower
 const has = (a, b) => !!b && String(a ?? '').toLowerCase().includes(String(b).toLowerCase());
 
 export class DisplayTools {
-  constructor({ taskService, swarmService, noteProvider = () => [], images = searchImages, videos = searchYouTube, recipient = resolveRecipient } = {}) {
-    Object.assign(this, { taskService, swarmService, noteProvider, images, videos, recipient });
+  constructor({ taskService, swarmService, noteProvider = () => [], images = searchImages, videos = searchYouTube, recipient = resolveRecipient, prepareEmail } = {}) {
+    Object.assign(this, { taskService, swarmService, noteProvider, images, videos, recipient, prepareEmail });
   }
   async open({ kind, ref } = {}) {
-    if (kind === 'close') return { kind: 'close' };
+    if (kind === 'close') return /video|youtube/i.test(ref ?? '') ? { kind: 'close', target: 'video' } : { kind: 'close' };
     if (typeof ref !== 'string' || !ref.trim() || ref.length > 300) throw new Error('Say which item to open.');
     ref = ref.trim();
     const tasks = this.taskService.snapshot();
@@ -60,6 +63,10 @@ export class DisplayTools {
     throw new Error('Unknown item kind.');
   }
   async call(name, input) {
+    if (name === 'close_window') {
+      if (!['video', 'media', 'selection', 'all'].includes(input?.target)) throw new Error('Choose a window to close.');
+      return { kind: 'close', target: input.target };
+    }
     if (!input || typeof input !== 'object') throw new Error('Tool input must be an object.');
     if (name === 'open_item') return this.open(input);
     if (name === 'show_images') return { kind: 'images', query: String(input.query ?? '').trim(), images: await this.images(input.query) };
@@ -73,7 +80,10 @@ export class DisplayTools {
       if (typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 200) throw new Error('Give the email a subject.');
       if (typeof input.body !== 'string' || !input.body.trim() || input.body.length > 4000) throw new Error('Write the email body.');
       const { name: person, address } = await this.recipient(input.to, 'email');
-      return { kind: 'email', to: address, name: person, subject: input.subject.trim(), body: input.body.trim() };
+      const draft = { kind: 'email', to: address, name: person, subject: input.subject.trim(), body: input.body.trim() };
+      if (this.prepareEmail) return this.prepareEmail({ ...draft, attachments: input.attachments ?? [] });
+      if (input.attachments?.length) throw new Error('Email attachments require the Nylas connection.');
+      return draft;
     }
     if (name === 'place_call') {
       const { name: person, address } = await this.recipient(input.to, 'call');

@@ -88,6 +88,7 @@ export default function MediaStage() {
         {display.kind === 'email' && <div className="media-letter">
           <dl><dt>To</dt><dd>{display.name && <strong>{display.name}</strong>}{display.to}</dd></dl>
           <p>{display.body}</p>
+          {!!display.attachments?.length && <dl><dt>Attachments</dt><dd>{display.attachments.map(file => <div key={file.path}>{file.name} <small>({file.size < 1024 * 1024 ? `${Math.max(1, Math.round(file.size / 1024))} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`})</small></div>)}</dd></dl>}
         </div>}
         {display.kind === 'call' && <div className="media-call">
           <div className={`media-call-ring${status === 'working' || settled ? ' live' : ''}`} aria-hidden="true"><i /><i /><i /><Glyph kind="call" /></div>

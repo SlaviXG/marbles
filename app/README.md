@@ -53,6 +53,9 @@ npm test       # vitest (client + server units)
 ```
 
 Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
+For a separate dev preview, run `npm run client -- --host 127.0.0.1 --port 5188`
+with the backend on `:5174`. The local-origin checks for voice and protected
+HTTP APIs allow ports 5173, 5174 and 5188; arbitrary preview ports are rejected.
 
 ## Voice tasks
 
@@ -69,10 +72,17 @@ working, a short completion pulse and checkmark when finished, and amber warning
 glyphs after failure. Reduced motion keeps static glyphs. Positions stay fixed
 for hand targeting, and hidden pages stop requesting animation repaints.
 
-Touch the **glowing orb** to enable voice and hand control. The browser requests
-microphone and camera access, and the local wake model loads. Say **Marbles**,
-then describe your task. Voice returns to wake mode after assignment or 20
-seconds without speech. Touch the orb again to pause both microphone and camera.
+Touch the **glowing orb** to enable voice and hand control and grant microphone
+and camera access. On later visits with both permissions already granted, hold
+your head toward the screen for about 1.2 seconds to wake the controls instead.
+The orb shows **Look here to wake**, with a camera-only indicator and Cancel.
+First-time permissions or a browser audio-unlock requirement still need a tap.
+Once the local wake model loads, say **Marbles**,
+then describe your task. Voice returns to wake mode as soon as the request is
+submitted, or after 20 seconds without speech. Say Marbles again for follow-up
+requests. Looking at the screen never starts or prolongs command listening.
+Touch the orb again to pause both microphone and camera; looking cannot undo a
+pause. Automatic startup does not open the screen-sharing picker.
 There are no navigation tabs, typed composer or persistent button bars.
 Mouse and keyboard remain available as accessibility fallbacks.
 

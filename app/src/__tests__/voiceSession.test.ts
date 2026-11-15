@@ -4,9 +4,8 @@ import { SAMPLE_RATE } from '../voice/audio';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-it('keeps standby audio local until a timestamped wake match and suppresses speaker feedback', async () => {
-  const workers: any[] = [];
-  const sockets: any[] = [];
+async function wakeSession() {
+  const workers: any[] = [], sockets: any[] = [];
   let capture: any;
   const track = { stop: vi.fn(), onended: null };
   vi.stubGlobal('isSecureContext', true);
@@ -30,29 +29,94 @@ it('keeps standby audio local until a timestamped wake match and suppresses spea
     bufferedAmount = 0; send = vi.fn(); close = vi.fn(); onmessage: any;
     constructor() { sockets.push(this); }
   });
-  const awake = vi.fn(), wakeDetected = vi.fn();
-  const session = new VoiceSession({ status: vi.fn(), transcript: vi.fn(), awake, wakeDetected }, { wake: true });
+  const awake = vi.fn(), wakeDetected = vi.fn(), status = vi.fn(), transcript = vi.fn();
+  const session = new VoiceSession({ status, transcript, awake, wakeDetected }, { wake: true });
   const startup = session.start();
   await vi.waitFor(() => expect(workers).toHaveLength(1));
   workers[0].onmessage({ data: { type: 'ready' } });
   await startup;
-  const frame = () => capture.port.onmessage({ data: new Float32Array(2048).fill(0.1) });
-  for (let i = 0; i < 20; i++) frame();
-  expect(sockets).toHaveLength(0);
-  const job = workers[0].postMessage.mock.calls.find(([data]: any[]) => data.type === 'audio')[0];
-  workers[0].onmessage({ data: { type: 'result', text: 'Marbles', start: 0, epoch: job.epoch, end: job.end, length: job.length } });
+  const audio = (level = .1, count = 1) => {
+    for (let i = 0; i < count; i++) capture.port.onmessage({ data: new Float32Array(2048).fill(level) });
+  };
+  const wake = (ready = true) => {
+    audio(.1, 20);
+    const job = workers[0].postMessage.mock.calls.find(([data]: any[]) => data.type === 'audio')[0];
+    workers[0].onmessage({ data: { type: 'result', text: 'Marbles', start: 0, epoch: job.epoch, end: job.end, length: job.length } });
+    expect(sockets).toHaveLength(1);
+    if (ready) sockets[0].onmessage({ data: JSON.stringify({ type: 'ready' }) });
+  };
+  return { session, status, transcript, audio, wake, awake, wakeDetected, workers, sockets, track };
+}
+
+it('retries a failed local connection and reports it without claiming another tab is responsible', async () => {
+  vi.useFakeTimers();
+  const { status, wake, sockets, track } = await wakeSession();
+  wake(false);
+  sockets[0].onerror();
+  vi.advanceTimersByTime(500);
+  sockets[1].onerror();
+  vi.advanceTimersByTime(1000);
+  sockets[2].onerror();
+  expect(sockets).toHaveLength(3);
+  expect(status).toHaveBeenLastCalledWith('error', expect.stringContaining('Cannot connect to the local voice server'));
+  expect(status.mock.calls[status.mock.calls.length - 1][1]).not.toContain('Close other Marbles tabs');
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('keeps command audio gated by the wake word even when the user faces the screen', async () => {
+  const { session, status, audio, wake, awake, wakeDetected, sockets, workers, track } = await wakeSession();
+  for (const looking of [true, false, true, null, true]) {
+    session.setAttention(looking); audio(.1, 3);
+    expect(status).toHaveBeenLastCalledWith('wake', expect.any(String));
+    expect(sockets).toHaveLength(0);
+  }
+  wake();
   expect(awake).toHaveBeenCalledOnce();
   expect(wakeDetected).toHaveBeenCalledOnce();
   expect(wakeDetected.mock.invocationCallOrder[0]).toBeLessThan(awake.mock.invocationCallOrder[0]);
-  expect(sockets).toHaveLength(1);
-  sockets[0].onmessage({ data: { toString: () => '{"type":"ready"}' } });
   session.setReplyPlaying(true);
   const count = sockets[0].send.mock.calls.length;
-  for (let i = 0; i < 20; i++) frame();
+  audio(.1, 20);
   expect(sockets[0].send).toHaveBeenCalledTimes(count);
   session.dispose();
   expect(track.stop).toHaveBeenCalled();
   expect(workers[0].terminate).toHaveBeenCalled();
+});
+
+it('returns to wake standby after a request despite gaze, and still delivers its pending transcript', async () => {
+  vi.useFakeTimers();
+  const { session, status, transcript, audio, wake, sockets } = await wakeSession();
+  wake();
+  session.setAttention(true);
+  session.rearm();
+  vi.advanceTimersByTime(1500); // Drain the captured request and its final commit.
+  expect(status).toHaveBeenLastCalledWith('wake', expect.any(String));
+  const count = sockets[0].send.mock.calls.length;
+  session.setAttention(false); session.setAttention(true);
+  audio(.1, 30);
+  vi.advanceTimersByTime(1500);
+  expect(sockets[0].send).toHaveBeenCalledTimes(count);
+  const final = { type: 'conversation.item.input_audio_transcription.completed', item_id: 'request', transcript: 'Marbles show my files' };
+  sockets[0].onmessage({ data: JSON.stringify(final) });
+  expect(transcript).toHaveBeenCalledWith(final);
+  session.dispose();
+});
+
+it('expires the wake window before new speech even if the person keeps looking', async () => {
+  vi.useFakeTimers();
+  const { session, status, audio, wake, sockets } = await wakeSession();
+  wake(); audio(.002, 15); // End the wake phrase, then wait for a command.
+  for (let i = 0; i < 22; i++) {
+    session.setAttention(true); audio(.002);
+    vi.advanceTimersByTime(1000);
+  }
+  const count = sockets[0].send.mock.calls.length;
+  audio(.1, 20);
+  vi.advanceTimersByTime(1000);
+  expect(status).toHaveBeenLastCalledWith('wake', expect.any(String));
+  expect(sockets[0].send).toHaveBeenCalledTimes(count);
+  session.dispose();
 });
 
 it('waits locally for speech, paces startup audio, and drains final words on stop', async () => {
@@ -114,5 +178,26 @@ it('waits locally for speech, paces startup audio, and drains final words on sto
   expect(totalBytes).toBeGreaterThan(9600);
   socket.onmessage({ data: JSON.stringify({ type: 'finished' }) });
   expect(socket.close).toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it('releases an automatic startup if the browser requires an audio-unlock tap', async () => {
+  vi.useFakeTimers();
+  const stop = vi.fn(), close = vi.fn().mockResolvedValue(undefined), status = vi.fn();
+  const track = { stop, onended: null };
+  vi.stubGlobal('isSecureContext', true);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }) } });
+  vi.stubGlobal('AudioWorkletNode', class {});
+  vi.stubGlobal('AudioContext', class {
+    state = 'suspended'; sampleRate = SAMPLE_RATE;
+    resume = () => new Promise<void>(() => {});
+    close = close;
+  });
+  const session = new VoiceSession({ status, transcript: vi.fn() }, { wake: true, automatic: true });
+  const startup = session.start();
+  await vi.advanceTimersByTimeAsync(2600);
+  await startup;
+  expect(status).toHaveBeenLastCalledWith('error', expect.stringContaining('Tap the orb'));
+  expect(stop).toHaveBeenCalledOnce(); expect(close).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
 });

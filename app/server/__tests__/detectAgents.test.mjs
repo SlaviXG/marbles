@@ -109,3 +109,21 @@ describe("agent detection", () => {
     await expect((await import("node:fs/promises")).readFile(marker, "utf8").then((s) => s.trim().split("\n"))).resolves.toEqual(["call"]);
   });
 });
+
+import { createAgentDetector as makeDetector } from '../agents/detectAgents.mjs';
+import fsPromises from 'node:fs/promises';
+import osModule from 'node:os';
+import pathModule from 'node:path';
+
+it('finds the Codex CLI bundled inside the ChatGPT app when it is not on PATH', async () => {
+  const home = await fsPromises.mkdtemp(pathModule.join(osModule.tmpdir(), 'marbles-codex-'));
+  const apps = pathModule.join(home, 'Applications');
+  const bin = pathModule.join(apps, 'ChatGPT.app', 'Contents', 'Resources', 'codex-cli', 'CodexCLI.app', 'Contents', 'MacOS');
+  await fsPromises.mkdir(bin, { recursive: true });
+  await fsPromises.writeFile(pathModule.join(bin, 'codex'), '#!/bin/sh\necho codex 1.0\n', { mode: 0o755 });
+  const detect = makeDetector({ platform: 'darwin', homeDir: home, pathEnv: '/usr/bin', env: {}, desktopRoots: [apps], readVersions: false, cacheTtlMs: 0 });
+  const codex = (await detect()).find(agent => agent.id === 'codex');
+  expect(codex).toMatchObject({ kind: 'cli', command: 'codex', path: pathModule.join(bin, 'codex') });
+  const none = makeDetector({ platform: 'darwin', homeDir: home, pathEnv: '/usr/bin', env: {}, desktopRoots: [pathModule.join(home, 'nowhere')], readVersions: false, cacheTtlMs: 0 });
+  expect((await none()).find(agent => agent.id === 'codex')).toBeUndefined();
+});

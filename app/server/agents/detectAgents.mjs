@@ -102,6 +102,18 @@ export function createAgentDetector(options = {}) {
         if ((await fs.stat(cursorBin)).isDirectory() && !pathDirs.includes(cursorBin)) pathDirs.push(cursorBin);
       } catch { /* Optional Cursor install directory is absent. */ }
       const desktopRoots = options.desktopRoots ?? ["/Applications", path.join(homeDir, "Applications")];
+      // Codex usually ships inside the ChatGPT (or Codex) app rather than on
+      // PATH, so a server started from an ordinary terminal could not see it.
+      if (platform === "darwin") {
+        const bundled = options.bundledDirs ?? [
+          ...(env.CODEX_CLI_PATH ? [path.dirname(env.CODEX_CLI_PATH)] : []),
+          ...desktopRoots.flatMap((root) => [
+            path.join(root, "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS"),
+            path.join(root, "Codex.app", "Contents", "Resources"),
+          ]),
+        ];
+        for (const dir of bundled) if (!pathDirs.includes(dir)) pathDirs.push(dir);
+      }
       const commands = [...new Set(supported.flatMap((agent) => [agent.detectCmd, ...(agent.detectCmdAliases ?? []), ...(agent.detectRequiredCommands ?? [])]))];
       const paths = new Map(await Promise.all(commands.map(async (command) => [command, await findCommand(command, pathDirs, platform, env)])));
       const found = await Promise.all(supported.map(async (agent) => {

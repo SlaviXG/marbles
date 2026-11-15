@@ -19,7 +19,7 @@ const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{8,100}$/.t
 
 // The harness owns bounded conversation memory and idempotent request receipts.
 export class VoiceCommands {
-  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, screen, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog, screen }) }) {
+  constructor({ taskService, swarmService, contextProvider, noteProvider, agentRegistry, readLog = agentLog, summarize, screen, prepareEmail, coordinator = new HermesCoordinator({ taskService, swarmService, contextProvider, noteProvider, readAgentLog: readLog, screen, prepareEmail }) }) {
     Object.assign(this, { taskService, swarmService, coordinator, agentRegistry, readLog, summarizeStatus: summarize });
     this.requests = new Map(); this.conversations = new Map(); this.summaries = new Map(); this.inflight = 0;
   }
@@ -112,12 +112,18 @@ export class VoiceCommands {
     if (['queued', 'running', 'evaluating', 'cancelling'].includes(record.status)) throw new Error('Task is still running.');
     const key = `${kind}:${id}`;
     if (!this.summaries.has(key)) {
-      const summary = this.coordinator.summarize(record, kind).then(reply => {
+      const summary = (async () => {
+        let display;
+        let reply;
+        if (record.status === 'completed' && record.intent?.email && this.coordinator.prepareResultEmail) {
+          try { display = await this.coordinator.prepareResultEmail(record); reply = 'Your files are ready. Review the email, then say send it.'; }
+          catch { reply = 'Your files are ready, but I couldn’t prepare the email. Ask me to email the finished files.'; }
+        } else reply = await this.coordinator.summarize(record, kind);
         const conversation = this.conversations.get(conversationId);
         if (conversation) conversation.history = [...conversation.history,
           { role: 'assistant', content: `Worker result (${record.status}): ${conciseReply(reply, 25)}` }].slice(-HISTORY_TURNS);
-        return { reply: conciseReply(reply, 25) };
-      });
+        return { reply: conciseReply(reply, 25), ...(display ? { display } : {}) };
+      })();
       this.summaries.set(key, summary);
       if (this.summaries.size > 200) this.summaries.delete(this.summaries.keys().next().value);
     }

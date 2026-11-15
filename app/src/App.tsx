@@ -13,6 +13,8 @@ import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
 import GestureWidget from "./views/GestureWidget";
 import MediaStage from "./views/MediaStage";
+import GestureDismiss from "./views/GestureDismiss";
+import SlingRingPortal from './views/SlingRingPortal';
 import { attentionTracker } from "./attention/AttentionTracker";
 import { disableTabCapture, enableTabCapture } from "./state/screen";
 import VideoWindow from "./views/VideoWindow";
@@ -68,13 +70,15 @@ export default function App() {
       <span className={`canvas-connection${connected ? ' connected' : ''}`} role="status"><span aria-hidden="true" />{connected ? 'Online' : 'Reconnecting'}<Clock /></span>
     </header>
     {!count && !booting && <p className="canvas-empty">Looking for Codex, Claude Code or Cursor on this computer.</p>}
-    <VoicePanel onActivate={() => { void enableTabCapture(); void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); disableTabCapture(); }} />
+    <VoicePanel onActivate={source => { if (source === 'tap') void enableTabCapture(); void cameraPointer.start(); void attentionTracker.start(); }} onDeactivate={() => { cameraPointer.stop(); attentionTracker.stop(); disableTabCapture(); }} />
     <DetailPanel disabled={presenting} />
     <PresentationStage />
     <MediaStage />
     <VideoWindow />
     <GestureWidget />
     <HandCursor />
+    <GestureDismiss />
+    <SlingRingPortal />
     {booting && <div className="boot" aria-hidden="true">
       <svg viewBox="0 0 200 200">
         <circle className="boot-ring a" cx="100" cy="100" r="62" pathLength="100" />

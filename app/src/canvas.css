@@ -75,6 +75,9 @@
 @keyframes blink { 50% { opacity: .35; } }
 
 /* ---- Voice core --------------------------------------------------------- */
+.look-wake-note { display: flex; flex-direction: column; align-items: center; gap: 5px; margin-top: 8px; color: var(--muted); font: 12px/1.4 system-ui; }
+.look-wake-note button { pointer-events: auto; background: transparent; border: 0; padding: 6px 10px; color: var(--bright); text-decoration: underline; text-underline-offset: 3px; font: inherit; cursor: pointer; }
+.look-wake-note button:focus-visible { outline: 2px solid var(--bright); outline-offset: 2px; border-radius: 4px; }
 .canvas-app .voice-dock { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 41; display: flex; flex-direction: column; align-items: center; pointer-events: none; }
 .voice-marble { position: relative; display: grid; place-items: center; width: 150px; height: 150px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--bright); pointer-events: auto; transition: transform .5s var(--out); -webkit-tap-highlight-color: transparent; }
 .voice-marble:hover:not(:disabled) { transform: scale(1.05); }
@@ -350,6 +353,7 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 
 /* Anything projected can be picked up by its title bar and put somewhere else. */
 .window-grip { cursor: grab; touch-action: none; user-select: none; }
+.swish-ready { outline: 1px solid oklch(85% .1 205 / .65); outline-offset: 3px; }
 .window-dragging { transition: none !important; box-shadow: 0 0 0 1px var(--bright), 0 0 80px oklch(75% .14 208 / .4), 0 50px 110px oklch(4% .02 248 / .8) !important; }
 .window-dragging .window-grip { cursor: grabbing; }
 .window-dragging iframe { pointer-events: none; } /* a video must not swallow the drag */
@@ -377,8 +381,28 @@ ul.md-list li.md-task.done::before { background: var(--teal); }
 .md-figure { display: block; margin: 1.4em 0; text-align: center; }
 .md-figure img { max-width: 100%; max-height: 60vh; border: 1px solid var(--border); border-radius: 3px; box-shadow: 0 0 44px oklch(72% .13 210 / .18); }
 .md-caption { display: block; margin-top: 10px; color: var(--muted); font-size: .82rem; }
-.deck { display: grid; gap: 22px; max-width: 880px; margin: 0 auto; padding: 0; list-style: none; }
-.deck-slide { position: relative; display: flex; flex-direction: column; justify-content: center; aspect-ratio: 16 / 9; padding: 7% 8%; overflow: hidden; background: linear-gradient(150deg, oklch(30% .07 222 / .55), oklch(15% .04 240 / .7)); border: 1px solid var(--border); border-radius: 3px; box-shadow: 0 0 40px oklch(72% .13 210 / .12); animation: card-in .8s var(--out) both; }
+/* One slide at a time; the slide itself is the button. */
+/* Sized from the height available, so the whole slide and its controls fit without scrolling. */
+.slide-pager { max-width: clamp(380px, calc((100vh - 600px) * 16 / 9), 980px); margin: 0 auto; }
+.slide-stage { position: relative; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; box-shadow: 0 0 50px oklch(72% .13 210 / .16); }
+.html-slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #fff; }
+.asset-preview .html-slide iframe { position: absolute; left: 0; top: 0; min-height: 0; border-radius: 0; }
+.canvas-app .slide-zone { position: absolute; top: 0; bottom: 0; min-height: 0; padding: 0; background: transparent; border: 0; border-radius: 0; cursor: pointer; }
+.slide-zone.back { left: 0; width: 26%; }
+.slide-zone.forward { right: 0; width: 74%; }
+.canvas-app .slide-zone:disabled { cursor: default; opacity: 1; }
+.slide-zone::after { content: ''; position: absolute; top: 0; bottom: 0; width: 90px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.slide-zone.forward::after { right: 0; background: linear-gradient(90deg, transparent, oklch(80% .13 208 / .28)); }
+.slide-zone.back::after { left: 0; background: linear-gradient(-90deg, transparent, oklch(80% .13 208 / .28)); }
+.slide-zone:hover:not(:disabled)::after, .slide-zone:focus-visible::after { opacity: 1; }
+.slide-bar { display: flex; align-items: center; gap: 14px; padding: 12px 2px 0; color: var(--muted); font: 500 .7rem/1 var(--hud); letter-spacing: .2em; }
+.canvas-app .slide-bar button { flex: none; width: 52px; min-height: 48px; padding: 0; color: var(--teal); background: oklch(30% .06 225 / .35); border: 1px solid var(--border); border-radius: 3px; font-size: 1.1rem; transition: background .25s, border-color .25s; }
+.canvas-app .slide-bar button:hover:not(:disabled) { background: oklch(50% .1 212 / .35); border-color: var(--bright); }
+.canvas-app .slide-bar button:disabled { opacity: .25; }
+.slide-progress { flex: 1; height: 2px; background: oklch(60% .07 218 / .25); overflow: hidden; }
+.slide-progress i { display: block; height: 100%; background: var(--teal); box-shadow: 0 0 10px var(--teal); transform-origin: 0 50%; transition: transform .5s var(--out); }
+.deck-slide { position: relative; display: flex; flex-direction: column; justify-content: center; aspect-ratio: 16 / 9; padding: 7% 8%; overflow: hidden; background: linear-gradient(150deg, oklch(30% .07 222 / .55), oklch(15% .04 240 / .7)); animation: slide-in .5s var(--out) both; }
+@keyframes slide-in { from { opacity: 0; transform: translateX(26px); filter: blur(6px); } }
 .deck-slide::before { content: ''; position: absolute; left: 0; top: 14%; bottom: 14%; width: 2px; background: var(--teal); box-shadow: 0 0 14px var(--teal); }
 .deck-slide h3 { margin: 0 0 .7em; color: #fff; font-size: clamp(1.2rem, 2.6vw, 1.9rem); font-weight: 600; line-height: 1.2; letter-spacing: -.02em; text-wrap: balance; }
 .deck-slide.cover { align-items: center; text-align: center; background: radial-gradient(ellipse at 50% 60%, oklch(42% .11 215 / .5), oklch(15% .04 240 / .7) 70%); }

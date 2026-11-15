@@ -27,6 +27,19 @@ function result(worker: any, text = '', start?: number) {
   worker.onmessage({ data: { type: 'result', text, start, epoch: job.epoch, end: job.end, length: job.length, inferenceMs: 35 } });
 }
 function jobs(worker: any) { return worker.postMessage.mock.calls.filter(([data]: any[]) => data.type === 'audio').map(([data]: any[]) => data); }
+it('suspends both recognizers for spoken replies, rejects delayed speaker echoes, then restores browser recognition', async () => {
+  const { detector, worker, wake, load, recognitions } = setup(true); await load;
+  detector.push(frame(.03, 500));
+  const old = recognitions[0];
+  detector.setSuspended(true); expect(old.stop).toHaveBeenCalledOnce(); expect(detector.browserRecognitionActive).toBe(false);
+  const count = jobs(worker).length; detector.push(frame(.03, 1000)); expect(jobs(worker)).toHaveLength(count);
+  old.onresult({ resultIndex: 0, results: [{ 0: { transcript: 'I am Marbles' } }] }); expect(wake).not.toHaveBeenCalled();
+  detector.setSuspended(false); expect(recognitions).toHaveLength(2); expect(detector.browserRecognitionActive).toBe(true);
+  detector.push(frame(.03, 500));
+  old.onresult({ resultIndex: 0, results: [{ 0: { transcript: 'Marbles' } }] }); expect(wake).not.toHaveBeenCalled();
+  recognitions[1].onresult({ resultIndex: 0, results: [{ 0: { transcript: 'Marbles' } }] }); expect(wake).toHaveBeenCalledOnce();
+  detector.dispose();
+});
 
 it('starts within one hop of speech onset and caps the window at 1.5 seconds', async () => {
   const { detector, worker, load } = setup(); await load;

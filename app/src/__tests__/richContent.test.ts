@@ -51,3 +51,25 @@ it('asks for the next waiting result only when one is waiting', () => {
   expect(canvasCommand('Next result', [], [], [], 'artifact:t9:a.md')?.select).toBe('artifact:t9:a.md');
   expect(canvasCommand('Next result', [], [], [], null)).toBeNull();
 });
+
+import { slideCommand } from '../voice/mediaCommand';
+import { AudioTurns, END_SILENCE_SECONDS, SAMPLE_RATE } from '../voice/audio';
+
+it('moves through slides by voice', () => {
+  expect(slideCommand('Next slide.')).toEqual({ delta: 1 });
+  expect(slideCommand('go back')).toEqual({ delta: -1 });
+  expect(slideCommand('first slide')).toEqual({ to: 'first' });
+  expect(slideCommand('next quarter we should hire')).toBeNull();
+});
+
+it('ends a turn promptly even when the room is noisy after you stop', () => {
+  const chunk = (level: number) => new Float32Array(2048).fill(level);
+  const turns = new AudioTurns();
+  for (let i = 0; i < 10; i++) turns.push(chunk(.004)); // a quiet start, so the floor is learned low
+  for (let i = 0; i < 14; i++) { const voice = chunk(.2); voice.fill(.004, 900, 1400); turns.push(voice); } // speech, with its gaps
+  // Then the room gets louder than it was (a fan, chatter) but far quieter than the voice.
+  let seconds = 0, ended = false;
+  while (!ended && seconds < 3) { ended = turns.push(chunk(.02)).commit; seconds += 2048 / SAMPLE_RATE; }
+  expect(ended).toBe(true);
+  expect(seconds).toBeLessThan(END_SILENCE_SECONDS + .3);
+});

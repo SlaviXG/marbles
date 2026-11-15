@@ -1,0 +1,12 @@
+.sling-ring-layer { position: fixed; inset: 0; z-index: 90; pointer-events: none; overflow: hidden; }
+.sling-ring-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sling-ring-layer .sling-ring-caption { position: absolute; top: 85%; left: 12%; right: 12%; max-width: none; margin: 0; text-align: center; font: 500 14px/1.5 var(--hud, system-ui); letter-spacing: .18em; text-transform: uppercase; color: oklch(92% .07 80); text-shadow: 0 2px 8px oklch(12% .02 250); opacity: 0; transition: opacity .25s; }
+.sling-ring-caption.visible { opacity: 1; }
+.portal-trick { margin-top: 10px; color: oklch(78% .06 215); font: 12px/1.5 system-ui; max-width: 184px; pointer-events: auto; }
+.portal-trick summary { cursor: pointer; }
+.portal-trick p { margin: 8px 0; }
+.portal-trick button { padding: 6px 10px; color: oklch(89% .1 80); border: 1px solid oklch(75% .12 70 / .5); border-radius: 5px; background: oklch(20% .03 250); cursor: pointer; font: inherit; }
+.portal-trick button:hover { background: oklch(28% .04 250); }
+.portal-trick :is(summary, button):focus-visible { outline: 2px solid oklch(86% .12 80); outline-offset: 4px; }
+@media (max-width: 600px) { .sling-ring-layer .sling-ring-caption { font-size: 11px; letter-spacing: .12em; } }
+@media (prefers-reduced-motion: reduce) { .sling-ring-layer .sling-ring-caption { transition: none; } }

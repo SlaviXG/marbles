@@ -59,9 +59,26 @@ describe("voice relay", () => {
   it("accepts local app origins and rejects remote and malformed origins", () => {
     expect(localVoiceOrigin("http://localhost:5173")).toBe(true);
     expect(localVoiceOrigin("http://127.0.0.1:5174")).toBe(true);
-    for (const origin of [undefined, "null", "https://evil.example", "http://localhost.evil.example:5173", "http://localhost:9999"]) {
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      expect(localVoiceOrigin(`http://${host}:5188`)).toBe(true);
+    }
+    for (const origin of [undefined, "null", "https://evil.example", "http://localhost.evil.example:5173", "http://localhost:9999", "http://evil.example:5188", "http://127.0.0.1.evil.example:5188", "http://localhost:5185"]) {
       expect(localVoiceOrigin(origin)).toBe(false);
     }
+  });
+  it('upgrades voice from the alternate dev preview while rejecting unrelated origins', () => {
+    const server = new EventEmitter();
+    const wss = attachVoice(server, { apiKey: 'test' });
+    const upgrade = vi.spyOn(wss, 'handleUpgrade').mockImplementation(() => {});
+    const socket = { end: vi.fn() };
+    try {
+      server.emit('upgrade', { url: '/api/voice', headers: { origin: 'http://127.0.0.1:5188' } }, socket, Buffer.alloc(0));
+      expect(upgrade).toHaveBeenCalledOnce();
+      expect(socket.end).not.toHaveBeenCalled();
+      server.emit('upgrade', { url: '/api/voice', headers: { origin: 'http://evil.example:5188' } }, socket, Buffer.alloc(0));
+      expect(upgrade).toHaveBeenCalledOnce();
+      expect(socket.end).toHaveBeenCalledWith(expect.stringContaining('403 Forbidden'));
+    } finally { server.emit('close'); wss.close(); }
   });
   it("reports missing configuration without connecting", () => {
     const client = new Socket();

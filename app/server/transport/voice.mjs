@@ -1,12 +1,14 @@
 import { WebSocket, WebSocketServer } from "ws";
 
-// Local desktop prototype: only loopback browser origins may spend this key.
+// Local desktop prototype: only the regular app/backend and the alternate
+// development preview on loopback may spend this key. Keep explicit ports so
+// unrelated local sites do not gain access to voice or the protected HTTP APIs.
 export function localVoiceOrigin(origin) {
   try {
     const url = new URL(origin);
     return ["http:", "https:"].includes(url.protocol) &&
       ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-      ["5173", "5174"].includes(url.port);
+      ["5173", "5174", "5188"].includes(url.port);
   } catch { return false; }
 }
 
