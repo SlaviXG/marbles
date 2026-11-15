@@ -224,7 +224,7 @@ export class VoiceSession {
         return;
       }
       this.fail(this.ready ? 'Voice connection closed. Please try again.'
-        : 'The local voice server refused the connection. Close other Marbles tabs using voice, or restart the app server.');
+        : 'Cannot connect to the local voice server. Reload Marbles and try again; if it continues, restart the dev server.');
     };
     socket.onerror = connectionFailed;
     socket.onclose = connectionFailed;

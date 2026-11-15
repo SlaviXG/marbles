@@ -38,15 +38,31 @@ async function wakeSession() {
   const audio = (level = .1, count = 1) => {
     for (let i = 0; i < count; i++) capture.port.onmessage({ data: new Float32Array(2048).fill(level) });
   };
-  const wake = () => {
+  const wake = (ready = true) => {
     audio(.1, 20);
     const job = workers[0].postMessage.mock.calls.find(([data]: any[]) => data.type === 'audio')[0];
     workers[0].onmessage({ data: { type: 'result', text: 'Marbles', start: 0, epoch: job.epoch, end: job.end, length: job.length } });
     expect(sockets).toHaveLength(1);
-    sockets[0].onmessage({ data: JSON.stringify({ type: 'ready' }) });
+    if (ready) sockets[0].onmessage({ data: JSON.stringify({ type: 'ready' }) });
   };
   return { session, status, transcript, audio, wake, awake, wakeDetected, workers, sockets, track };
 }
+
+it('retries a failed local connection and reports it without claiming another tab is responsible', async () => {
+  vi.useFakeTimers();
+  const { status, wake, sockets, track } = await wakeSession();
+  wake(false);
+  sockets[0].onerror();
+  vi.advanceTimersByTime(500);
+  sockets[1].onerror();
+  vi.advanceTimersByTime(1000);
+  sockets[2].onerror();
+  expect(sockets).toHaveLength(3);
+  expect(status).toHaveBeenLastCalledWith('error', expect.stringContaining('Cannot connect to the local voice server'));
+  expect(status.mock.calls[status.mock.calls.length - 1][1]).not.toContain('Close other Marbles tabs');
+  expect(track.stop).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 it('keeps command audio gated by the wake word even when the user faces the screen', async () => {
   const { session, status, audio, wake, awake, wakeDetected, sockets, workers, track } = await wakeSession();

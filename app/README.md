@@ -53,6 +53,9 @@ npm test       # vitest (client + server units)
 ```
 
 Open http://localhost:5173. The client proxies `/api` to the server on `:5174`.
+For a separate dev preview, run `npm run client -- --host 127.0.0.1 --port 5188`
+with the backend on `:5174`. The local-origin checks for voice and protected
+HTTP APIs allow ports 5173, 5174 and 5188; arbitrary preview ports are rejected.
 
 ## Voice tasks
 
