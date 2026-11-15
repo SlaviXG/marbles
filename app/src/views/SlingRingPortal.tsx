@@ -45,15 +45,19 @@ export default function SlingRingPortal() {
         const present = !!hand && usePointerStore.getState().mode === 'hand' && pointerTarget.present && now - pointerTarget.lastSeen <= GONE_MS;
         const blocked = pointerTarget.pinching || steady.dragging
           || (secondaryHand.present && now - secondaryHand.lastSeen <= GONE_MS && secondaryHand.pinching);
-        // Stale frames cannot leave the spell armed after losing the camera.
-        if (!present || blocked) reset();
+        // Let the recognizer tolerate a brief blur, but cancel pinches and
+        // mouse takeover immediately. No missing frame contributes movement.
+        if (blocked || usePointerStore.getState().mode !== 'hand') reset();
+        else if (!present) {
+          gesture.step(now, { x: 0, y: 0, hand: '', present: false, blocked: false });
+          updateArmed();
+        }
         else if (hand && version !== handDebug.version) {
           version = handDebug.version;
           const circle = gesture.trail;
           const complete = gesture.step(now, { x: 1 - hand.pts[16], y: hand.pts[17], hand: hand.hand, present, blocked });
           if (complete) summon(false, circle);
-          // Only the confirmed first circle earns live sparks. Casual curved
-          // pointing has no visual side effect and cannot summon a cameo.
+          // A substantial circular arc lights a guiding trail before closure.
           else if (gesture.armed) effect.trace(gesture.trail, now);
           updateArmed();
         }
@@ -93,7 +97,7 @@ export default function SlingRingPortal() {
 
   const caption = phase === 'drawing' ? 'Open a doorway.' : phase === 'opening' ? 'Someone’s here.'
     : phase === 'arrival' ? 'The multiverse is real.' : phase === 'closing' ? 'Until next time, Peter.'
-    : armed ? 'One more circle, same direction.' : '';
+    : armed ? 'Keep circling…' : '';
   return <div className="sling-ring-layer">
     <canvas ref={canvas} className="sling-ring-canvas" aria-hidden="true" />
     <p className={`sling-ring-caption${caption ? ' visible' : ''}`} role="status" aria-live="polite" aria-atomic="true">{caption}</p>

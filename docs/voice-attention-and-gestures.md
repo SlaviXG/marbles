@@ -282,11 +282,10 @@ whole, as before.
 ## Sling-ring portal Easter egg
 
 With gestures active, keep your thumb away from your index finger and trace
-**two large circles in the same direction**, about 1–3 seconds each. The first
-circle arms the spell and shows “One more circle, same direction.” Sparks follow
-your fingertip around the second circle. Completing it opens a fiery portal,
-reveals Andrew Garfield’s Spider-Man, then collapses the ring into falling embers.
-A single loop never summons him. Clockwise and counterclockwise both work.
+**one large, relaxed circle**, about 1–4 seconds. Clockwise and counterclockwise
+both work, and an oval is fine. A guiding spark trail and “Keep circling” cue
+appear as the loop nears completion. Completing most of the circle opens a fiery
+portal, reveals Andrew Garfield’s Spider-Man, then collapses into falling embers.
 
 The gesture widget’s **Portal trick** disclosure has instructions and a
 **Preview portal** button for mouse and keyboard, without a camera. The preview
@@ -295,18 +294,21 @@ includes the drawn circle, opening, reveal, collapse and ember sequence, lasting
 Reduced motion shows a stationary ring with a quiet fade, without flying sparks,
 rotation, scaling or a moving fingertip trail.
 
-Recognition uses raw camera coordinates before cursor gain and magnetism. Both
-loops must have a diameter of at least 22% of the camera frame, consistent winding,
-and similar centers and sizes. Tracking gaps, a changed hand, pinches and dragging
-cancel the attempt. The second circle must finish within 3.6 seconds of the first.
+Recognition uses raw camera coordinates before cursor gain and magnetism. A loop
+must span at least 18% of the camera frame on both axes, wind consistently through
+at least 315 degrees, and finish near its starting point. It accepts moderate
+ellipses and noise, ignores lead-in reaches, and tolerates a tracking gap of up to
+300 ms without inventing movement. Longer gaps, hand changes, pinches and dragging
+cancel the attempt. Swipes, small loops and incomplete arcs do not summon him.
 A 12-second cooldown prevents repeat summons. The explicit preview can replay
 when its current animation finishes. Hiding the tab clears the effect and cancels
-an armed gesture; it cannot unexpectedly resume on return.
+an unfinished gesture; it cannot unexpectedly resume on return.
 
 The effect uses one canvas and the shared animation ticker, with at most 1,100
 sparks, batched strokes, cached glow sprites and a 1.5 device-pixel-ratio cap.
 Its ticker subscription stops when the camera is off and the effect has ended.
 The cameo uses a bundled Sony Pictures publicity still; source and attribution
 are recorded in `app/public/images/README.md`. No sound, external request or task
-is triggered. Recognition tests cover synthetic motion at 15 and 30 fps with
-modest noise; physical-camera tuning remains to be tried.
+is triggered. Tests cover noisy motion at 10, 15 and 30 fps, lead-in reaches,
+brief and prolonged tracking gaps, and accidental-trigger rejection. Sensitivity
+still needs evaluation with a physical camera and individual users.

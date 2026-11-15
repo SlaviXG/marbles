@@ -1,75 +1,73 @@
 // Raw, mirrored camera coordinates, before cursor gain, magnets or smoothing.
-// Two closed loops in the same direction summon a cameo, never a pointer action.
+// A deliberate near-complete circle summons a cameo, never a pointer action.
 export type PortalSample = { x: number; y: number; hand: string; present: boolean; blocked: boolean };
 export type PortalPoint = { x: number; y: number; t: number };
-type Point = PortalPoint;
-export const PORTAL = { minMs: 800, maxMs: 3200, gapMs: 180, cooldownMs: 12000, minDiameter: .22, confirmMs: 3600 };
+export const PORTAL = { minMs: 650, maxMs: 4200, gapMs: 300, cooldownMs: 12000, minDiameter: .18 };
 
 export class PortalGesture {
-  private points: Point[] = [];
+  private points: PortalPoint[] = [];
+  private drawing: PortalPoint[] = [];
   private hand = '';
   private lastSeen = -Infinity;
   private quietUntil = -Infinity;
-  private firstCircle: { x: number; y: number; radius: number; direction: number; at: number } | null = null;
 
-  get armed(): boolean { return this.firstCircle !== null; }
-
-  get trail(): readonly PortalPoint[] { return this.points; }
-
-  reset() { this.points = []; this.hand = ''; this.lastSeen = -Infinity; this.firstCircle = null; }
+  // Visible feedback begins late in a plausible circle, before it closes.
+  get armed(): boolean { return this.drawing.length > 0; }
+  get trail(): readonly PortalPoint[] { return this.drawing.length ? this.drawing : this.points; }
+  reset() { this.points = []; this.drawing = []; this.hand = ''; this.lastSeen = -Infinity; }
 
   step(now: number, sample: PortalSample): boolean {
     if (!Number.isFinite(now) || !Number.isFinite(sample.x) || !Number.isFinite(sample.y)
-      || !sample.present || sample.blocked || now < this.quietUntil) { this.reset(); return false; }
+      || sample.blocked || now < this.quietUntil) { this.reset(); return false; }
+    // A blurred frame is common while circling. Keep the real observations for
+    // a short grace period; never interpolate or count movement while absent.
+    if (!sample.present) {
+      if (now - this.lastSeen > PORTAL.gapMs) this.reset();
+      return false;
+    }
     if (sample.hand !== this.hand || now - this.lastSeen > PORTAL.gapMs || now < this.lastSeen) this.reset();
     this.hand = sample.hand;
     this.lastSeen = now;
-    if (this.firstCircle && now - this.firstCircle.at > PORTAL.confirmMs) this.firstCircle = null;
     this.points = this.points.filter(p => now - p.t <= PORTAL.maxMs);
     const last = this.points[this.points.length - 1];
-    if (last && Math.hypot(sample.x - last.x, sample.y - last.y) < .008) return false;
-    this.points.push({ x: sample.x, y: sample.y, t: now });
-    // Bounded by the time window and distance floor, even on a fast camera.
-    if (this.points.length > 180) this.points.shift();
-    const points = this.points;
-    if (points.length < 16 || now - points[0].t < PORTAL.minMs) return false;
-    const xs = points.map(p => p.x), ys = points.map(p => p.y);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-    const w = x1 - x0, h = y1 - y0;
-    if (Math.min(w, h) < PORTAL.minDiameter || w / h < .55 || w / h > 1.8) return false;
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    const radius = (w + h) / 4;
-    if (Math.hypot(sample.x - points[0].x, sample.y - points[0].y) > radius * .5) return false;
-    let turn = 0, absoluteTurn = 0, travel = 0;
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      const distance = Math.hypot(p.x - cx, p.y - cy);
-      if (distance < radius * .5 || distance > radius * 1.5) return false;
-      if (!i) continue;
-      const previous = points[i - 1];
-      const delta = Math.atan2(Math.sin(Math.atan2(p.y - cy, p.x - cx) - Math.atan2(previous.y - cy, previous.x - cx)),
-        Math.cos(Math.atan2(p.y - cy, p.x - cx) - Math.atan2(previous.y - cy, previous.x - cx)));
-      // Reject a tracking jump rather than filling in an unseen arc.
-      if (Math.abs(delta) > .65) return false;
-      turn += delta; absoluteTurn += Math.abs(delta);
-      travel += Math.hypot(p.x - previous.x, p.y - previous.y);
+    if (last && Math.hypot(sample.x - last.x, sample.y - last.y) < .008) {
+      if (now - last.t > 450) this.drawing = [];
+      return false;
     }
-    if (Math.abs(turn) < Math.PI * 1.8 || Math.abs(turn) / absoluteTurn < .88
-      || travel < radius * 5 || travel > radius * 8) return false;
-    const first = this.firstCircle;
-    const direction = Math.sign(turn);
-    const confirmed = !!first && direction === first.direction
-      && Math.hypot(cx - first.x, cy - first.y) < first.radius * .55
-      && radius / first.radius > .65 && radius / first.radius < 1.5;
-    if (confirmed) {
+    this.points.push({ x: sample.x, y: sample.y, t: now });
+    if (this.points.length > 180) this.points.shift();
+    this.drawing = [];
+
+    // Try suffixes so moving into position before the circle does not poison
+    // recognition for an entire time window. History is capped at 180 points.
+    for (let start = 0; start <= this.points.length - 12; start++) {
+      const points = this.points.slice(start);
+      if (now - points[0].t < PORTAL.minMs) break;
+      const xs = points.map(p => p.x), ys = points.map(p => p.y);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const w = x1 - x0, h = y1 - y0;
+      if (Math.min(w, h) < PORTAL.minDiameter || w / h < .45 || w / h > 2.2) continue;
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, radius = (w + h) / 4;
+      let turn = 0, absoluteTurn = 0, travel = 0, valid = true;
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i], distance = Math.hypot(p.x - cx, p.y - cy);
+        if (distance < radius * .38 || distance > radius * 1.65) { valid = false; break; }
+        if (!i) continue;
+        const previous = points[i - 1];
+        const angle = Math.atan2(p.y - cy, p.x - cx) - Math.atan2(previous.y - cy, previous.x - cx);
+        const delta = Math.atan2(Math.sin(angle), Math.cos(angle));
+        if (Math.abs(delta) > .8) { valid = false; break; }
+        turn += delta; absoluteTurn += Math.abs(delta);
+        travel += Math.hypot(p.x - previous.x, p.y - previous.y);
+      }
+      if (!valid || absoluteTurn === 0 || Math.abs(turn) / absoluteTurn < .82 || travel > radius * 9) continue;
+      if (Math.abs(turn) >= Math.PI * 1.35 && !this.drawing.length) this.drawing = points;
+      if (Math.abs(turn) < Math.PI * 1.75 || travel < radius * 4.8
+        || Math.hypot(sample.x - points[0].x, sample.y - points[0].y) > radius * .75) continue;
       this.quietUntil = now + PORTAL.cooldownMs;
       this.reset();
       return true;
     }
-    // A single accidental loop only arms. Start a fresh loop at this endpoint;
-    // overlapping points cannot count the same revolution twice.
-    this.firstCircle = { x: cx, y: cy, radius, direction, at: now };
-    this.points = [{ x: sample.x, y: sample.y, t: now }];
     return false;
   }
 }
