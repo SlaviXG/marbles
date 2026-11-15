@@ -122,25 +122,11 @@ seconds more per request (roughly 9–15 s in testing).
 | Pinch and release | Opens what you are pointing at. |
 | Pinch, hold and move | Drags it: any window by its title bar, any teammate or file on the canvas. A teammate's files travel with it. |
 | Pinch with both hands | Zoom (hands apart or together) and pan (hands moving together). |
-| **Swipe across a window** | Closes it. A quick, mostly sideways sweep across about a sixth of the view. The window flies off the way it was hit. |
-| **Drop your hands** | Closes whatever is on the main stage. The hand must leave downward at speed from the lower part of the view and stay gone for half a second. A video keeps playing; swipe it to close it. |
+| Pinch the × on a window | Closes it. |
 
-A slap is fast, and fast is when hand tracking is weakest: the hand blurs and
-detections go missing. The swipe is built for that:
-
-- It is measured on the hand as the camera saw it (wrist and knuckles), not on
-  the smoothed cursor.
-- It compares any two recent positions, so a gap in the middle costs nothing,
-  and positions survive a dropout of up to 0.45 s.
-- A hand swept right out of view still counts.
-- A pinch that only flickers is forgiven; a held pinch (a drag) is not judged.
-- It closes the window the sweep crossed. If it crossed none, it closes what is
-  on the main stage, so you do not have to aim.
-
-Resting your hands, reaching for something, or tracking flickering for a moment
-does not close anything: each closing gesture has to clear a speed and distance
-threshold, and nothing is judged while you are pinching. Thresholds are in
-`DISMISS` in `src/input/dismissGesture.ts`.
+There is no gesture that closes a window by itself: a fast open hand looks
+like pointing, and dropping the hands looks like resting, so both closed
+things by accident.
 
 While a document is open the cursor is steadied against hand tremor. That
 steadying is switched off for the length of a drag, so what you carry follows

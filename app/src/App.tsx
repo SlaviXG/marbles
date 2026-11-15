@@ -13,7 +13,6 @@ import { usePresentations } from "./hooks/usePresentations";
 import { usePresentation } from "./state/presentation";
 import GestureWidget from "./views/GestureWidget";
 import MediaStage from "./views/MediaStage";
-import GestureDismiss from "./views/GestureDismiss";
 import { attentionTracker } from "./attention/AttentionTracker";
 import { disableTabCapture, enableTabCapture } from "./state/screen";
 import VideoWindow from "./views/VideoWindow";
@@ -76,7 +75,6 @@ export default function App() {
     <VideoWindow />
     <GestureWidget />
     <HandCursor />
-    <GestureDismiss />
     {booting && <div className="boot" aria-hidden="true">
       <svg viewBox="0 0 200 200">
         <circle className="boot-ring a" cx="100" cy="100" r="62" pathLength="100" />
