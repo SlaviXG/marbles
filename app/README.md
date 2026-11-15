@@ -163,11 +163,11 @@ server exposes the speech handler directly as well, so updating speech playback
 does not require restarting an active agent runner. Neither route exposes the key.
 
 After speech recognition, the actual **Nous Research Hermes Agent** runtime
-coordinates the work, powered by **Claude Sonnet 5.5** through its native Anthropic
+coordinates the work, powered by **Claude Opus 5.5** through its native Anthropic
 provider. Set `ANTHROPIC_API_KEY` in the repo-root `.env`. Install Git, uv, and
 Python 3.14, then run `npm run setup:hermes` in `app`. `npm run dev` and
 `npm run server` run setup automatically, reusing the installed runtime. `MARBLES_COORDINATOR_MODEL` optionally
-overrides `claude-sonnet-5-5`. OpenAI still handles task transcription and the
+overrides `claude-opus-5-5`; `MARBLES_COORDINATOR_EFFORT` selects low, medium (default), or high effort. OpenAI still handles task transcription and the
 fallback speech output; the coordinator does not send standby audio to Claude.
 
 Describe the outcome in one sentence. The coordinator selects sensible,

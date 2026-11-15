@@ -1,215 +1,362 @@
-# marbles
+<div align="center">
 
-marbles is a virtual office for your coding agents: a 2D board where your own
-Claude Code and Codex agents sit, with their work and logs visible, steered by
-voice and hands. Each agent is a desk you can point at, redirect, stop, and open
-to read its full log and changed files.
+# Marbles
 
-Built at the Imperial AI Society Flagship Hackathon, 14 to 15 November 2026
-(Voice, Vision and Generative Media track).
+### Your team. At your command.
 
-## Key ideas
+A voice and gesture workspace for directing AI agents, following their work, and exploring what they create.
 
-- **Direct a team, don't operate a computer:** the prompt box was built for one model; several agents need a different interface.
-- **Your own agents:** marbles starts the `claude` and `codex` command-line tools you already have installed, with your own logins.
-- **Voice and hands:** one spoken sentence starts an agent; a pinch plus a sentence redirects it. The mouse always works as a fallback.
-- **Visible work:** every desk shows the agent's task, state and latest log line, and opens to the full log and the files it changed.
+**Speak an outcome · Point to the context · Watch your team deliver**
 
-## Try the UI
+[Get started](#get-started) · [How to use it](#how-to-use-it) · [Stack](#technology-stack) · [Models & APIs](#models-and-ai-runtime) · [Development](#development)
 
-Runs locally. Use Chrome or Edge: the folder picker and the hand cursor rely on
-APIs that Firefox and Safari lack.
+</div>
+
+![Marbles concept artwork showing Claude, Codex, Cursor, floating deliverables, and a glowing voice orb](docs/marbles-hero.png)
+
+<p align="center"><em>The Marbles vision: one canvas for your agents, their progress, and the files they produce. Concept artwork.</em></p>
+
+## The idea
+
+Working with several AI agents often means juggling terminals, repeating context, and hunting for outputs. Marbles brings that work into a shared visual space. You describe what you want, a coordinator chooses how to approach it, and your installed agents do the work while you stay close to the results.
+
+Say “Marbles, prepare a report from these notes.” Select a file and say “use this spreadsheet.” Ask a team to work together, check what Codex is doing, or open a finished presentation without leaving the canvas.
+
+The goal is to make delegation feel natural for everyday work: reports, spreadsheets, research, presentations, and coding. Voice describes the intent; pointing supplies context; visible agents and deliverables show what happened.
+
+Built for the **Imperial AI Society Flagship Hackathon, 14–15 November 2026**, in the Voice, Vision and Generative Media track. This repository is a working local prototype.
+
+## What you can do
+
+| Capability | Experience |
+| --- | --- |
+| Delegate by voice | Say **Marbles**, then describe an outcome. The coordinator plans and assigns the work. |
+| Bring your own agents | Run your installed **Claude Code, Codex, and Cursor CLI** with their existing logins. |
+| Work as a team | Ask for collaboration; supported workers share a workspace, a blackboard, and deliverables. |
+| Point, pinch, and explore | Select agents and files, drag, pan, and zoom with camera-based hand tracking. Mouse and keyboard remain available. |
+| Follow real progress | Inspect task state, recent activity, logs, plans, assumptions, and generated files. |
+| Review results in place | Open documents, spreadsheets, slides, PDFs, images, audio, video, and HTML in floating readers. |
+| Find media | Request image galleries or YouTube videos and view them on the canvas. |
+| Prepare email | Review a draft and confirm sending; optional Nylas integration supports workspace attachments. |
+| Connect your notes | Load a Markdown/Obsidian folder, follow links, and see changes as files update. |
+
+### Results become part of the workspace
+
+Finished files appear beside the agent that produced them. New completions can open a floating presentation, with queued results so one agent does not replace the file you are reading. Close the reader to return the agent to its place; the files remain available.
+
+## Get started
+
+### Prerequisites
+
+- **Node.js 22.13+** and npm.
+- **Git, uv, and Python 3.14** for the Hermes coordinator runtime.
+- **Chrome or Edge**, a microphone, and a webcam for the full voice and gesture experience. Browser folder access and speech capabilities vary across browsers.
+- At least one authenticated worker CLI: **`claude`**, **`codex`**, or **`cursor-agent`** / Cursor's **`agent`** command.
+- **OpenAI and Anthropic API keys** for the complete voice-to-agent workflow. ElevenLabs and Nylas are optional.
+
+A desktop application being detected does not mean it can execute tasks: the corresponding supported CLI must be installed and authenticated.
+
+### 1. Install the application
 
 ```sh
-git clone https://github.com/SlaviXG/marbles && cd marbles/app
-npm install
-npm run client     # UI only, http://localhost:5173
+git clone https://github.com/SlaviXG/marbles.git
+cd marbles
+cp .env.example .env
+cd app
+npm ci
 ```
 
-> **Test nodes.** Four dummy notes titled `[TEST] Alpha`, `[TEST] Beta`,
-> `[TEST] Gamma` and `[TEST] Delta` are hardcoded so the graph is never empty.
-> They are not real data and appear next to any vault or folder you load (the
-> status pill counts them separately as `· 4 test`). They live in
-> [`app/src/core/testNodes.ts`](app/src/core/testNodes.ts); set
-> `SHOW_TEST_NODES = false` there to hide them.
+### 2. Configure your local environment
 
-### What to test
+Edit **`.env` in the repository root**, one directory above `app/`:
 
-- **Graph:** click a node to open its detail panel, click another node to switch, click the background to close. `[TEST] Beta` and `[TEST] Delta` share a URL node, which should list both. Zooming out stops once the whole graph fits the screen.
-- **Your own notes:** click **open folder** (bottom right, above the hand button) and pick any folder of `.md` files. Edit a file and the graph updates within a couple of seconds.
-- **Hand cursor:** click the hand button (bottom right) and allow the camera. Point with your index finger, pinch to click, pinch and move to drag, pinch with both hands to zoom or pan. With both hands up, the cursor follows the one that is moving while the other rests, and takes it over from where it stands; the skeleton button shows tracked landmarks. The same arm movement moves the cursor the same distance near the camera or further back. Moving the mouse takes the cursor back. A hand only counts while it is held up with the palm toward the camera; an ignored hand is drawn red in the skeleton view. How to tune this is in [`app/lib/hand-pointer/README.md`](app/lib/hand-pointer/README.md#which-hands-count).
-- **Hand library alone:** `cd app/lib/hand-pointer && npm install && npm run demo`.
-- **Unit tests:** `npm test` (and `npm run typecheck`) in `app/`.
+```dotenv
+# Required by the current backend: an existing absolute Markdown folder path.
+OBSIDIAN_VAULT_DIR=/absolute/path/to/your/notes
 
-### Local mocks (not committed)
+# Command transcription and fallback spoken replies.
+OPENAI_API_KEY=your_openai_key
 
-To work on the UI without the backend, keep your own mocks in `app/mock.local/`.
-Git ignores it (`*.local` in `app/.gitignore`), so each teammate can mock
-whatever they need without it reaching `main`. A typical setup:
+# Hermes coordinator and on-demand visual understanding.
+ANTHROPIC_API_KEY=your_anthropic_key
 
-- `mock.local/vite.config.ts` imports `../vite.config`, drops the `/api` proxy,
-  answers `/api/agents`, `/api/tasks`, `/api/artifacts/file?path=…` and so on
-  with a middleware plugin, and injects a script with `transformIndexHtml`.
-- That script imports the stores (`../src/state/display`, `presentation`,
-  `agents`) and opens windows: `useDisplay.getState().show({ kind: 'video', … })`,
-  a gallery, an email draft, or a task's files.
-- `mock.local/files/` holds the fake agent output (Markdown, CSV, `.pptx`, …).
+# Optional: preferred spoken replies through ElevenLabs.
+ELEVENLABS_API_KEY=
 
-Run it from `app/` with `npx vite --config mock.local/vite.config.ts`.
+# Optional: where agents create task folders and deliverables.
+MARBLES_WORKSPACE_DIR=/absolute/path/to/marbles-workspace
+```
 
-### With an Obsidian vault (live server)
+The notes folder can be an existing Obsidian vault or an ordinary directory of Markdown files. If you do not have notes yet, create an empty directory and use its absolute path. The current server requires this path even if you only want agent tasks.
+
+Keep real credentials in `.env`; it is ignored by Git. See [`.env.example`](.env.example) for optional configuration.
+
+### 3. Start Marbles
 
 ```sh
-cp .env.example .env   # in the repo root; set OBSIDIAN_VAULT_DIR to an absolute vault path
-cd app && npm run dev  # server :5174 + client :5173
+# From app/
+npm run dev
 ```
 
-`npm run dev` needs a valid `OBSIDIAN_VAULT_DIR`; without one the server exits
-and stops the client with it, so use `npm run client` instead. More detail in
-[`app/README.md`](app/README.md).
+Open **[http://localhost:5173](http://localhost:5173)**. The local backend listens on `127.0.0.1:5174`; Vite proxies `/api` requests to it.
 
-## Hackathon spec
+The first run downloads the pinned wake model and provisions Hermes in `app/.hermes-runtime/`. Allow time and network access for this setup. Later runs reuse the local assets and installed runtime.
 
-The goal is a two-minute demo that works many times in a row: a board showing
-3 to 5 real Claude Code and Codex agents working, where one spoken sentence
-starts an agent and a pinch plus a sentence redirects it. Anything that does not
-appear in the demo is out.
+### Just exploring the interface?
 
-### Scope
+```sh
+# From app/, after npm ci
+npm run client
+```
 
-| Feature | Status | Done when |
+This starts the frontend without requiring a configured vault or Hermes backend. Wake-asset setup still runs on first launch. Agent execution, live server data, and the complete voice workflow need `npm run dev`.
+
+## How to use it
+
+1. **Activate the controls.** Touch the glowing orb and grant microphone and camera permissions. The gesture widget reports tracking state and camera errors.
+2. **Wake Marbles.** Say **“Marbles”**, then describe the task. Each new request starts with the wake word.
+3. **Give it context.** Select a note, agent, task, team, or output before speaking to refer to that item in your request.
+4. **Follow the work.** Open an agent or task to inspect progress, its plan and assumptions, logs, and files.
+5. **Review the result.** Select a generated file or use its floating presentation. Say **“Marbles, close the preview”** or press Escape to close it.
+6. **Pause when finished.** Touch the orb again to pause microphone and camera controls.
+
+After permissions have already been granted, looking toward the screen can wake the controls on supported setups. Looking alone does not start command listening, and cannot override an explicit pause.
+
+### Things to say
+
+| Intent | Example |
+| --- | --- |
+| Create a deliverable | “Marbles, write a meeting summary from my notes.” |
+| Use the current selection | “Marbles, use this spreadsheet to prepare an expense report.” |
+| Request collaboration | “Marbles, work as a team to prepare this report.” |
+| Check progress | “Marbles, what is Codex doing?” |
+| Inspect activity | “Marbles, give me the log.” |
+| Open a known output | “Marbles, show me report.pdf.” |
+| Find a video | “Marbles, open the Wintergatan Marble Machine video.” |
+| Interrupt a spoken reply | Say “Marbles” during playback, then make the next request. |
+
+Examples depend on the notes, files, worker capabilities, and services available on your machine. If a source or target is missing, the coordinator can ask for it. Opening a known output is handled locally; an unrecognized filename may go through task interpretation.
+
+### Gesture controls
+
+| Gesture | Action |
+| --- | --- |
+| Point with your index finger | Move the cursor |
+| Pinch thumb and index finger | Select / click |
+| Hold a pinch and move | Drag |
+| Pinch with both hands | Pan / zoom |
+| Move the mouse | Take over pointer control |
+
+Hold your hand up with the palm toward the camera. Stable targets and visible feedback help with selection. See the [hand-pointer guide](app/lib/hand-pointer/README.md) for calibration and tracking details.
+
+## How it works
+
+```mermaid
+flowchart TD
+    User[Voice and gestures] --> Browser[React canvas]
+    Browser --> Wake[Local Whisper wake detection]
+    Wake --> STT[OpenAI live transcription]
+    STT --> Server[Local Node / Express server]
+    Server --> Hermes[Hermes coordinator / Anthropic Claude]
+    Hermes --> Workers[Claude Code / Codex / Cursor CLI]
+    Workers <--> Shared[Task folders / shared blackboard]
+    Workers --> Files[Generated files]
+    Files --> Browser
+    Hermes --> Reply[ElevenLabs / OpenAI speech]
+    Reply --> Browser
+    Vault[Markdown / Obsidian notes] --> Watcher[Chokidar / VaultService]
+    Watcher --> Browser
+```
+
+The **browser** owns the canvas, gesture input, local wake recognition, and previews. The **Node server** owns credentials, HTTP/WebSocket endpoints, worker processes, file access, and coordination. **Hermes** runs the reasoning and tool loop through a Python stdio bridge; app tools dispatch into the existing task and swarm services. Worker CLIs execute with their own provider configuration and authenticated accounts.
+
+Solo tasks use individual task directories. Swarms run supported workers in a shared directory under `MARBLES_WORKSPACE_DIR/swarms/<id>/`, exchange blackboard updates, and collect joint deliverables in `shared/`. `best-of-n` mode compares independent attempts. The default workspace root is `~/marbles-workspace`.
+
+## Technology stack
+
+| Layer | Technologies | Role |
 | --- | --- | --- |
-| Agents as desks on a 2D board | Must | Each running agent shows its name, tool, task, state and latest log line |
-| Start an agent by voice | Must | "New agent, fix the login bug" creates a desk and a real agent run; a typed box does the same |
-| Point at an agent and redirect it by voice | Must | Pinch selects a desk; the next sentence reaches that agent mid-run |
-| Open a desk to read the work | Must | Shows the full log in time order and the files changed |
-| Stop an agent | Must | By voice or a button; the state updates on the board |
-| Real output | Must | At least one agent finishes a change you can see in the repository or a preview |
-| Reset | Must | One key restores a clean board |
-| Lip-activated microphone | Should | The microphone opens only while the nearest face's lips move |
-| Agent asks for a decision | Should | A waiting agent raises a flag on its desk; pinch to answer |
-| Generated portrait per agent (fal) | Could | Each desk shows an image created when the agent starts |
-| Agents messaging each other, pods, custom agents, sandboxes, hardware, full lip reading | Out | Later, see [After the hackathon](#after-the-hackathon) |
+| Frontend | React 18, TypeScript, Vite 5 | Single-canvas application, UI components, development server, and builds |
+| State | Zustand | Agent, task, selection, voice, and presentation state |
+| Visualization | Canvas, `react-force-graph-2d`, `d3-force-3d`, CSS | Linked graph layout, agent objects, holographic effects, and motion |
+| Gesture and attention input | MediaPipe Tasks Vision, Web Workers | Hand landmarks, pointer gestures, and face-based attention tracking |
+| Browser speech | Web Audio / AudioWorklet, Transformers.js, ONNX Runtime Web, Web Speech API | Audio capture, local wake inference, and optional browser recognition |
+| Backend | Node.js ESM, Express 4, `ws`, Server-Sent Events | Local APIs, transcription relay, note updates, and agent availability events |
+| Coordination | Nous Research Hermes Agent, Python 3.14, uv, Anthropic | Planning, context inspection, delegation, follow-ups, and result summaries |
+| Workers | Claude Code, Codex CLI, Cursor CLI; Node child processes | Execute real tasks using installed tools |
+| Notes | Chokidar, Markdown parser, in-memory repository | Watch a local vault, parse notes, and publish updates |
+| Files and previews | PDF.js, ExcelJS, PptxGenJS, fflate, KaTeX | PDF rendering, workbook handling, slide generation, Office archive parsing, and mathematical notation |
+| External services | OpenAI, Anthropic, ElevenLabs, Nylas, Wikimedia Commons, Openverse, YouTube | Speech, reasoning, visual understanding, email, and media discovery |
+| Quality and CI | Vitest, TypeScript, GitHub Actions | Unit tests and automated type checking |
 
-### Architecture
+## Models and AI runtime
 
-Four parts talk over one event stream, so each layer can be built against the
-contract without waiting for the others.
+These are the **model identifiers configured in this checkout**, rather than a claim about the models selected inside a user's worker CLIs. Provider access to the configured models is required for their respective features.
 
-- **Input.** The in-repo hand-pointer library (`app/lib/hand-pointer`) emits standard pointer events, so the board cannot tell a hand from a mouse. Speech goes to OpenAI live transcription through a local WebSocket at `/api/voice`.
-- **Board.** A React and Vite app in `app/src`: a force graph of agent, task and file nodes, a detail panel, and a YouTube preview with hand-usable controls.
-- **Server.** A local Node and Express process in `app/server`, bound to `127.0.0.1`. It detects installed agents, starts tasks, reads output and serves files.
-- **Agents.** The user's own installed command-line tools, started directly: `claude -p` and `codex exec`, each task in its own folder under the workspace directory.
-- **Speech output.** ElevenLabs text-to-speech, for short spoken status lines.
-
-The hand-pointer library predates the event; everything else was built during
-the hackathon.
-
-### Event contract
-
-| Direction | Event | Payload |
-| --- | --- | --- |
-| Runtime to canvas | `agent.spawned` | id, name, role, parent |
-| Runtime to canvas | `agent.status` | id, state (thinking, working, blocked, done), current task |
-| Runtime to canvas | `message.sent` | from, to, text |
-| Runtime to canvas | `tool.called` / `tool.result` | id, tool, input summary, output summary, source URL |
-| Runtime to canvas | `agent.proposal` | id, text, options |
-| Runtime to canvas | `mission.done` | artefact link, totals |
-| Canvas to runtime | `mission.start` | brief text |
-| Canvas to runtime | `agent.redirect` | id, instruction |
-| Canvas to runtime | `pod.merge` | ids |
-| Canvas to runtime | `proposal.answer` | id, choice |
-| Canvas to runtime | `agent.stop` | id |
-
-Every event also carries a timestamp and a sequence number. The runtime writes
-the full stream to a file so any run can be replayed into the board. For this
-build, `mission.start` means start one agent on one task, and `message.sent`,
-`agent.proposal`, `pod.merge` and `proposal.answer` are optional.
-
-Contract changes need all three owners to agree; nobody adds a field alone.
-
-### Where the code is (14 Nov, 16:00)
-
-All three layers exist, on branches that have not yet run together on `main`.
-
-| Branch | Owner | What it has |
-| --- | --- | --- |
-| `main` | Slava | Graph board, hand-pointer library with tests, detail panel, YouTube preview, test nodes |
-| `pushkar-codex/agent-voting` | Pushkar | Agent detection, a task service that starts `codex exec` and `claude -p`, log reader, agent, task and file nodes |
-| `codex/live-voice-transcription` | Chingis | Built on the agent branch: OpenAI live transcription over `/api/voice`, a floating voice marble, spoken requests delegated to an idle agent |
-
-Endpoints on the agent branch: `GET /api/agents`, `GET /api/tasks`,
-`POST /api/agents/:id/tasks`, `GET /api/agents/:id/log`,
-`GET /api/artifacts/file`, `POST /api/artifacts/open`. The board polls them
-every 5 seconds.
-
-### Gaps to close, in order
-
-1. Merge both branches into `main`. Keep the listen line in `app/server/index.mjs` that binds to `127.0.0.1`.
-2. Turn a finished transcript into a command: one model call with three tools (start a task on a named agent, open a URL on the board, stop an agent).
-3. Keep the child process in the task service and add stop (kill) and redirect (stop, then a new task in the same folder).
-4. Stream agent output: run both tools with their streaming JSON output and push it through `/api/stream`, so a desk moves while its agent works.
-5. Show each task its own log. The log reader takes the newest file per provider, so two agents of one kind show the same log; read the task's own streamed output instead.
-6. Make the Obsidian vault optional. The server exits when `OBSIDIAN_VAULT_DIR` is missing.
-7. Add a reset key that clears tasks and restores a clean board.
-
-### Owners
-
-| Owner | Layer | Next deliverables | Code lives in |
+| Component | Model / runtime | Where it runs | What it does |
 | --- | --- | --- | --- |
-| Slava | Modalities and board | Agent, task and file nodes working with pinch and drag; video preview draggable; reset key; lip-activated microphone if time allows | `app/src/views`, `app/lib/hand-pointer` |
-| Chingis | Web app and glue | Merge of the branches; transcript to command; ElevenLabs speech output | `app/src/voice`, `app/server/transport` |
-| Pushkar | Agents | Stop and redirect; streaming output over `/api/stream`; per-task logs; vault made optional; demo repository | `app/server/agents` |
+| Wake-word detection | Quantized `Xenova/whisper-tiny.en` | Browser worker via Transformers.js and ONNX Runtime Web | Transcribes short local audio windows to detect “Marbles” |
+| Browser wake accelerator | Browser `SpeechRecognition` | Browser / browser vendor service | Races the local wake detector where supported; the local detector continues if unavailable |
+| Spoken command transcription | `gpt-live-transcribe` | OpenAI Realtime transcription API | Converts mono 24 kHz PCM command audio into text |
+| Main coordinator | `claude-opus-5-5`, adaptive thinking, medium effort | Anthropic Messages API through Hermes | Interprets intent, forms a plan, inspects context, delegates work, and summarizes results |
+| Screen understanding | `claude-haiku-5-5`, low effort | Anthropic through `@anthropic-ai/sdk` | Reads an app screenshot when the coordinator explicitly needs to look |
+| Preferred speech output | `eleven_flash_v2_5` | ElevenLabs streaming TTS | Produces spoken replies; default voice ID `DODLEQrClDo8wCz460ld` |
+| Fallback speech output | `gpt-4o-mini-tts`, voice `marin` | OpenAI Audio Speech API | Speaks replies if ElevenLabs is unconfigured or fails before playback starts |
+| Auxiliary status / routing helpers | `gpt-4.1-mini` | OpenAI Responses API | Status-summary helper and optional LLM-assisted solo/swarm routing; standard `/api/route` uses deterministic heuristics |
+| Hand tracking | MediaPipe Hand Landmarker, float16, version 1 | Browser worker | Supplies hand landmarks for pointing, pinching, dragging, and two-hand controls |
+| Attention tracking | MediaPipe Face Landmarker, float16, version 1 | Browser worker | Estimates whether the user is looking toward the screen |
+| Task execution | Worker-selected models | Claude Code, Codex, or Cursor's configured provider | Produces the actual task output; Marbles does not pin one model across these CLIs |
 
-`main` always runs the demo script, even if ugly. Keep keys out of the
-repository and commit often.
+**Hermes is the orchestration runtime, not a separate model.** Its `run_agent.AIAgent` owns provider calls, reasoning, retries, and tool execution. The pinned source revision is recorded in [`runtime.json`](app/server/hermes/runtime.json); its checkout, environment, and dedicated profile are local to this app.
 
-### Demo script
+The wake model is pinned to revision `79fb389fc764e7c395bd330e9531d9d32ada7049`. Setup serves its assets from localhost. MediaPipe vision assets are fetched from jsDelivr and Google's model storage. Model choices and setup are implemented in the [wake setup script](app/scripts/setup-wake.mjs), [coordinator](app/server/agents/HermesCoordinator.mjs), [screen reader](app/server/agents/screen.mjs), [transcription relay](app/server/transport/voice.mjs), and [TTS providers](app/server/transport/ttsProviders.mjs).
 
-1. Say "Open the Wintergatan Marble Machine video." It appears on the board; pinch and drag it to the top right corner.
-2. Say "Claude, add a dark mode toggle." A task node appears and files start to gather around the agent.
-3. Start a second task on Codex.
-4. Pinch the first agent and say "Stop, write the tests first." Its log shows the change of course.
-5. Open a finished task and show its log and files.
-6. Press reset.
+## External APIs and integrations
 
-### Cut order if behind
+| Service | API / interface | Purpose | Credentials |
+| --- | --- | --- | --- |
+| OpenAI | Realtime WebSocket, `/v1/realtime?intent=transcription` | Live command transcription | `OPENAI_API_KEY` |
+| OpenAI | `POST /v1/audio/speech` | Fallback spoken replies | `OPENAI_API_KEY` |
+| OpenAI | `POST /v1/responses` | Auxiliary status and optional routing helpers | `OPENAI_API_KEY` |
+| Anthropic | Messages API | Hermes coordination and on-demand screenshot interpretation | `ANTHROPIC_API_KEY` |
+| ElevenLabs | `POST /v1/text-to-speech/:voiceId/stream` | Streaming MP3 replies | `ELEVENLABS_API_KEY` |
+| Nylas | v3 grant messages/send | Send confirmed drafts and workspace attachments from a connected mailbox | `NYLAS_API_KEY`, `NYLAS_GRANT_ID` |
+| Wikimedia Commons | MediaWiki search / image metadata API | Find images with source and credit metadata | None |
+| Openverse | `/v1/images/` | Additional image search results | None |
+| YouTube | Search-page results and IFrame Player API | Find and play videos in the canvas | None; no YouTube Data API key is used |
+| Hugging Face | Pinned model-file downloads during setup | Install the local wake model | None |
+| jsDelivr / Google model storage | MediaPipe runtime and model assets | Install browser vision components | None |
+| Worker providers | Installed CLI interfaces | Run Claude Code, Codex, and Cursor tasks | Each CLI's own login and configuration |
 
-1. Generated portraits
-2. Agent asks for a decision
-3. Lip-activated microphone
-4. Hand tracking during the demo (use the mouse)
-5. Codex (run Claude Code only)
+YouTube search currently parses public search-page data and can break if the page structure changes. Media availability and playback also depend on each source.
 
-Never cut: live desks, start by voice, redirect by voice, the log panel, reset.
+### Optional settings
 
-### Decided against
+| Setting | Purpose / default |
+| --- | --- |
+| `MARBLES_COORDINATOR_MODEL` | Coordinator model; defaults to `claude-opus-5-5` |
+| `MARBLES_COORDINATOR_EFFORT` | `low`, `medium`, or `high`; defaults to `medium` |
+| `MARBLES_VISION_MODEL` | Screenshot model; defaults to `claude-haiku-5-5` |
+| `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL_ID` | Override the default speech voice and model |
+| `MARBLES_WORKSPACE_DIR` | Task output root; defaults to `~/marbles-workspace` |
+| `MARBLES_AGENT_ACCESS` | Worker access mode; defaults to `workspace`; `full` enables broader CLI permissions |
+| `NYLAS_API_KEY`, `NYLAS_GRANT_ID` | Enable connected-mailbox sending |
+| `NYLAS_API_URI` | Nylas region; defaults to `https://api.us.nylas.com`; EU endpoint supported |
+| `MARBLES_USER_EMAIL` | Mailbox address for requests such as “email me” |
+| `MARBLES_EMAIL_VIA` | Select email delivery; Nylas is automatically selected when configured |
 
-- **Agent voting** (`docs/agent-voting-plan.md` on the agent branch): agents bidding for each task adds a wait and is not in the demo. Name the agent in the command, or default to one.
-- **Paradev:** the server already starts the agents directly.
-- **Full lip reading:** only lip movement as a microphone gate, if time allows.
+## Local API overview
 
-## After the hackathon
+The frontend uses the local server through Vite's `/api` proxy. Protected voice and assistant routes check for a local app origin; use the browser app for those requests.
 
-The hackathon build is the first slice of the full product, not a separate one:
-the runtime, event contract, canvas and gesture input all carry over. The full
-version is a workspace where one person directs dozens of agents, shipped as a
-desktop app first.
+| Interface | Purpose |
+| --- | --- |
+| `GET /api/vault`, `GET /api/stream` | Note snapshot and live note events |
+| `GET /api/agents`, `GET /api/agents/stream` | Detected agents and availability events |
+| `GET /api/tasks`, `POST /api/agents/:id/tasks` | Inspect work and launch an individual worker |
+| `GET /api/agents/:id/log` | Read recent agent activity |
+| WebSocket `/api/voice` | Relay command audio and transcription events |
+| `POST /api/voice/tasks`, `POST /api/assistant/ask` | Interpret spoken requests or assistant questions |
+| `POST /api/voice/speech`, `GET /api/voice/tts-info` | Stream speech and inspect provider configuration |
+| `POST /api/route`, `POST /api/tasks/auto` | Choose solo/team execution and optionally start it |
+| `GET /api/swarm/tasks`, `POST /api/swarm/tasks` | Inspect or start team runs |
+| `GET /api/swarm/tasks/:id`, `POST /api/swarm/tasks/:id/cancel` | Inspect or cancel a team run |
+| `GET /api/artifacts/file`, `POST /api/artifacts/open` | Retrieve or open generated files |
+| `POST /api/screen` | Store the latest app screenshot in memory for on-demand visual inspection |
+| `POST /api/comms/email` | Send a reviewed draft through the configured email integration |
+| `POST /api/scenarios/run`, `GET /api/scenarios/runs/:id` | Run and inspect evaluation scenarios |
 
-| Layer | Hackathon build | Full version adds |
-| --- | --- | --- |
-| Interface | Board, pinch, drag, voice | Hotkey widget, two-hand gestures, agents that propose actions unprompted, themes, multi-surface display |
-| Agent workspace | The user's Claude Code and Codex agents | Any command-line agent, cloud machines, browser and desktop control |
-| Coordination | None; the user directs each agent | A router that picks hierarchy, pod or hybrid per task |
-| Trust | Log panel, sources | Approval gates for irreversible actions, per-agent budgets, full replay, audit log |
-| Memory | None | Saved missions, a shared knowledge graph across agents, the existing linked-notes canvas |
-| Evidence | None | A benchmark: hierarchy against pod against hybrid on success, tokens, duplicated work and latency |
-| Hardware | Laptop and projector | A device with projector, camera and microphone, after software traction |
+See [`createApp.mjs`](app/server/transport/createApp.mjs) for request schemas and the full route implementation.
 
-## Status
+## Data, permissions, and costs
 
-Hackathon prototype, built 14 to 15 November 2026.
+- **Local processing:** hand and face tracking, local Whisper wake recognition, note watching, file previews, and worker process management run on your machine.
+- **Cloud processing:** spoken command audio goes to OpenAI. Coordination context goes to Anthropic; an app screenshot goes to the vision model when requested. Reply text goes to the selected speech provider. Worker data handling follows each CLI's configuration.
+- **Browser recognition:** the optional Web Speech wake detector may use the browser vendor's remote recognition service, even while local Whisper is available.
+- **Credentials:** API keys belong in the server-side `.env`. Do not put them in `VITE_` variables or commit them.
+- **Files and history:** deliverables live in the workspace. Some conversation and request state is in memory and resets on restart; swarm history and selection statistics persist in the workspace.
+- **Execution:** workers create and modify real files under their configured access policy. The `full` access option broadens permissions; keep the default unless your workflow requires it. Email drafts are presented for confirmation before sending.
+- **Costs:** coordinator, transcription, speech, and worker usage are billed through the accounts handling them. A worker CLI subscription does not cover the separate coordinator and speech API calls.
 
-## Contributing
+The backend binds to loopback and is intended for local use. This prototype does not include the authentication and deployment controls needed for a shared hosted service.
 
-Contributions and ideas are welcome as the project takes shape.
+## Development
+
+Run commands from `app/`:
+
+```sh
+npm run dev                   # Backend + frontend
+npm run client                # Frontend only; prepares wake assets
+npm run server                # Backend only; prepares Hermes
+npm run setup:wake            # Install/reuse pinned browser wake assets
+npm run setup:hermes          # Install/reuse the isolated Hermes runtime
+npm run typecheck             # TypeScript checks
+npm test                      # Vitest unit tests
+npm run build                 # Build the frontend into dist/
+npm run scenarios -- --dry-run # Exercise the scenario harness with fake agents
+```
+
+A frontend build does not bundle or deploy the Node server, Python runtime, or worker CLIs.
+
+### Repository map
+
+```text
+app/
+  src/
+    views/          Canvas UI, gesture widget, readers, presentations
+    voice/          Audio sessions, wake detection, local media commands
+    attention/      Face-based attention tracking
+    state/          Zustand stores and screen context
+    core/           Graph and node models
+  lib/hand-pointer/  Reusable gesture-to-pointer library
+  server/
+    agents/         CLI detection, task execution, coordinator, context
+    hermes/         Pinned runtime manifest and Python bridge
+    swarm/          Shared-workspace team execution and blackboard
+    transport/      HTTP, SSE, voice WebSocket, speech endpoints
+    media/          Image and video discovery
+    comms/          Email integration and local communication adapters
+    scenarios/      Fixtures, routing, scoring, and evaluation runner
+    source/         Knowledge-source interfaces and Obsidian adapter
+    parsing/        Markdown parsing
+    storage/        Note repository
+    watch/          Filesystem change adapter
+  scripts/          Setup, wake latency, and scenario utilities
+docs/               Screenshots, design notes, and planning archive
+```
+
+### Evaluate solo versus team execution
+
+The scenario harness covers eight deterministic office-work fixtures, including summaries, expenses, sales, policy changes, planning, split information, log search, and email triage. It compares independent attempts with collaborative runs using local rubrics and an output-length discount.
+
+```sh
+npm run scenarios -- --dry-run --scenarios=meeting-summary,split-info-roster --agents=codex,claude --keep
+```
+
+Reports are written to `scenario-results/`, including `latest.md`. Omit `--dry-run` to execute real CLI agents and incur their usage. Temporary scenario workspaces are removed after scoring unless `--keep` is supplied. These fixtures are a development tool, not evidence of general model performance.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| Server exits immediately | Set `OBSIDIAN_VAULT_DIR` to an existing absolute directory in the repository-root `.env`. |
+| First launch stalls or setup fails | Check network access and that Git, uv, and Python 3.14 are available; rerun the relevant setup command. |
+| Agent is visible but cannot accept tasks | Verify its supported CLI is installed, authenticated, and available to the server process. Cursor.app alone is insufficient. |
+| Voice transcription fails | Check microphone permission, `OPENAI_API_KEY`, provider model access, billing, and the server connection. |
+| Coordinator cannot assign work | Check `ANTHROPIC_API_KEY`, configured model access, and `npm run setup:hermes`. |
+| No spoken reply | Check browser audio permission and the configured TTS provider; text replies remain visible if playback fails. |
+| Camera or gestures do not start | Allow camera access, close other camera consumers, and restart using the orb. |
+| Requests fail in an alternate preview | Keep the main frontend on port `5173`; local protected origins also allow `5174` and the designated preview port `5188`. |
+| Spreadsheet or slide preview looks simplified | Office readers extract content and do not reproduce every native layout, chart, or animation. |
+
+## Further reading and acknowledgments
+
+- [Application internals and detailed voice behavior](app/README.md)
+- [Hand-pointer library and calibration](app/lib/hand-pointer/README.md)
+- [Product direction](PRODUCT.md) and [interface design](DESIGN.md)
+- [Swarm design notes](docs/swarm-plan.md)
+- [Historical hackathon plan](docs/hackathon-notes.md)
+
+Marbles builds on Nous Research's Hermes Agent runtime. Agent detection and direct CLI orchestration draw on patterns from [stablyai/orca](https://github.com/stablyai/orca). The in-repository hand-pointer library predates the hackathon.
+
+Contributions are welcome. Include the user-visible behavior, relevant verification, and any required configuration in your change; keep local credentials and generated runtime assets out of commits.
